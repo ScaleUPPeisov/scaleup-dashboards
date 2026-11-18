@@ -8,14 +8,22 @@ import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 const workflow=readFileSync(fileURLToPath(new URL('../../.github/workflows/vyron-617-rotated-signed-rc.yml',import.meta.url)),'utf8');
 
-test('new-key RC pipeline runs only by manual approval and cannot publish',()=>{
-  assert.match(workflow,/^on:\n  workflow_dispatch:/m);
-  assert.doesNotMatch(workflow,/\n  (push|pull_request|schedule):/);
+test('new-key RC pipeline runs only with manual approval or exact labeled PR22 and cannot publish',()=>{
+  assert.match(workflow,/^on:\n  pull_request:\n    types: \[labeled\]\n  workflow_dispatch:/m);
+  assert.match(workflow,/github.event.label.name == 'vyron617-owner-approve-signed-rc'/);
+  assert.match(workflow,/github.event.pull_request.number == 22/);
+  assert.match(workflow,/github.event.pull_request.head.repo.full_name == 'ScaleUPPeisov\/scaleup-dashboards'/);
+  assert.doesNotMatch(workflow,/\n  (push|schedule):/);
+  assert.doesNotMatch(workflow,/types: \[(?:synchronize|opened|reopened)\]/);
   assert.match(workflow,/environment: vyron-rotated-key-rc/);
   assert.match(workflow,/runs-on: macos-15-arm64/);
   assert.doesNotMatch(workflow,/runs-on: macos-15\n/);
   assert.match(workflow,/BUILD_ONLY_NO_RELEASE/);
   assert.match(workflow,/test "\$HEAD_SHA" = "\$GITHUB_SHA"/);
+  assert.match(workflow,/ref: ${{ env.VYRON_RELEASE_SOURCE_SHA }}/);
+  assert.match(workflow,/test "\$\(git rev-parse HEAD\)" = "\$VYRON_RELEASE_SOURCE_SHA"/);
+  assert.match(workflow,/vars.VYRON617_APPROVED_PUBKEY_SHA256/);
+  assert.match(workflow,/vars.VYRON617_APPROVED_TEAM_ID/);
   assert.doesNotMatch(workflow,/gh release (create|upload)|git push|git tag|git merge/);
   assert.doesNotMatch(workflow,/actions\/upload-artifact@v4[\s\S]*path:.*bundle\/macos/);
 });
@@ -71,7 +79,7 @@ test('release kit is staged only after notarized GUI and signed updater, without
  'RELEASE-NOTES.md','owner_migration_verified:false','stable_feed_changed:false']){
    assert.ok(script.includes(token),'MISSING_RELEASE_KIT_GUARD: '+token);
  }
- assert.match(workflow,/if: \${{ inputs.deliver_signed_rc_to_actions_artifact }}/);
+ assert.match(workflow,/if: \${{ github.event_name == 'workflow_dispatch' && inputs.deliver_signed_rc_to_actions_artifact }}/);
  assert.doesNotMatch(script,/gh release|git push|git tag|curl.*sh|release published/i);
 });
 

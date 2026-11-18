@@ -1,6 +1,8 @@
 name: VYRON 6.1.17 rotated-key signed ARM64 RC (manual)
 # Source and signing isolation: never use old secrets, publish a release or change feed.
 on:
+  pull_request:
+    types: [labeled]
   workflow_dispatch:
     inputs:
       source_sha:
@@ -34,33 +36,41 @@ concurrency:
 
 jobs:
   signed-rc:
-    if: ${{ github.ref == 'refs/heads/feature/vyron-macos-ultimate' }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/feature/vyron-macos-ultimate') || (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'vyron617-owner-approve-signed-rc' && github.event.pull_request.number == 22 && github.event.pull_request.head.ref == 'feature/vyron-macos-ultimate' && github.event.pull_request.head.repo.full_name == 'ScaleUPPeisov/scaleup-dashboards') }}
     environment: vyron-rotated-key-rc
     runs-on: macos-15-arm64
     timeout-minutes: 100
     steps:
       - name: Verify explicit authorization and source
         env:
-          HEAD_SHA: ${{ inputs.source_sha }}
-          TRUST_SHA: ${{ inputs.approved_pubkey_sha256 }}
-          APPROVED_TEAM_ID: ${{ inputs.approved_apple_team_id }}
-          APPROVAL: ${{ inputs.approval }}
+          HEAD_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.event.pull_request.head.sha }}
+          TRUST_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.approved_pubkey_sha256 || vars.VYRON617_APPROVED_PUBKEY_SHA256 }}
+          APPROVED_TEAM_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.approved_apple_team_id || vars.VYRON617_APPROVED_TEAM_ID }}
+          APPROVAL: ${{ github.event_name == 'workflow_dispatch' && inputs.approval || 'BUILD_ONLY_NO_RELEASE' }}
         run: |
           set -Eeuo pipefail
           test "$APPROVAL" = BUILD_ONLY_NO_RELEASE
           [[ "$HEAD_SHA" =~ ^[a-f0-9]{40}$ ]]
-          test "$HEAD_SHA" = "$GITHUB_SHA"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            test "$HEAD_SHA" = "$GITHUB_SHA"
+          else
+            test "$GITHUB_EVENT_NAME" = "pull_request"
+          fi
+          echo "VYRON_RELEASE_SOURCE_SHA=$HEAD_SHA" >> "$GITHUB_ENV"
+          echo "VYRON_RELEASE_APPROVED_PUBKEY_SHA256=$TRUST_SHA" >> "$GITHUB_ENV"
+          echo "VYRON_RELEASE_APPROVED_TEAM_ID=$APPROVED_TEAM_ID" >> "$GITHUB_ENV"
           [[ "$TRUST_SHA" =~ ^[a-f0-9]{64}$ ]]
           [[ "$APPROVED_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]]
           test "$TRUST_SHA" != aa6fb45ab082ef39279e841dc40b0f85e5b33f23746f77557b6f93e3e72c2c06
           test "$(uname -m)" = arm64
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.VYRON_RELEASE_SOURCE_SHA }}
           persist-credentials: false
       - name: Check frozen production source
         run: |
           set -Eeuo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$VYRON_RELEASE_SOURCE_SHA"
           node -e "const a=require('./src-tauri/tauri.conf.json');if(a.version!=='6.1.15'||a.identifier!=='studio.channelflow.desktop')process.exit(1)"
       - name: Refuse absent new environment-scoped signing and notarization credentials
         env:
@@ -73,7 +83,7 @@ jobs:
           NOTARY_ID: ${{ secrets.VYRON617_NOTARY_APPLE_ID }}
           NOTARY_PASSWORD: ${{ secrets.VYRON617_NOTARY_APP_PASSWORD }}
           TEAM_ID: ${{ secrets.VYRON617_APPLE_TEAM_ID }}
-          APPROVED_TEAM_ID: ${{ inputs.approved_apple_team_id }}
+          APPROVED_TEAM_ID: ${{ env.VYRON_RELEASE_APPROVED_TEAM_ID }}
         run: |
           set -Eeuo pipefail
           test "$TEAM_ID" = "$APPROVED_TEAM_ID" || { echo OWNER_APPLE_TEAM_PIN_MISMATCH; exit 1; }
@@ -99,7 +109,7 @@ jobs:
       - name: Prepare and independently pin new updater public key
         env:
           NEW_PUBLIC: ${{ secrets.VYRON617_NEW_TAURI_PUBLIC_KEY_B64 }}
-          TRUST_SHA: ${{ inputs.approved_pubkey_sha256 }}
+          TRUST_SHA: ${{ env.VYRON_RELEASE_APPROVED_PUBKEY_SHA256 }}
         run: |
           set -Eeuo pipefail
           printf '%s' "$NEW_PUBLIC" > "$RUNNER_TEMP/vyron-rotated.pub"
@@ -148,7 +158,7 @@ jobs:
           NEW_PRIVATE_PASSWORD: ${{ secrets.VYRON617_NEW_TAURI_PRIVATE_KEY_PASSWORD }}
         run: |
           set -Eeuo pipefail
-          export VYRON_COMMIT_SHA="$GITHUB_SHA" VYRON_UPDATE_CHANNEL=stable
+          export VYRON_COMMIT_SHA="$VYRON_RELEASE_SOURCE_SHA" VYRON_UPDATE_CHANNEL=stable
           export TAURI_CONFIG="$(cat "$RUNNER_TEMP/vyron-617.json")"
           export TAURI_SIGNING_PRIVATE_KEY="$NEW_PRIVATE" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$NEW_PRIVATE_PASSWORD"
           npm ci --no-audit --no-fund
@@ -189,7 +199,7 @@ jobs:
           xcrun stapler staple "$APP"
           xcrun stapler validate "$APP"
           spctl --assess --type execute --verbose=4 "$APP"
-          printf 'source=%s\nversion=6.1.17\nbundle=studio.channelflow.desktop\narchitecture=arm64\ncodesign=PASS\nnew_updater_signature=PASS\nnotarization=PASS\ngatekeeper=PASS\nowner_migration=NOT_TESTED\nstable_feed=UNCHANGED\nrelease=BLOCKED_UNTIL_TRUSTED_BOOTSTRAP_AND_APPROVAL\n' "$GITHUB_SHA" > "$RUNNER_TEMP/rc-evidence/manifest.txt"
+          printf 'source=%s\nversion=6.1.17\nbundle=studio.channelflow.desktop\narchitecture=arm64\ncodesign=PASS\nnew_updater_signature=PASS\nnotarization=PASS\ngatekeeper=PASS\nowner_migration=NOT_TESTED\nstable_feed=UNCHANGED\nrelease=BLOCKED_UNTIL_TRUSTED_BOOTSTRAP_AND_APPROVAL\n' "$VYRON_RELEASE_SOURCE_SHA" > "$RUNNER_TEMP/rc-evidence/manifest.txt"
       - name: Create one-time notarized Finder GUI DMG and re-sign the stapled app update archive
         env:
           VYRON_RC_APP: ${{ github.workspace }}/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/VYRON.app
@@ -204,8 +214,8 @@ jobs:
         run: bash scripts/macos/finalize-vyron-617-gui-candidate.sh
       - name: Stage complete signed GUI DMG + notarized updater release kit and notes (never publish stable feed)
         env:
-          VYRON_RC_SOURCE_SHA: ${{ github.sha }}
-          VYRON_RC_PUBKEY_SHA256: ${{ inputs.approved_pubkey_sha256 }}
+          VYRON_RC_SOURCE_SHA: ${{ env.VYRON_RELEASE_SOURCE_SHA }}
+          VYRON_RC_PUBKEY_SHA256: ${{ env.VYRON_RELEASE_APPROVED_PUBKEY_SHA256 }}
           VYRON_RC_TEAM_ID: ${{ secrets.VYRON617_APPLE_TEAM_ID }}
           VYRON_RC_DMG: ${{ runner.temp }}/VYRON-6.1.17-one-time-GUI.dmg
           VYRON_RC_ARCHIVE: ${{ github.workspace }}/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/VYRON.app.tar.gz
@@ -213,7 +223,7 @@ jobs:
           VYRON_RC_RELEASE_KIT_DIR: ${{ runner.temp }}/vyron-617-release-kit
         run: node scripts/macos/write-vyron-617-release-kit.mjs
       - name: Deliver notarized owner RC kit ONLY with explicit owner opt-in
-        if: ${{ inputs.deliver_signed_rc_to_actions_artifact }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.deliver_signed_rc_to_actions_artifact }}
         uses: actions/upload-artifact@v4
         with:
           name: VYRON617-NOTARIZED-OWNER-RC-NOT-STABLE
