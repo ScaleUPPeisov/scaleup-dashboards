@@ -14,7 +14,8 @@ const EXPECTED_TABLES = Object.freeze([
   'channels','channel_snapshots','events','sync_runs','quota_buckets','devices',
   'commands','channel_analytics','channel_analytics_reports','google_oauth_sessions','google_oauth_profiles',
   'google_oauth_client_credentials','cloud_analytics_runs','channel_analytics_queue','push_subscriptions','push_deliveries',
-  'production_sync','production_jobs','notification_preferences','notification_reads'
+  'production_sync','production_jobs','notification_preferences','notification_reads',
+  'channel_presence'
 ]);
 function json(body,status=200) {
   return new Response(JSON.stringify(body),{
@@ -135,10 +136,12 @@ async function fetchStatus(env) {
       a.source AS analytics_source,
       a.daily_json AS analytics_daily_json,
       r.reports_json AS analytics_reports_json,
-      o.channel_id IS NOT NULL AS analytics_authorized
+      o.channel_id IS NOT NULL AS analytics_authorized,
+      p.archived_at AS archived_at
       FROM channels c LEFT JOIN channel_analytics a ON c.id=a.channel_id
       LEFT JOIN channel_analytics_reports r ON c.id=r.channel_id
       LEFT JOIN google_oauth_profiles o ON c.id=o.channel_id
+      LEFT JOIN channel_presence p ON p.channel_id=c.id
       ORDER BY c.name LIMIT 120`).all(),
     db.prepare('SELECT id,kind,channel_id,title,payload_json,occurred_at,received_at FROM events ORDER BY received_at DESC LIMIT 80').all(),
     db.prepare('SELECT spent FROM quota_buckets WHERE day_pt=?').bind(day).first(),
@@ -168,7 +171,7 @@ async function fetchStatus(env) {
     readNotificationCenter(db)
   ]);
   const channels=(c.results||[]).map(row=>({
-    id:row.id,name:row.name,
+    id:row.id,name:row.name,archivedAt:row.archived_at||null,
     subscribers:number(row.subscribers),
     subscribersHidden:row.hidden_subscribers===1,
     subscribersRounded:true,
@@ -363,7 +366,8 @@ async function eventHistory(env,request) {
 }
 
 async function enrollChannels(env,request,{fromAgent=false}={}) {
-  const raw=await readJson(request,32000);
+  const packet=await readJson(request,32000);
+  const raw=Array.isArray(packet)?packet:packet?.channels;
   if(!Array.isArray(raw))return errorReply('Expected channel list',400);
   const items=validatedChannelList(raw.map(row=>({
     id:row?.id??row?.channelId,name:row?.name??row?.title
@@ -386,6 +390,31 @@ async function enrollChannels(env,request,{fromAgent=false}={}) {
     SELECT json_extract(value,'$.id'),json_extract(value,'$.name') FROM json_each(?) WHERE 1
     ON CONFLICT(id) DO UPDATE SET name=excluded.name
   `).bind(JSON.stringify(items)).run();
+
+  // Older agents submit an array and never archive. New agents must explicitly
+  // certify a complete, versioned snapshot before any soft archive is permitted.
+  let presence={accepted:false,archived:0,reason:'legacy_or_incomplete_snapshot'};
+  if(fromAgent&&!Array.isArray(packet)){
+    const deviceId=String(packet.deviceId||'');
+    const complete=packet.complete===true&&packet.total===items.length;
+    const generatedAt=Date.parse(packet.generatedAt);
+    if(/^[A-Za-z0-9_-]{3,50}$/.test(deviceId)&&complete&&
+       Number.isFinite(generatedAt)&&Math.abs(Date.now()-generatedAt)<3600_000){
+      const generation=crypto.randomUUID(),at=new Date().toISOString();
+      await env.DB.prepare(
+        "INSERT INTO channel_presence(channel_id,device_id,generation,last_seen_at,archived_at) "+
+        "SELECT json_extract(value,'$.id'),?,?,?,NULL FROM json_each(?) WHERE 1 "+
+        "ON CONFLICT(channel_id) DO UPDATE SET "+
+        "device_id=excluded.device_id,generation=excluded.generation,"+
+        "last_seen_at=excluded.last_seen_at,archived_at=NULL"
+      ).bind(deviceId,generation,at,JSON.stringify(items)).run();
+      const archived=await env.DB.prepare(
+        "UPDATE channel_presence SET archived_at=? WHERE device_id=? "+
+        "AND generation<>? AND archived_at IS NULL"
+      ).bind(at,deviceId,generation).run();
+      presence={accepted:true,archived:Number(archived.meta?.changes||0)};
+    }
+  }
 
   let binding={boundChannels:[],needsAuthorization:[]};
   if(fromAgent&&candidates.some(row=>row.profileBinding)) {
@@ -445,7 +474,7 @@ async function enrollChannels(env,request,{fromAgent=false}={}) {
   }
   return json({
     enrolled:items.length,newlyEnrolled:newlyEnrolled.length,
-    existingChannelsPreserved:true,publicSync,
+    existingChannelsPreserved:true,channelPresence:presence,publicSync,
     analytics:{autoBound:binding.boundChannels,
       needsAuthorization:analyticsNeedsAuthorization.length?analyticsNeedsAuthorization:binding.needsAuthorization,
       queued:analyticsQueued,profileChecksFailed:binding.profileChecksFailed||0}
