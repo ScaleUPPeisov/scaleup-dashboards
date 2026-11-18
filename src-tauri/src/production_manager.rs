@@ -2548,8 +2548,7 @@ fn canonical_under(root: &Path, path: &Path) -> Result<PathBuf, String> {
     }
     Ok(p)
 }
-#[tauri::command]
-pub fn delete_production_job_folder(
+fn delete_production_job_folder_impl(
     workspace: String,
     folder: String,
     job_id: String,
@@ -2573,6 +2572,21 @@ pub fn delete_production_job_folder(
         return Err("BLOCK: Render root нельзя удалять как project".into());
     }
     trash::delete(&safe).map_err(|e| format!("Не удалось переместить project в Корзину: {e}"))
+}
+
+#[tauri::command]
+pub async fn delete_production_job_folder(
+    workspace: String,
+    folder: String,
+    job_id: String,
+) -> Result<(), String> {
+    // Finder Trash on an external HDD may be slow; keep GUI responsive while
+    // preserving manifest ownership, canonical-root and protected Render checks.
+    tauri::async_runtime::spawn_blocking(move || {
+        delete_production_job_folder_impl(workspace, folder, job_id)
+    })
+    .await
+    .map_err(|e| format!("PROJECT_TRASH_TASK_FAILED: {e}"))?
 }
 
 fn folder_stats(path: &Path) -> (usize, u64) {
@@ -3606,11 +3620,18 @@ fn delete_production_batch_projects_inner(
 }
 
 #[tauri::command]
-pub fn delete_production_batch_projects(
+pub async fn delete_production_batch_projects(
     manifest_path: String,
     project_ids: Vec<String>,
 ) -> Result<DeleteResult, String> {
-    delete_production_batch_projects_inner(manifest_path, project_ids)
+    // Protect the macOS main event loop from synchronous filesystem operations
+    // on multi-project batches while retaining all per-project safety checks
+    // and the existing on-disk manifest reconciliation semantics.
+    tauri::async_runtime::spawn_blocking(move || {
+        delete_production_batch_projects_inner(manifest_path, project_ids)
+    })
+    .await
+    .map_err(|e| format!("PROJECT_BATCH_TRASH_TASK_FAILED: {e}"))?
 }
 
 fn endlume_inbox_dir() -> Result<PathBuf, String> {
