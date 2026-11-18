@@ -174,8 +174,8 @@ jobs:
           hdiutil create -quiet -volname 'VYRON 6.1.17' -srcfolder "$STAGE" -format UDZO -ov "$DMG"
           test -s "$DMG"
           shasum -a 256 "$DMG" > "$RUNNER_TEMP/evidence/dmg-sha256.txt"
-          cp "$VYRON_ARCHIVE" "$RUNNER_TEMP/VYRON.app.tar.gz"
-          cp "$VYRON_ARCHIVE.sig" "$RUNNER_TEMP/VYRON.app.tar.gz.sig"
+          test -s "$RUNNER_TEMP/VYRON.app.tar.gz"
+          test -s "$RUNNER_TEMP/VYRON.app.tar.gz.sig"
           printf 'source=%s\nversion=6.1.17\nbundle_id=studio.channelflow.desktop\narchitecture=arm64\ninstallation=OPEN_DMG_DRAG_TO_APPLICATIONS_CONFIRM_REPLACE\nuser_data_location=UNCHANGED_BY_BUNDLE_ID\nstable_feed=UNCHANGED\n' "$VYRON_RELEASE_SOURCE_SHA" >> "$RUNNER_TEMP/evidence/status.txt"
 
       - name: Upload authenticated owner-only personal kit
