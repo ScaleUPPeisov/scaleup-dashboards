@@ -268,8 +268,8 @@ jobs:
           HEALTH_JSON="${body}" node --input-type=module -e '
             const health = JSON.parse(process.env.HEALTH_JSON || "{}");
             if (health.ok !== true || health.d1?.schema !== true ||
-                health.d1?.expectedTables !== 20 ||
-                health.d1?.presentTables !== 20) {
+                health.d1?.expectedTables !== 21 ||
+                health.d1?.presentTables !== 21) {
               console.error("Worker health/schema verification failed:", JSON.stringify({
                 ok: health.ok, d1: health.d1, error: health.error
               }));
