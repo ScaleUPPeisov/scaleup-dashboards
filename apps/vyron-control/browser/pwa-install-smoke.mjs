@@ -129,7 +129,15 @@ try{
   });
   await context.setOffline(true);
   await page.reload({waitUntil:'domcontentloaded',timeout:20000});
-  await page.waitForSelector('#boot-recovery:not([hidden])',{timeout:15000});
+  // A corrupted JS cache may still have a valid browser module in memory. In
+  // that case the app must show its explicit offline/session error, not a blank page.
+  await page.waitForFunction(()=>{
+    const recovery=document.getElementById('boot-recovery');
+    const login=document.getElementById('login');
+    const message=document.getElementById('login-error')?.textContent||'';
+    return Boolean((recovery&&!recovery.hidden)||
+      (login&&!login.hidden&&/ошибк|недоступн|соединени/i.test(message)));
+  },null,{timeout:15000});
   await context.setOffline(false);
   await page.reload({waitUntil:'domcontentloaded',timeout:20000});
   await page.waitForSelector('#dashboard:not([hidden])',{timeout:15000});
