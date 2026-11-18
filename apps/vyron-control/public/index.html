@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/neo-glass.css">
   <title>VYRON PEISOV YT</title>
+  <script defer src="/recovery.js"></script>
   <script type="module" src="/app.js"></script>
 </head>
 <body>
@@ -21,6 +22,11 @@
       <div class="brand"><img src="/icon.svg" alt="" width="42" height="42"><div><strong>VYRON PEISOV YT</strong><small>PRIVATE YOUTUBE STUDIO</small></div></div>
       <div class="top-right"><button id="notifications-open" class="glass-icon-button" type="button" aria-label="Центр уведомлений" title="Центр уведомлений"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg><span id="attention-count" class="attention-count" hidden>0</span></button><span class="online" aria-live="polite"><span class="dot" id="topbar-dot"></span><span id="topbar-status-text">Контроль каналов</span></span><button id="logout" class="ghost" hidden>Выйти</button></div>
     </header>
+    <section id="boot-recovery" hidden role="alert">
+      <h2>Не удалось загрузить VYRON PEISOV YT</h2>
+      <p>Запуск приложения не завершился. Сессия не удаляется.</p>
+      <button id="recover-reload" class="primary" type="button">Обновить приложение</button>
+    </section>
     <section id="login" class="login card">
       <span class="eyebrow">Личный доступ</span>
       <h1>Твоя сеть каналов.<br>На iPhone.</h1>
@@ -433,6 +439,13 @@
         <p class="caution">YouTube округляет публичные значения подписчиков: уведомление означает зафиксированный публичный рубеж, а не точное число.</p>
       </section>
 
+      <section class="card" data-mobile-view="system" id="trusted-devices-panel">
+        <h2>Доверенные устройства</h2>
+        <p class="muted">Завершай сессии потерянных устройств. Mac Bridge не затрагивается.</p>
+        <button id="trusted-devices-refresh" class="ghost" type="button">Посмотреть устройства</button>
+        <p id="trusted-devices-message" class="caution" role="status"></p>
+        <div id="trusted-devices"></div>
+      </section>
       <footer data-mobile-view="system">VYRON PEISOV YT · Личный облачный командный центр YouTube-сети. Публичные показатели, авторизованная Analytics 360° и телеметрия Mac.</footer>
     </section>
   </main>

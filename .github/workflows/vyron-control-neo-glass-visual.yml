@@ -8,6 +8,12 @@ on:
       - "apps/vyron-control/browser/neo-glass-visual-qa.mjs"
       - "apps/vyron-control/browser/pwa-install-smoke.mjs"
       - ".github/workflows/vyron-control-neo-glass-visual.yml"
+  pull_request:
+    paths:
+      - "apps/vyron-control/public/**"
+      - "apps/vyron-control/browser/pwa-install-smoke.mjs"
+      - "apps/vyron-control/browser/neo-glass-visual-qa.mjs"
+      - ".github/workflows/vyron-control-neo-glass-visual.yml"
   workflow_dispatch:
 
 permissions:
@@ -40,10 +46,10 @@ jobs:
         run: npm install --no-save --ignore-scripts --no-audit --no-fund playwright@1.56.1
       - name: Verify pinned browser binaries are present
         run: test -d /ms-playwright/webkit-2215 && test -d /ms-playwright/chromium-1194
-      - name: Check 8 screens across viewport matrix and capture QA screenshots
-        run: node browser/neo-glass-visual-qa.mjs
       - name: Verify installed PWA offline fallback, Service Worker upgrade and session preservation
         run: node browser/pwa-install-smoke.mjs
+      - name: Check 8 screens across viewport matrix and capture QA screenshots
+        run: node browser/neo-glass-visual-qa.mjs
       - name: Upload QA screenshots
         if: always()
         uses: actions/upload-artifact@v4

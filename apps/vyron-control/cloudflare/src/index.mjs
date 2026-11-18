@@ -11,6 +11,8 @@ import {detectOfflineMac} from './alert-probes.mjs';
 import {derivePublic24hSnapshots} from './snapshot-windows.mjs';
 import {analyticsSyncStatus} from './channel-health.mjs';
 import {refreshDueYouTubeSchedules,scheduledContentDays} from './youtube-schedule.mjs';
+import {createDeviceSession,readDeviceSession,csrfValid,clearSessionCookie,
+ setSessionCookie,revokeSession,listDeviceSessions,revokeById} from './device-sessions.mjs';
 
 const REQUIRED_TOKEN_LENGTH = 32;
 const EXPECTED_TABLES = Object.freeze([
@@ -18,7 +20,7 @@ const EXPECTED_TABLES = Object.freeze([
   'commands','channel_analytics','channel_analytics_reports','google_oauth_sessions','google_oauth_profiles',
   'google_oauth_client_credentials','cloud_analytics_runs','channel_analytics_queue','push_subscriptions','push_deliveries',
   'production_sync','production_jobs','notification_preferences','notification_reads',
-  'channel_presence','channel_schedule'
+  'channel_presence','channel_schedule','device_sessions'
 ]);
 function json(body,status=200) {
   return new Response(JSON.stringify(body),{
@@ -620,6 +622,43 @@ export default {
       return new Response(response.body,{status:response.status,headers});
     }
     if(url.pathname==='/api/health'&&request.method==='GET') return health(env);
+    if(url.pathname==='/api/auth/login'&&request.method==='POST'){
+      if(!originMatch(request)||request.headers.get('Sec-Fetch-Site')==='cross-site'||
+         !String(request.headers.get('Content-Type')||'').toLowerCase().startsWith('application/json'))
+        return errorReply('Login origin rejected',403);
+      let submitted;
+      try{submitted=await readJson(request,1200);}catch{return errorReply('Invalid login request',400);}
+      if(!await sameToken(submitted?.controlToken,env.CONTROL_TOKEN))
+        return errorReply('Invalid credentials',401);
+      try{
+        const owner=await createDeviceSession(env,request);
+        return setSessionCookie(json({authenticated:true,csrfToken:owner.csrfToken}),owner.cookie);
+      }catch{return errorReply('Session store unavailable',503);}
+    }
+    if(url.pathname.startsWith('/api/auth/')){
+      if(!originMatch(request)||request.headers.get('Sec-Fetch-Site')==='cross-site')
+        return errorReply('Origin not allowed',403);
+      let owner;
+      try{owner=await readDeviceSession(env,request);}
+      catch{return errorReply('Session store unavailable',503);}
+      if(!owner)return errorReply('Unauthorized',401);
+      if(!['GET','HEAD'].includes(request.method)&&!csrfValid(request,owner))
+        return errorReply('Invalid CSRF token',403);
+      if(url.pathname==='/api/auth/session'&&request.method==='GET')
+        return setSessionCookie(json({authenticated:true,csrfToken:owner.csrfToken}),owner.cookie);
+      if(url.pathname==='/api/auth/devices'&&request.method==='GET')
+        return setSessionCookie(json({devices:await listDeviceSessions(env,owner.id)}),owner.cookie);
+      if(url.pathname==='/api/auth/logout'&&request.method==='POST'){
+        await revokeSession(env,owner);
+        return setSessionCookie(json({loggedOut:true}),clearSessionCookie());
+      }
+      if(url.pathname==='/api/auth/revoke'&&request.method==='POST'){
+        const data=await readJson(request,1024);
+        const result=await revokeById(env,String(data?.sessionId||''),owner.id);
+        return setSessionCookie(json(result),result.current?clearSessionCookie():owner.cookie);
+      }
+      return errorReply('Not found',404);
+    }
     if(url.pathname==='/api/oauth/callback'&&request.method==='GET') {
       try {return await callbackOAuth(request,env);}
       catch(error) {
@@ -631,9 +670,18 @@ export default {
     }
     if(!originMatch(request)) return errorReply('Origin not allowed',403);
     const agentRoute=url.pathname.startsWith('/api/agent/');
-    if(!await authenticate(request,env,agentRoute?'agent':'control'))
-      return errorReply('Unauthorized',401);
-    try {
+    const bearerValid=await authenticate(request,env,agentRoute?'agent':'control');
+    let deviceSession=null;
+    if(!bearerValid){
+      if(agentRoute||request.headers.get('Sec-Fetch-Site')==='cross-site')
+        return errorReply('Unauthorized',401);
+      try{deviceSession=await readDeviceSession(env,request);}
+      catch{return errorReply('Session store unavailable',503);}
+      if(!deviceSession)return errorReply('Unauthorized',401);
+      if(!['GET','HEAD'].includes(request.method)&&!csrfValid(request,deviceSession))
+        return errorReply('Invalid CSRF token',403);
+    }
+    const routeResponse=async()=>{try {
       if (url.pathname==='/api/mac/agent-token'&&request.method==='POST') {
         if (env.AGENT_TOKEN)
           return errorReply('AGENT_TOKEN is already configured in Cloudflare; use that configured key.',409);
@@ -734,7 +782,9 @@ export default {
         /Invalid|^INVALID_|^PRODUCTION_|Unexpected|not configured|No channels|Unsupported|too large/.test(message)?400:500;
       if(status===500)console.error('VYRON CONTROL request:',message);
       return errorReply(status===500?'Internal service error':message,status);
-    }
+    }};
+    const response=await routeResponse();
+    return deviceSession?setSessionCookie(response,deviceSession.cookie):response;
   },
   async scheduled(controller,env,ctx) {
     ctx.waitUntil(Promise.allSettled([

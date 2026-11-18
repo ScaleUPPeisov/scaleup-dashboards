@@ -45,6 +45,7 @@ class MockD1 {
     this.native.exec(readFileSync(new URL('../migrations/0010_channel_presence.sql',import.meta.url),'utf8'));
     this.native.exec(readFileSync(new URL('../migrations/0011_youtube_schedule.sql',import.meta.url),'utf8'));
     this.native.exec(readFileSync(new URL('../migrations/0012_channel_thumbnails.sql',import.meta.url),'utf8'));
+    this.native.exec(readFileSync(new URL('../migrations/0013_device_sessions.sql',import.meta.url),'utf8'));
   }
   prepare(sql){return new D1Query(this,sql);}
   async batch(stmts){
@@ -177,7 +178,7 @@ test('authorization, origin guard, static asset CSP and immutable endpoint behav
   assert.equal(health.status,200);
   const healthBody=await health.json();
   assert.equal(healthBody.app,'vyron-control');
-  assert.deepEqual(healthBody.d1,{bound:true,schema:true,expectedTables:22,presentTables:22});
+  assert.deepEqual(healthBody.d1,{bound:true,schema:true,expectedTables:23,presentTables:23});
   assert.equal((await cloud.fetch(req('/api/status','invalid'),e)).status,401);
   const good=await cloud.fetch(req('/api/status',control),e);
   assert.equal(good.status,200);
@@ -1473,4 +1474,51 @@ test('manual schedule refresh rejects agent access, validates Channel ID and doe
  assert.equal(result.status,200);
  assert.deepEqual(await result.json(),{skipped:true,reason:'oauth_not_configured'});
  assert.equal(e.DB.native.prepare('SELECT COUNT(*) AS n FROM channel_schedule').get().n,0);
+});
+
+test('owner device session survives reopen, enforces CSRF, and is revoked at logout',async()=>{
+ const e=env(),base='https://vyron-control.example';
+ const login=await cloud.fetch(new Request(base+'/api/auth/login',{method:'POST',
+  headers:{'Content-Type':'application/json',Origin:base,'User-Agent':'iPhone 14 Pro PWA'},
+  body:JSON.stringify({controlToken:control})}),e);
+ assert.equal(login.status,200);
+ const cookie=login.headers.get('set-cookie'),key=cookie.split(';')[0];
+ const body=await login.json();
+ assert.match(cookie,/__Host-vyron-session=.*HttpOnly; Secure; SameSite=Strict/);
+ assert.match(body.csrfToken,/^[0-9a-f]{64}$/);
+ assert.equal((await cloud.fetch(new Request(base+'/api/auth/session',{headers:{Cookie:key}}),e)).status,200);
+ assert.equal((await cloud.fetch(new Request(base+'/api/status',{headers:{Cookie:key}}),e)).status,200);
+ assert.equal((await cloud.fetch(new Request(base+'/api/refresh',{method:'POST',headers:{Cookie:key}}),e)).status,403);
+ assert.equal((await cloud.fetch(new Request(base+'/api/refresh',{method:'POST',headers:{
+  Cookie:key,Origin:'https://evil.example','X-VYRON-CSRF':body.csrfToken
+ }}),e)).status,403);
+ const logout=await cloud.fetch(new Request(base+'/api/auth/logout',{method:'POST',
+  headers:{Cookie:key,Origin:base,'X-VYRON-CSRF':body.csrfToken}}),e);
+ assert.equal(logout.status,200);
+ assert.match(logout.headers.get('set-cookie'),/Max-Age=0/);
+ assert.equal((await cloud.fetch(new Request(base+'/api/status',{headers:{Cookie:key}}),e)).status,401);
+ const stored=e.DB.native.prepare('SELECT COUNT(*) n FROM device_sessions').get().n;
+ assert.equal(stored,0);
+});
+test('Safari and PWA sessions are independently revocable without affecting Mac Bearer',async()=>{
+ const e=env(),base='https://vyron-control.example';
+ async function login(label){
+  const r=await cloud.fetch(new Request(base+'/api/auth/login',{method:'POST',
+   headers:{Origin:base,'Content-Type':'application/json','User-Agent':label},
+   body:JSON.stringify({controlToken:control})}),e);
+  return {cookie:r.headers.get('set-cookie').split(';')[0],...(await r.json())};
+ }
+ const a=await login('Safari'),b=await login('PWA');
+ assert.notEqual(a.cookie,b.cookie);
+ const devices=await (await cloud.fetch(new Request(base+'/api/auth/devices',
+  {headers:{Cookie:a.cookie}}),e)).json();
+ assert.equal(devices.devices.length,2);
+ const lost=devices.devices.find(x=>!x.current);
+ const revoked=await cloud.fetch(new Request(base+'/api/auth/revoke',{method:'POST',
+  headers:{Cookie:a.cookie,Origin:base,'X-VYRON-CSRF':a.csrfToken,'Content-Type':'application/json'},
+  body:JSON.stringify({sessionId:lost.id})}),e);
+ assert.equal((await revoked.json()).revoked,true);
+ assert.equal((await cloud.fetch(new Request(base+'/api/status',{headers:{Cookie:b.cookie}}),e)).status,401);
+ assert.equal((await cloud.fetch(new Request(base+'/api/status',{headers:{Cookie:a.cookie}}),e)).status,200);
+ assert.equal((await cloud.fetch(req('/api/agent/commands?device=macbook_m1',agent),e)).status,200);
 });
