@@ -1,0 +1,39 @@
+name: VYRON 6.1.18 Scheduled coverage safety regression
+
+on:
+  push:
+    branches:
+      - fix/vyron-618-schedule-safety-20261118
+    paths:
+      - src/youtubeOwnerInventory.ts
+      - src/ChannelRunway.tsx
+      - src/v611ChannelRunwayInventoryHotfix.test.ts
+      - src/v610ChannelRunwayFleetRefresh.test.ts
+      - .github/workflows/vyron-618-schedule-safety-regression.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-618-schedule-safety-regression
+  cancel-in-progress: true
+
+jobs:
+  targeted-regression:
+    name: Scheduled coverage safety tests (GitHub-hosted, no physical Mac)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Verify fixed coverage without regressions
+        run: npx vitest run src/v611ChannelRunwayInventoryHotfix.test.ts src/v610ChannelRunwayFleetRefresh.test.ts src/channelRunway.test.ts
+      - name: Full frontend regression suite
+        run: npx vitest run
+      - name: Verify frontend production compile
+        run: npm run build

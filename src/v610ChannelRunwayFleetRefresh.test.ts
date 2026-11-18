@@ -100,7 +100,9 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
   // All 30 API fixtures are empty: an exhausted uploads playlist no longer
   // proves a complete owner Scheduled inventory.
   expect(result.counts.UPDATED).toBe(0);
-  expect(result.counts.API_FAILED).toBe(30);
+  // A complete owner upload scan without Scheduled coverage proof is partial, not an HTTP failure.
+  expect(result.counts.PARTIAL_DATA).toBe(30);
+  expect(result.counts.API_FAILED).toBe(0);
   expect(result.counts.UNLINKED).toBe(2);
   expect(result.counts.MISMATCH).toBe(1);
   expect(result.counts.DUPLICATE).toBe(1);
