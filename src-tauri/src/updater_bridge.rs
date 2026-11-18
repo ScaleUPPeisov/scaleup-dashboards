@@ -42,11 +42,15 @@ fn updater_public_key_facts(encoded:&str)->(bool,Option<String>,Option<String>){
     let Some(key_line)=lines.next() else{return (false,None,None)};
     if lines.next().is_some(){return (false,None,None)}
     let Some(key_id)=header.strip_prefix("untrusted comment: minisign public key: ") else{return (false,None,None)};
-    if key_id.len()!=16||!key_id.chars().all(|c|c.is_ascii_hexdigit()){return (false,None,None)}
+    // Tauri/Minisign CLI can omit leading zeroes from a public-key ID.
+    // The on-disk 6.1.20 rotated key uses 14 hex digits, while native
+    // preflight incorrectly demanded 16. Zero-pad for matching ONLY; never
+    // weaken the key material SHA-256 pin or signature verification.
+    if key_id.is_empty()||key_id.len()>16||!key_id.chars().all(|c|c.is_ascii_hexdigit()){return (false,None,None)}
     let Ok(key_bytes)=b64.decode(key_line) else{return (false,None,None)};
     if b64.encode(&key_bytes)!=key_line||key_bytes.len()!=42||&key_bytes[..2]!=b"Ed"{return (false,None,None)}
     let embedded_id=key_bytes[2..10].iter().rev().map(|b|format!("{b:02X}")).collect::<String>();
-    if !key_id.eq_ignore_ascii_case(&embedded_id){return (false,None,None)}
+    if !format!("{key_id:0>16}").eq_ignore_ascii_case(&embedded_id){return (false,None,None)}
     (true,Some(embedded_id),Some(sha256_bytes(&key_bytes)))
 }
 
@@ -746,6 +750,40 @@ mod updater_key_diagnostic_tests{
         assert!(valid);
         assert_eq!(key_id.as_deref(),Some("8133C9873FAB79C1"));
         assert_eq!(fingerprint.as_deref(),Some("cbd37c85807e9b80f30612a1bc3a35bc75819b758ac62bb2bfee1881e6db938b"));
+    }
+
+    #[test]
+    fn accepts_minisign_cli_short_key_id_only_when_zero_padded_bytes_match(){
+        use base64::Engine as _;
+        let b64=base64::engine::general_purpose::STANDARD;
+        let raw=String::from_utf8(b64.decode(VALID_PUBLIC_KEY).unwrap()).unwrap();
+        let mut lines=raw.lines();
+        let _header=lines.next().unwrap();
+        let mut bytes=b64.decode(lines.next().unwrap()).unwrap();
+        // Synthesize a valid 14-character ID with two leading zero hex
+        // digits and unchanged Ed25519 algorithm / canonical payload.
+        bytes[9]=0;
+        let full_id=bytes[2..10].iter().rev().map(|b|format!("{b:02X}")).collect::<String>();
+        assert_eq!(full_id.len(),16);
+        assert!(full_id.starts_with("00"));
+        let short_id=full_id.trim_start_matches('0');
+        assert!(!short_id.is_empty());
+        let encoded=b64.encode(format!(
+            "untrusted comment: minisign public key: {short_id}\n{}\n", b64.encode(&bytes)
+        ));
+        let expected=sha256_bytes(&bytes);
+        let (valid,id,actual)=updater_public_key_facts(&encoded);
+        assert!(valid);
+        assert_eq!(id.as_deref(),Some(full_id.as_str()));
+        assert_eq!(actual.as_deref(),Some(expected.as_str()));
+        assert!(updater_public_key_trust_verified(actual.as_deref(),&expected));
+        assert!(!updater_public_key_trust_verified(actual.as_deref(),&"0".repeat(64)));
+
+        // Wrong shortened key ID must still fail (no implicit trust).
+        let incorrect=b64.encode(format!(
+            "untrusted comment: minisign public key: F{short_id}\n{}\n",b64.encode(&bytes)
+        ));
+        assert!(!updater_public_key_facts(&incorrect).0);
     }
 
     #[test]
