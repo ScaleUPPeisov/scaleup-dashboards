@@ -1416,3 +1416,38 @@ test('incomplete Mac channel snapshot cannot archive any old registry entries',a
  assert.equal((await result.json()).channelPresence.archived,0);
  assert.equal(e.DB.native.prepare('SELECT COUNT(*) n FROM channel_presence WHERE archived_at IS NULL').get().n,2);
 });
+
+
+test('owner-verified YouTube scheduled publications control content-days; partial and stale never do',async()=>{
+ const e=env(),cid=id(930),now=new Date().toISOString();
+ const publishAt=new Date(Date.now()+5*86400000).toISOString();
+ await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(cid,'Runway test').run();
+ await e.DB.prepare(
+  "INSERT INTO channel_schedule(channel_id,status,confirmed_json,scanned_count,complete,captured_at) "+
+  "VALUES(?,'COMPLETE',?,3,1,?)"
+ ).bind(cid,JSON.stringify([{videoId:'v'.repeat(11),publishAt}]),now).run();
+ let status=await (await cloud.fetch(req('/api/status',control),e)).json();
+ let ch=status.channels.find(x=>x.id===cid);
+ assert.ok(ch.scheduledContentDays>=4&&ch.scheduledContentDays<=6);
+ assert.equal(ch.youtubeSchedule.source,'YOUTUBE_DATA_API_OWNER_READONLY');
+ await e.DB.prepare("UPDATE channel_schedule SET status='PARTIAL',complete=0 WHERE channel_id=?")
+   .bind(cid).run();
+ status=await (await cloud.fetch(req('/api/status',control),e)).json();
+ assert.equal(status.channels.find(x=>x.id===cid).scheduledContentDays,null);
+ await e.DB.prepare(
+  "UPDATE channel_schedule SET status='COMPLETE',complete=1,captured_at='2026-01-01T00:00:00.000Z' WHERE channel_id=?"
+ ).bind(cid).run();
+ status=await (await cloud.fetch(req('/api/status',control),e)).json();
+ assert.equal(status.channels.find(x=>x.id===cid).scheduledContentDays,null);
+});
+
+test('manual schedule refresh rejects agent access, validates Channel ID and does not bypass OAuth',async()=>{
+ const e=env(),cid=id(931);
+ await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(cid,'Not authorized').run();
+ assert.equal((await cloud.fetch(req('/api/schedule/refresh',agent,'POST',{channelId:cid}),e)).status,401);
+ assert.equal((await cloud.fetch(req('/api/schedule/refresh',control,'POST',{channelId:'invalid'}),e)).status,400);
+ const result=await cloud.fetch(req('/api/schedule/refresh',control,'POST',{channelId:cid}),e);
+ assert.equal(result.status,200);
+ assert.deepEqual(await result.json(),{skipped:true,reason:'oauth_not_configured'});
+ assert.equal(e.DB.native.prepare('SELECT COUNT(*) AS n FROM channel_schedule').get().n,0);
+});
