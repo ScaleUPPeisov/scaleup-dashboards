@@ -177,6 +177,43 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
     }finally{vi.useRealTimers()}
   });
 
+  it('recovers historical positive Scheduled count from native owner snapshot after newer failed refresh, without claiming fresh runway',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-18T05:00:00Z'));
+    try{
+      const ch=channel('historical-positive');
+      const future=editable('future-Dec12','private','2026-12-12T20:00:00+07:00');
+      const persisted=await replaceExistingCacheFromSync(ch.id,[future],{
+        channelId:'UC-LUMIERE',syncComplete:true,scheduleComplete:true
+      });
+      expect(persisted.persisted).toBe(true);
+      storage.seed(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify({version:1,channels:{
+        [ch.id]:{
+          channelId:ch.id,channelName:ch.name,
+          scheduledVideoCount:0,dataState:'PARTIAL_DATA',
+          lastRefreshAttemptAt:'2026-11-18T05:01:00Z',
+          lastRefreshError:'AUTHORITATIVE_INVENTORY_INCOMPLETE',
+          lastLocalCalculation:'2026-11-18T05:01:00Z',
+          status:'no-data',priority:'unknown'
+        }
+      }}));
+      const r=recalculateChannelRunway([ch],new Date(),false,storage as any).channels[ch.id];
+      expect(r.scheduledVideoCount).toBe(1);
+      expect(r.scheduledUntil).toBe('2026-12-12');
+      expect(r.dataState).toBe('PARTIAL_DATA');
+      expect(r.status).toBe('no-data');
+      expect(r.runwayDays).toBeUndefined();
+      expect(r.lastRefreshError).toBe('AUTHORITATIVE_INVENTORY_INCOMPLETE');
+      expect(r.lastScheduleSync).toBeTruthy();
+    }finally{vi.useRealTimers()}
+  });
+
+  it('historical partial evidence is labeled as cache, not current confirmed YouTube schedule',()=>{
+    const screen=readFileSync('src/ChannelRunway.tsx','utf8');
+    expect(screen).toContain('Исторический кэш Scheduled: текущий запас не подтверждён');
+    expect(screen).toContain('последняя проверенная дата • актуальная полнота неизвестна');
+    expect(screen).toContain('(кэш)*');
+  });
+
   it('legacy confirmed zero without source coverage is UNKNOWN even with fresh lastScheduleSync',()=>{
     const c=channel('legacy-zero');
     storage.seed(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify({version:1,channels:{'legacy-zero':{
