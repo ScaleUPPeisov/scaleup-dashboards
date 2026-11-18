@@ -11,6 +11,10 @@ on:
         description: Independently authenticated SHA-256 of 42-byte NEW Minisign public key
         required: true
         type: string
+      approved_apple_team_id:
+        description: Apple Developer Team ID independently verified from an owner-controlled source
+        required: true
+        type: string
       approval:
         description: Must equal BUILD_ONLY_NO_RELEASE
         required: true
@@ -34,6 +38,7 @@ jobs:
         env:
           HEAD_SHA: ${{ inputs.source_sha }}
           TRUST_SHA: ${{ inputs.approved_pubkey_sha256 }}
+          APPROVED_TEAM_ID: ${{ inputs.approved_apple_team_id }}
           APPROVAL: ${{ inputs.approval }}
         run: |
           set -Eeuo pipefail
@@ -41,6 +46,7 @@ jobs:
           [[ "$HEAD_SHA" =~ ^[a-f0-9]{40}$ ]]
           test "$HEAD_SHA" = "$GITHUB_SHA"
           [[ "$TRUST_SHA" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$APPROVED_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]]
           test "$TRUST_SHA" != aa6fb45ab082ef39279e841dc40b0f85e5b33f23746f77557b6f93e3e72c2c06
           test "$(uname -m)" = arm64
       - uses: actions/checkout@v4
@@ -60,8 +66,10 @@ jobs:
           NOTARY_ID: ${{ secrets.VYRON617_NOTARY_APPLE_ID }}
           NOTARY_PASSWORD: ${{ secrets.VYRON617_NOTARY_APP_PASSWORD }}
           TEAM_ID: ${{ secrets.VYRON617_APPLE_TEAM_ID }}
+          APPROVED_TEAM_ID: ${{ inputs.approved_apple_team_id }}
         run: |
           set -Eeuo pipefail
+          test "$TEAM_ID" = "$APPROVED_TEAM_ID" || { echo OWNER_APPLE_TEAM_PIN_MISMATCH; exit 1; }
           test -n "$NEW_PRIVATE" || { echo NEW_TAURI_KEY_UNAVAILABLE; exit 1; }
           test -n "$NEW_PUBLIC" || { echo NEW_TAURI_PUBLIC_KEY_UNAVAILABLE; exit 1; }
           test -n "$CERT" || { echo DEVELOPER_ID_CERTIFICATE_UNAVAILABLE; exit 1; }
@@ -133,6 +141,7 @@ jobs:
           lipo -archs "$APP/Contents/MacOS/$EXE" | tr ' ' '\n' | grep -qx arm64
           codesign --verify --deep --strict --verbose=2 "$APP"
           codesign -dv --verbose=4 "$APP" 2>&1 | grep -Fx "TeamIdentifier=$TEAM_ID"
+          codesign -dv --verbose=4 "$APP" 2>&1 | grep -F 'Authority=Developer ID Application:'
           brew install minisign
           openssl base64 -d -A -in "$RUNNER_TEMP/vyron-rotated.pub" -out "$RUNNER_TEMP/key.minisign.pub"
           openssl base64 -d -A -in "$ARCHIVE.sig" -out "$RUNNER_TEMP/archive.minisign.sig"
