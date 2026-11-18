@@ -16,10 +16,18 @@ export function safeAgentDiff(paths){
    !path.includes('..')&&!path.startsWith('/'));
 }
 export function verifiedReleaseChecks(data,sha){
- if(!SHA.test(sha)||!Array.isArray(data?.check_runs))return false;
- const checks=data.check_runs.filter(x=>x.head_sha===sha&&
+ // Workflow names are stored on workflow_runs, not on check_runs (check jobs are
+ // called "verify" or "No user/channel/OAuth data in GitHub").
+ if(!SHA.test(sha)||!Array.isArray(data?.workflow_runs))return false;
+ const checks=data.workflow_runs.filter(x=>x.head_sha===sha&&
+   x.head_branch===BRANCH&&x.event==='push'&&
    x.status==='completed'&&x.conclusion==='success').map(x=>x.name);
  return [...CHECKS].every(name=>checks.includes(name));
+}
+export function verifiedSignedReleaseCommit(data,sha){
+ return SHA.test(sha)&&data?.sha===sha&&
+   data?.commit?.verification?.verified===true&&
+   data.commit.verification.reason==='valid';
 }
 export async function maybeUpdateAgent({
  sourceDir=ROOT,git=execFileSync,fetchImpl=fetch
@@ -43,12 +51,16 @@ export async function maybeUpdateAgent({
    catch{return {updated:false,reason:'non_fast_forward_release'};}
    const names=cmd('git',['diff','--name-only',old,next]).split('\n').filter(Boolean);
    if(!safeAgentDiff(names))return {updated:false,reason:'unreviewed_desktop_changes'};
-   const verified=await fetchImpl(
-     'https://api.github.com/repos/ScaleUPPeisov/scaleup-dashboards/commits/'+next+'/check-runs?per_page=100',{
-       headers:{Accept:'application/vnd.github+json','User-Agent':'vyron-control-agent-release-check'},
-       signal:AbortSignal.timeout(12000)
-     });
-   if(!verified.ok||!verifiedReleaseChecks(await verified.json(),next))
+   const base='https://api.github.com/repos/ScaleUPPeisov/scaleup-dashboards/';
+   const options={headers:{Accept:'application/vnd.github+json',
+     'User-Agent':'vyron-control-agent-release-check'},signal:AbortSignal.timeout(12000)};
+   const [signedResponse,verifiedResponse]=await Promise.all([
+     fetchImpl(base+'commits/'+next,options),
+     fetchImpl(base+'actions/runs?branch=release%2Fvyron-control-production&per_page=100',options)
+   ]);
+   if(!signedResponse.ok||!verifiedSignedReleaseCommit(await signedResponse.json(),next))
+     return {updated:false,reason:'release_signature_missing'};
+   if(!verifiedResponse.ok||!verifiedReleaseChecks(await verifiedResponse.json(),next))
      return {updated:false,reason:'release_ci_unverified'};
    // All commands below affect ONLY the private Mac Bridge Git clone, never VYRON or ENDLUME.
    try{
