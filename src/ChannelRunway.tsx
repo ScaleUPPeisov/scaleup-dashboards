@@ -94,6 +94,7 @@ export function ChannelRunway(){
   const liveSnapshots=useLiveInventory(s=>s.snapshots);
   const [snapshot,setSnapshot]=useState(()=>loadChannelRunwayStore());
   const [busy,setBusy]=useState(''),[profiles,setProfiles]=useState<YoutubeProfile[]>([]),[googleConfig,setGoogleConfig]=useState<GoogleConfigStatus>(),[statsBusy,setStatsBusy]=useState(false),[statsProgress,setStatsProgress]=useState<ChannelStatisticsRefreshProgress>({done:0,total:0});
+  const [fleetAudit,setFleetAudit]=useState<{done:number;total:number;confirmed:number;partial:number;blocked:number;searches:number;errors:number}|null>(null);
   const [,setQuotaTick]=useState(0);
   const signature=channels.map(c=>`${c.id}:${c.name}:${c.enabled}:${c.cadenceDays}:${c.scheduleMode||'interval'}:${c.publishIntervalDays||''}:${c.publishDays||''}:${c.pauseDays||''}:${c.patternAnchorDate||''}:${c.youtubeProfileId||''}`).join('|');
 
@@ -203,13 +204,20 @@ export function ChannelRunway(){
 
   async function refreshAllStats(){
     if(statsBusy)return;
-    setStatsBusy(true);setStatsProgress({done:0,total:active.length});
+    setStatsBusy(true);setStatsProgress({done:0,total:active.length});setFleetAudit(null);
     try{
-      const result=await refreshAllChannelData(active.map(c=>c.id));
+      const result=await refreshAllChannelData(active.map(c=>c.id),progress=>{
+        setStatsProgress({done:progress.done,total:progress.total});
+      });
       setSnapshot(loadChannelRunwayStore());
-      setStatsProgress({done:active.length,total:active.length});
+      setStatsProgress({done:result.owner?.rows.length||0,total:active.length});
       const owner=result.owner,counts=owner?.counts;
       const updated=owner?.updated||0;
+      setFleetAudit({
+        done:owner?.rows.length||0,total:active.length,confirmed:counts?.UPDATED||0,
+        partial:counts?.PARTIAL_DATA||0,blocked:(counts?.UNLINKED||0)+(counts?.MISMATCH||0)+(counts?.DUPLICATE||0)+(counts?.OAUTH_BLOCKED||0)+(counts?.QUOTA_STOPPED||0),
+        searches:owner?.deepSearchChannels||0,errors:result.errors.length+(counts?.API_FAILED||0)+(counts?.PERSISTENCE_FAILED||0)
+      });
       const skipped=[
         counts?.UNLINKED?`UNLINKED ${counts.UNLINKED}`:'',
         counts?.MISMATCH?`MISMATCH ${counts.MISMATCH}`:'',
@@ -222,9 +230,12 @@ export function ChannelRunway(){
       ].filter(Boolean).join(' • ');
       const stats=result.stats;
       const complete=Boolean(owner&&updated===active.length&&!owner.failed&&!owner.stoppedForQuota&&!result.errors.length&&(!stats||(!stats.failed&&!stats.credentialBlocked)));
-      const text=`Обновлено ${updated} / ${active.length} • inventory API ${owner?.apiRequests||0} • inventory quota ${owner?.quotaUnits||0} • Render READY ${result.local.ready} • local quota 0${skipped?' • '+skipped:''}`;
+      const text=`Проверено ${owner?.rows.length||0}/${active.length} • подтверждено ${updated} • глубокая сверка ${owner?.deepSearchChannels||0} • inventory API ${owner?.apiRequests||0} • inventory quota ${owner?.quotaUnits||0} • Render READY ${result.local.ready} • local quota 0${skipped?' • '+skipped:''}`;
       toast((complete?'✓ ':'⚠ ')+text);
-    }catch(e){toast(`Обновление всех каналов: ${String(e)}`)}
+    }catch(e){
+      setFleetAudit({done:0,total:active.length,confirmed:0,partial:0,blocked:0,searches:0,errors:1});
+      toast(`Обновление всех каналов: ${String(e)}`);
+    }
     finally{setStatsBusy(false)}
   }
   async function refreshRowStats(channel:Channel){
@@ -239,6 +250,15 @@ export function ChannelRunway(){
       <div><small>YOUTUBE RUNWAY • LOCAL RESERVE SEPARATE</small><h3>Запас контента</h3><p>Главный ориентир — подтверждённая дата, до которой видео уже есть на YouTube. Локальный Render показан отдельно и никогда не продлевает YouTube-даты.</p></div>
       <div className="headerActions"><span className="localOnlyBadge">LOCAL READY • ZERO API</span><button disabled={statsBusy||!active.length} onClick={()=>void refreshAllStats()}>{statsBusy?`↻ ${statsProgress.done} / ${statsProgress.total}`:'↻ ОБНОВИТЬ ВСЕ КАНАЛЫ'}</button></div>
     </div>
+    {fleetAudit&&<div className="runwayFleetAudit" role="status">
+      <b>Анализ каналов: {fleetAudit.done}/{fleetAudit.total}</b>
+      <span className="fleetOk">Подтверждено {fleetAudit.confirmed}</span>
+      <span className="fleetPartial">Неполные данные {fleetAudit.partial}</span>
+      <span className="fleetBlocked">Недоступно {fleetAudit.blocked}</span>
+      <span>Глубокая сверка {fleetAudit.searches}</span>
+      {fleetAudit.errors>0&&<span className="fleetError">Ошибки {fleetAudit.errors}</span>}
+      {fleetAudit.done!==fleetAudit.total&&<strong>Не все каналы проверены!</strong>}
+    </div>}
     {rowFailures>0&&<div className="errorBox"><b>Часть данных «Плана каналов» повреждена или несовместима</b><p>VYRON пропустил {rowFailures} проблемных каналов вместо падения всего интерфейса. Каналы, OAuth и настройки не изменены.</p></div>}
 
     <div className="runwaySummary">
@@ -286,7 +306,7 @@ export function ChannelRunway(){
           <span>{scheduleFrequencyTruthLabel(channel,record)}</span>
           <span className="runwayQuota">{uploadLimitKnown?<><b>{uploadRemaining}</b><small>доступно</small></>:<><b>—</b><small>лимит проекта не подтверждён</small></>}</span>
           <span className={`runwayStatus ${rowTone}`}><i>{meta.icon}</i>{meta.label}</span>
-          <span>{linkedByLocalId.has(channel.id)?<><button disabled={busy===channel.id} onClick={()=>void syncChannel(channel)}>{busy===channel.id?'СИНХРОНИЗАЦИЯ…':'ОБНОВИТЬ РАСПИСАНИЕ'}</button><button disabled={busy===`stats:${channel.id}`||statsBusy} onClick={()=>void refreshRowStats(channel)}>{busy===`stats:${channel.id}`?'↻…':'↻ YT'}</button><button onClick={()=>openStatistics(channel)}>Статистика</button></>:<button onClick={()=>openAccounts(channel)}>Подключить</button>}</span>
+          <span>{linkedByLocalId.has(channel.id)?<><button disabled={statsBusy||busy===channel.id} onClick={()=>void syncChannel(channel)}>{busy===channel.id?'СИНХРОНИЗАЦИЯ…':'ОБНОВИТЬ РАСПИСАНИЕ'}</button><button disabled={busy===`stats:${channel.id}`||statsBusy} onClick={()=>void refreshRowStats(channel)}>{busy===`stats:${channel.id}`?'↻…':'↻ YT'}</button><button onClick={()=>openStatistics(channel)}>Статистика</button></>:<button onClick={()=>openAccounts(channel)}>Подключить</button>}</span>
         </div>
       })}
     </div>
