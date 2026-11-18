@@ -121,7 +121,9 @@ export function scheduledContentDays(snapshot,now=new Date()){
  // A complete owner-authorized uploads playlist scan confirms zero future publications as 0.
  const future=(snapshot.videos||[]).map(x=>dateAt(x.publishAt))
    .filter(n=>Number.isFinite(n)&&n>now.getTime());
- if(!future.length)return 0;
+ // A full uploads-playlist scan does not prove there are zero scheduled uploads.
+ // Without at least one owner-confirmed future publishAt there is no runway value.
+ if(!future.length)return null;
  const days=n=>{
    const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Krasnoyarsk',
      year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(n));
