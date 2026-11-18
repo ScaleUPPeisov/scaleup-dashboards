@@ -206,6 +206,10 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
       expect(r.status).toBe('no-data');
       expect(r.runwayDays).toBeUndefined();
       expect(r.scheduledUntil).toBe('2026-12-12');
+      const afterReload=recalculateChannelRunway([channel()],new Date(),false,storage as any).channels.lumiere;
+      expect(afterReload.dataState).toBe('PARTIAL_DATA');
+      expect(afterReload.runwayDays).toBeUndefined();
+      expect(afterReload.scheduledUntil).toBe('2026-12-12');
     }finally{vi.useRealTimers()}
   });
 
