@@ -37,12 +37,12 @@ async function ensureServiceWorker() {
   }
   return serviceWorkerRegistrationPromise;
 }
-let serviceWorkerReloading=false;
+// Never force reload while the owner is navigating or a diagnostic is running.
+// A newly active SW handles the next navigation; the current session stays intact.
 if('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('controllerchange',()=>{
-    if(serviceWorkerReloading)return;
-    serviceWorkerReloading=true;
-    window.location.reload();
+    const result=$('diag-version-result');
+    if(result)result.textContent='Service Worker обновлён. Для загрузки новых экранов переоткрой приложение.';
   });
   void ensureServiceWorker().catch(()=>{});
 }
