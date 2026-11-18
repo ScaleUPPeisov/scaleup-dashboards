@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - "feature/vyron-control-*"
+      - "release/vyron-control-production"
     paths:
       - "apps/vyron-control/**"
       - ".github/workflows/vyron-control-ci.yml"
