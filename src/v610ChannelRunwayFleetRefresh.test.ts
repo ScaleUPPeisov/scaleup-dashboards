@@ -379,7 +379,9 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
 
  it('owner history recovery is bounded to 50 IDs with Scheduled IDs ranked ahead',()=>{
    const ch=channel('c',{youtubeProfileId:'p',youtubeChannelId:'UC-c'});
-   const history=Array.from({length:75},(_,i)=>({
+   const history:Array<{
+     channelId:string;youtubeChannelId:string;profileId:string;status:string;youtubeVideoId:string;publishAt?:string
+   }>=Array.from({length:75},(_,i)=>({
       channelId:'c',youtubeChannelId:'UC-c',profileId:'p',status:'UPLOADED',
       youtubeVideoId:'VID'+String(i).padStart(8,'0'),
    }));
