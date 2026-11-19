@@ -119,6 +119,7 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
   fixture.profiles=channels.map(c=>profile(c.youtubeProfileId!,c.youtubeChannelId!));
   for(const ch of channels)fixture.responses.set(ch.youtubeProfileId!,{
    channelId:ch.youtubeChannelId!,videos:[],scheduleComplete:true,syncComplete:true,complete:true,
+   searchUsed:true,searchExhausted:true,searchError:null,
    fullSyncApiRequests:2,fullSyncEstimatedQuotaCost:2
   });
   localStorage.setItem(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify({version:1,channels:Object.fromEntries(
@@ -285,6 +286,19 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
    expect(result.deepSearchExhaustedChannels||0).toBe(0);
    expect(result.searchCalls).toBe(4);
    expect(loadChannelRunwayStore().channels['search-limited'].runwayDays).toBeUndefined();
+ });
+
+ it('a failed channels.list before search cannot count as a deep owner Search',async()=>{
+   const ch=channel('early-error',{youtubeProfileId:'p-early-error',youtubeChannelId:'UC-early-error'});
+   fixture.profiles=[profile('p-early-error','UC-early-error')];
+   vi.mocked(api.youtubeListExisting).mockRejectedValueOnce(new Error('PRE_SEARCH_CHANNELS_LIST_FAILED'));
+   const result=await refreshOwnerInventoriesAuthoritative([ch],true,fixture.profiles);
+   expect(result.rows[0].status).toBe('API_FAILED');
+   expect(result.deepSearchChannels||0).toBe(0);
+   expect(result.searchCalls||0).toBe(0);
+   expect(result.deepSearchFailedChannels||0).toBe(0);
+   expect(result.deepSearchExhaustedChannels||0).toBe(0);
+   expect(result.counts.API_FAILED).toBe(1);
  });
 
 });
