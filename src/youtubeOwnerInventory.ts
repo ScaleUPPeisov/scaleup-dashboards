@@ -248,7 +248,9 @@ export async function refreshOwnerInventoriesAuthoritative(
       const targeted=force&&allowedSearchPages>0&&
         Date.now()-(ownerSearchAt.get(channel.id)||0)>=OWNER_SEARCH_COOLDOWN_MS&&
         (manualOne||(unverified&&fleetDeepSearches<MANUAL_FLEET_DEEP_SEARCH_CHANNEL_CAP));
-      if(targeted){fleetDeepSearches++;summary.deepSearchChannels=fleetDeepSearches}
+      // Reserve the fleet budget here, but do NOT count an actual Search
+      // request until native confirms it attempted search.list.
+      if(targeted)fleetDeepSearches++;
       const cachedFuture=[...Object.values(prior?.baseline||{}),...(prior?.videos||[])]
         .filter(v=>v.privacyStatus==='private'&&Boolean(v.publishAt)&&Date.parse(v.publishAt!)>Date.now())
         .map(v=>v.id);
@@ -260,6 +262,7 @@ export async function refreshOwnerInventoriesAuthoritative(
       ownerAttemptAt.set(channel.id,Date.now());
       const result=await api.youtubeListExisting(linked.profile.id,5000,operationId,targeted,knownScheduledIds,targeted?allowedSearchPages:0);
       if(targeted&&result.searchUsed===true){
+        summary.deepSearchChannels=(summary.deepSearchChannels||0)+1;
         ownerSearchAt.set(channel.id,Date.now());
         if(result.searchError)summary.deepSearchFailedChannels=(summary.deepSearchFailedChannels||0)+1;
         if(result.searchExhausted===true&&!result.searchError)
