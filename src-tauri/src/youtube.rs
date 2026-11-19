@@ -4047,6 +4047,18 @@ fn owner_search_query_parameters()->[(&'static str,&'static str);5]{
         ("order","date"),
     ]
 }
+// Detect repeated Search pagination tokens: a capped loop must not silently
+// accept a provider pagination cycle as evidence of exhaustive coverage.
+fn owner_search_read_next_page(
+    response:&Value,
+    seen:&mut std::collections::HashSet<String>,
+)->Result<Option<String>,&'static str>{
+    match response.get("nextPageToken").and_then(Value::as_str).map(str::trim).filter(|s|!s.is_empty()){
+        Some(token) if !seen.insert(token.to_string())=>Err("OWNER_SEARCH_PAGINATION_CYCLE"),
+        Some(token)=>Ok(Some(token.to_string())),
+        None=>Ok(None),
+    }
+}
 fn owner_search_page_budget(requested:Option<u32>)->u32{
     // The frontend reserves Search capacity; native code enforces a hard cap.
     requested.unwrap_or(2).clamp(1,12)
@@ -4188,6 +4200,7 @@ pub async fn youtube_list_existing_videos(
     if verify{
         search_used=true;
         let mut search_page:Option<String>=None;
+        let mut search_page_tokens=std::collections::HashSet::<String>::new();
         // The caller reserves real Search Queries capacity before invoking.
         // Full-fleet: <=4 pages/channel; single owner audit: <=12 pages.
         // A truncated search must never be mistaken for proof of zero Scheduled.
@@ -4219,7 +4232,14 @@ pub async fn youtube_list_existing_videos(
             search_candidate_count+=append_owner_search_candidates(
                 &value,expected,&seen,&mut supplement_seen,&mut supplemental_ids
             );
-            search_page=value.get("nextPageToken").and_then(Value::as_str).map(str::to_string);
+            search_page=match owner_search_read_next_page(&value,&mut search_page_tokens){
+                Ok(next)=>next,
+                Err(code)=>{
+                    search_error_code=Some(code.to_string());
+                    search_error=Some(code.to_string());
+                    break
+                }
+            };
             if search_page.is_none(){search_exhausted=true;break}
         }
         if !search_exhausted&&search_error.is_none(){search_limit_reached=true}
@@ -7979,6 +7999,15 @@ mod v241_oauth_singleflight_tests {
 #[cfg(test)]
 mod false_zero_owner_search_regression_tests{
  use super::*;
+ #[test]fn owner_search_repeated_page_token_never_reports_exhausted(){
+   let mut visited=std::collections::HashSet::new();
+   assert_eq!(owner_search_read_next_page(&json!({"nextPageToken":"page-a"}),&mut visited),Ok(Some("page-a".to_string())));
+   assert_eq!(owner_search_read_next_page(&json!({"nextPageToken":"page-b"}),&mut visited),Ok(Some("page-b".to_string())));
+   assert_eq!(owner_search_read_next_page(&json!({"nextPageToken":"page-a"}),&mut visited),Err("OWNER_SEARCH_PAGINATION_CYCLE"));
+   assert_eq!(owner_search_read_next_page(&json!({}),&mut visited),Ok(None));
+   assert_eq!(visited.len(),2);
+ }
+
  #[test]fn owner_search_query_uses_single_authenticated_owner_filter_and_safe_limits(){
    let query=owner_search_query_parameters();
    assert_eq!(query.len(),5);
