@@ -143,6 +143,8 @@ export type OwnerInventoryRefreshSummary={
   searchCalls?:number;
   counts:Record<OwnerInventoryFleetStatus,number>;
   deepSearchChannels?:number;
+  deepSearchFailedChannels?:number;
+  deepSearchExhaustedChannels?:number;
 };
 export type OwnerInventoryFleetProgress={done:number;total:number;channelName:string;status:OwnerInventoryFleetStatus};
 
@@ -256,7 +258,12 @@ export async function refreshOwnerInventoriesAuthoritative(
         .filter(id=>/^[A-Za-z0-9_-]{11}$/.test(id)).slice(0,50):[];
       ownerAttemptAt.set(channel.id,Date.now());
       const result=await api.youtubeListExisting(linked.profile.id,5000,operationId,targeted,knownScheduledIds,targeted?allowedSearchPages:0);
-      if(targeted&&result.searchUsed===true)ownerSearchAt.set(channel.id,Date.now());
+      if(targeted&&result.searchUsed===true){
+        ownerSearchAt.set(channel.id,Date.now());
+        if(result.searchError)summary.deepSearchFailedChannels=(summary.deepSearchFailedChannels||0)+1;
+        if(result.searchExhausted===true&&!result.searchError)
+          summary.deepSearchExhaustedChannels=(summary.deepSearchExhaustedChannels||0)+1;
+      }
       const backendApi=Number(result.fullSyncApiRequests),backendQuota=Number(result.fullSyncEstimatedQuotaCost);
       const fallback=!Number.isFinite(backendApi)||backendApi<1?youtubeOperationActualCost(operationId):null;
       const apiRequests=Number.isFinite(backendApi)&&backendApi>=1?backendApi:Object.values(fallback?.methods||{}).reduce((n:number,x:any)=>n+Number(x.calls||0),0);
@@ -276,7 +283,12 @@ export async function refreshOwnerInventoriesAuthoritative(
           Boolean(v.publishAt)&&Number.isFinite(Date.parse(v.publishAt!))&&Date.parse(v.publishAt!)>Date.now());
         const observedThrough=observed.map(v=>v.publishAt!).sort((a,b)=>Date.parse(a)-Date.parse(b)).at(-1);
         const diagnosticReasons=Array.isArray(result.incompleteReasons)?result.incompleteReasons.slice(0,12):[];
-        if(result.searchError)diagnosticReasons.push('OWNER_SEARCH_ERROR: '+String(result.searchError).slice(0,220));
+        // Native Rust emits allowlisted diagnostic codes. Never persist raw
+        // Google messages that could contain user or OAuth account metadata.
+        if(result.searchErrorCode&&/^[A-Z][A-Z0-9_]*$/.test(result.searchErrorCode))
+          diagnosticReasons.push(result.searchErrorCode);
+        else if(result.searchError&&!diagnosticReasons.includes('OWNER_SEARCH_FAILED'))
+          diagnosticReasons.push('OWNER_SEARCH_FAILED');
         if(result.searchUsed&&!result.searchExhausted&&!diagnosticReasons.includes('OWNER_SEARCH_NOT_EXHAUSTED'))
           diagnosticReasons.push('OWNER_SEARCH_NOT_EXHAUSTED');
         const reason=ownerMixed?'AUTHORITATIVE_VIDEO_CHANNEL_MISMATCH':'AUTHORITATIVE_INVENTORY_INCOMPLETE';
