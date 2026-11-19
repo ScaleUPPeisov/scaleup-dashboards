@@ -301,4 +301,59 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
    expect(result.counts.API_FAILED).toBe(1);
  });
 
+ it('first systemic Google 400 rejects owner Search template once, never repeats for 32 peers',async()=>{
+   const channels=['alpha','beta','gamma'].map(id=>channel(id,{youtubeProfileId:'p-'+id,youtubeChannelId:'UC-'+id}));
+   fixture.profiles=channels.map(ch=>profile(ch.youtubeProfileId!,ch.youtubeChannelId!));
+   fixture.responses.set('p-alpha',{
+     channelId:'UC-alpha',videos:[],syncComplete:true,complete:true,scheduleComplete:false,
+     searchUsed:true,searchExhausted:false,searchCalls:1,
+     searchError:'OWNER_SEARCH_HTTP_400_INVALID_SEARCH_FILTER',
+     searchErrorCode:'OWNER_SEARCH_HTTP_400_INVALID_SEARCH_FILTER',
+     incompleteReasons:['OWNER_SEARCH_FAILED','PLAYLIST_TOTAL_METADATA_MISMATCH'],
+     fullSyncApiRequests:4,fullSyncEstimatedQuotaCost:3
+   });
+   for(const id of ['beta','gamma'])fixture.responses.set('p-'+id,{
+     channelId:'UC-'+id,videos:[],syncComplete:true,complete:true,scheduleComplete:false,
+     searchUsed:false,searchExhausted:false,searchCalls:0,searchError:null,
+     incompleteReasons:['PLAYLIST_TOTAL_METADATA_MISMATCH'],
+     fullSyncApiRequests:3,fullSyncEstimatedQuotaCost:3
+   });
+   const result=await refreshOwnerInventoriesAuthoritative(channels,true,fixture.profiles);
+   const calls=(api.youtubeListExisting as any).mock.calls as any[][];
+   expect(calls).toHaveLength(3);
+   expect(calls.map(args=>args[3])).toEqual([true,false,false]);
+   expect(result.deepSearchChannels).toBe(1);
+   expect(result.deepSearchFailedChannels).toBe(1);
+   expect(result.deepSearchSystemicStopCode).toBe('OWNER_SEARCH_HTTP_400_INVALID_SEARCH_FILTER');
+   expect(result.searchCalls).toBe(1);
+   expect(result.rows.map(row=>row.status)).toEqual(['PARTIAL_DATA','PARTIAL_DATA','PARTIAL_DATA']);
+   for(const ch of channels)expect(loadChannelRunwayStore().channels[ch.id].runwayDays).toBeUndefined();
+ });
+
+ it('Search error on one owner profile does not block other channels for a non-systemic 403',async()=>{
+   const channels=['p1','p2'].map(id=>channel(id,{youtubeProfileId:id,youtubeChannelId:'UC-'+id}));
+   fixture.profiles=channels.map(ch=>profile(ch.youtubeProfileId!,ch.youtubeChannelId!));
+   fixture.responses.set('p1',{
+     channelId:'UC-p1',videos:[],syncComplete:true,complete:true,scheduleComplete:false,
+     searchUsed:true,searchExhausted:false,searchCalls:1,
+     searchError:'OWNER_SEARCH_HTTP_403_INSUFFICIENT_PERMISSIONS',
+     searchErrorCode:'OWNER_SEARCH_HTTP_403_INSUFFICIENT_PERMISSIONS',
+     incompleteReasons:['OWNER_SEARCH_FAILED'],
+     fullSyncApiRequests:4,fullSyncEstimatedQuotaCost:3
+   });
+   fixture.responses.set('p2',{
+     channelId:'UC-p2',videos:[],syncComplete:true,complete:true,scheduleComplete:false,
+     searchUsed:true,searchExhausted:false,searchCalls:1,searchError:null,
+     incompleteReasons:['OWNER_SEARCH_NOT_EXHAUSTED'],
+     fullSyncApiRequests:4,fullSyncEstimatedQuotaCost:3
+   });
+   const result=await refreshOwnerInventoriesAuthoritative(channels,true,fixture.profiles);
+   const calls=(api.youtubeListExisting as any).mock.calls as any[][];
+   expect(calls.map(x=>x[3])).toEqual([true,true]);
+   expect(result.deepSearchSystemicStopCode).toBeUndefined();
+   expect(result.deepSearchChannels).toBe(2);
+   expect(result.deepSearchFailedChannels).toBe(1);
+   expect(result.deepSearchPageLimitedChannels).toBe(1);
+ });
+
 });
