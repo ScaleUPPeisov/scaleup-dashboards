@@ -16,7 +16,7 @@ Object.defineProperty(globalThis,'localStorage',{value:storage,configurable:true
 
 const fixture=vi.hoisted(()=>({
  profiles:[] as YoutubeProfile[],
- responses:new Map<string,{videos:YoutubeExistingVideo[];syncComplete:boolean;complete:boolean;scheduleComplete:boolean;channelId:string;fullSyncApiRequests?:number;fullSyncEstimatedQuotaCost?:number;searchCalls?:number;incompleteReasons?:string[]}>(),
+ responses:new Map<string,{videos:YoutubeExistingVideo[];syncComplete:boolean;complete:boolean;scheduleComplete:boolean;channelId:string;fullSyncApiRequests?:number;fullSyncEstimatedQuotaCost?:number;searchCalls?:number;searchUsed?:boolean;searchExhausted?:boolean;searchError?:string|null;searchErrorCode?:string|null;incompleteReasons?:string[]}>(),
  inventoryFiles:new Map<string,any>()
 }));
 vi.mock('./api',()=>({
@@ -212,6 +212,57 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
   expect(result.rows[0].status).toBe('API_FAILED');
   expect(result.counts.API_FAILED).toBe(1);
   expect(loadChannelRunwayStore().channels.wrong?.runwayDays).toBeUndefined();
+ });
+
+ it('real HTTP 400 Google owner-search reason is preserved as safe actionable code, not a false zero',async()=>{
+   const ch=channel('owner-400',{youtubeProfileId:'p-owner-400',youtubeChannelId:'UC-owner-400'});
+   fixture.profiles=[profile('p-owner-400','UC-owner-400')];
+   fixture.responses.set('p-owner-400',{
+     channelId:'UC-owner-400',videos:[],syncComplete:true,complete:true,scheduleComplete:false,
+     searchUsed:true,searchExhausted:false,
+     searchError:'OWNER_SEARCH_HTTP_400_INVALID_SEARCH_FILTER',
+     searchErrorCode:'OWNER_SEARCH_HTTP_400_INVALID_SEARCH_FILTER',
+     incompleteReasons:['PLAYLIST_TOTAL_METADATA_MISMATCH','OWNER_SEARCH_FAILED','OWNER_SEARCH_HTTP_400_INVALID_SEARCH_FILTER'],
+     searchCalls:1,fullSyncApiRequests:5,fullSyncEstimatedQuotaCost:4
+   });
+   const result=await refreshOwnerInventoriesAuthoritative([ch],true,fixture.profiles);
+   expect(result.rows[0].status).toBe('PARTIAL_DATA');
+   expect(result.counts.API_FAILED).toBe(0);
+   expect(result.deepSearchChannels).toBe(1);
+   expect(result.deepSearchFailedChannels).toBe(1);
+   expect(result.deepSearchExhaustedChannels||0).toBe(0);
+   expect(result.searchCalls).toBe(1);
+   expect(result.quotaUnits).toBe(4);
+   const rec=loadChannelRunwayStore().channels['owner-400'];
+   expect(rec.lastRefreshError).toContain('OWNER_SEARCH_HTTP_400_INVALID_SEARCH_FILTER');
+   expect(rec.dataState).toBe('PARTIAL_DATA');
+   expect(rec.runwayDays).toBeUndefined();
+   expect(rec.scheduledVideoCount).toBe(0);
+ });
+
+ it('exhausted Search is not automatically proof of full Scheduled coverage',async()=>{
+   const ch=channel('search-exhausted',{youtubeProfileId:'p-search-exhausted',youtubeChannelId:'UC-search-exhausted'});
+   fixture.profiles=[profile('p-search-exhausted','UC-search-exhausted')];
+   fixture.responses.set('p-search-exhausted',{
+     channelId:'UC-search-exhausted',videos:[],syncComplete:true,complete:true,scheduleComplete:false,
+     searchUsed:true,searchExhausted:true,searchError:null,
+     incompleteReasons:['PLAYLIST_TOTAL_METADATA_MISMATCH','SCHEDULE_EMPTY_NOT_INDEPENDENTLY_VERIFIED'],
+     fullSyncApiRequests:5,fullSyncEstimatedQuotaCost:4,searchCalls:1
+   });
+   const result=await refreshOwnerInventoriesAuthoritative([ch],true,fixture.profiles);
+   expect(result.deepSearchChannels).toBe(1);
+   expect(result.deepSearchFailedChannels||0).toBe(0);
+   expect(result.deepSearchExhaustedChannels).toBe(1);
+   expect(result.counts.PARTIAL_DATA).toBe(1);
+   expect(loadChannelRunwayStore().channels['search-exhausted'].dataState).toBe('PARTIAL_DATA');
+ });
+
+ it('fleet UI makes no claim that attempted Search equals verified Search',()=>{
+   const s=readFileSync('src/ChannelRunway.tsx','utf8');
+   expect(s).toContain('Search попыток {fleetAudit.searches}');
+   expect(s).toContain('ошибок {fleetAudit.searchFailures}');
+   expect(s).toContain('страниц исчерпано {fleetAudit.searchExhausted}');
+   expect(s).toContain('preciseSearchCodes');
  });
 
 });
