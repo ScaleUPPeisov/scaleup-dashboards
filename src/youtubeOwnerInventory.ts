@@ -146,6 +146,7 @@ export type OwnerInventoryRefreshSummary={
   deepSearchFailedChannels?:number;
   deepSearchExhaustedChannels?:number;
   deepSearchPageLimitedChannels?:number;
+  deepSearchSystemicStopCode?:string;
 };
 export type OwnerInventoryFleetProgress={done:number;total:number;channelName:string;status:OwnerInventoryFleetStatus};
 
@@ -199,7 +200,7 @@ export async function refreshOwnerInventoriesAuthoritative(
   const unlinked=new Set([...classification.unlinked,...classification.orphans].map(c=>c.id));
   const mismatched=new Set(classification.mismatched.map(c=>c.id));
   const eligibleById=new Map(classification.eligible.map(x=>[x.channel.id,x]));
-  let quotaStopped=false,fleetDeepSearches=0;
+  let quotaStopped=false,fleetDeepSearches=0,systemicSearchFilterError:string|undefined;
   const report=(row:OwnerInventoryRefreshRow)=>{
     pushOwnerRow(summary,row);
     // Include every channel, including unlinked/quota-blocked, in progress.
@@ -245,7 +246,10 @@ export async function refreshOwnerInventoriesAuthoritative(
       // Individual owner reconciliations may inspect more result pages, while
       // the full 33-channel audit stays bounded and cannot exhaust the bucket.
       const allowedSearchPages=force?Math.max(0,Math.min(manualOne?12:4,Math.floor(searchAvailable)-MANUAL_FLEET_SEARCH_MIN_AVAILABLE)):0;
-      const targeted=force&&allowedSearchPages>0&&
+      // A provider rejection of this query template is systemic, not
+      // evidence that 33 individual channels need the same failed request.
+      // Continue safe playlist/videos inventory, but stop repeating search.list.
+      const targeted=force&&!systemicSearchFilterError&&allowedSearchPages>0&&
         Date.now()-(ownerSearchAt.get(channel.id)||0)>=OWNER_SEARCH_COOLDOWN_MS&&
         (manualOne||(unverified&&fleetDeepSearches<MANUAL_FLEET_DEEP_SEARCH_CHANNEL_CAP));
       // Reserve the fleet budget here, but do NOT count an actual Search
@@ -265,6 +269,11 @@ export async function refreshOwnerInventoriesAuthoritative(
         summary.deepSearchChannels=(summary.deepSearchChannels||0)+1;
         ownerSearchAt.set(channel.id,Date.now());
         if(result.searchError)summary.deepSearchFailedChannels=(summary.deepSearchFailedChannels||0)+1;
+        if(result.searchErrorCode==='OWNER_SEARCH_HTTP_400_INVALID_SEARCH_FILTER'||
+           result.searchErrorCode==='OWNER_SEARCH_HTTP_400_INCOMPATIBLE_PARAMETERS'){
+          systemicSearchFilterError=result.searchErrorCode;
+          summary.deepSearchSystemicStopCode=result.searchErrorCode;
+        }
         if(result.searchExhausted===true&&!result.searchError)
           summary.deepSearchExhaustedChannels=(summary.deepSearchExhaustedChannels||0)+1;
         if(result.searchExhausted!==true&&!result.searchError)
