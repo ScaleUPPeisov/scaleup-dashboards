@@ -94,7 +94,7 @@ export function ChannelRunway(){
   const liveSnapshots=useLiveInventory(s=>s.snapshots);
   const [snapshot,setSnapshot]=useState(()=>loadChannelRunwayStore());
   const [busy,setBusy]=useState(''),[profiles,setProfiles]=useState<YoutubeProfile[]>([]),[googleConfig,setGoogleConfig]=useState<GoogleConfigStatus>(),[statsBusy,setStatsBusy]=useState(false),[statsProgress,setStatsProgress]=useState<ChannelStatisticsRefreshProgress>({done:0,total:0});
-  const [fleetAudit,setFleetAudit]=useState<{done:number;total:number;confirmed:number;partial:number;blocked:number;searches:number;searchFailures:number;searchExhausted:number;searchPageLimited:number;errors:number}|null>(null);
+  const [fleetAudit,setFleetAudit]=useState<{done:number;total:number;confirmed:number;partial:number;blocked:number;searches:number;searchFailures:number;searchExhausted:number;searchPageLimited:number;searchHalted?:string;errors:number}|null>(null);
   const [,setQuotaTick]=useState(0);
   const signature=channels.map(c=>`${c.id}:${c.name}:${c.enabled}:${c.cadenceDays}:${c.scheduleMode||'interval'}:${c.publishIntervalDays||''}:${c.publishDays||''}:${c.pauseDays||''}:${c.patternAnchorDate||''}:${c.youtubeProfileId||''}`).join('|');
 
@@ -221,7 +221,7 @@ export function ChannelRunway(){
       setFleetAudit({
         done:owner?.rows.length||0,total:active.length,confirmed:counts?.UPDATED||0,
         partial:counts?.PARTIAL_DATA||0,blocked:(counts?.UNLINKED||0)+(counts?.MISMATCH||0)+(counts?.DUPLICATE||0)+(counts?.OAUTH_BLOCKED||0)+(counts?.QUOTA_STOPPED||0),
-        searches:owner?.deepSearchChannels||0,searchFailures:owner?.deepSearchFailedChannels||0,searchExhausted:owner?.deepSearchExhaustedChannels||0,searchPageLimited:owner?.deepSearchPageLimitedChannels||0,errors:result.errors.length+(counts?.API_FAILED||0)+(counts?.PERSISTENCE_FAILED||0)
+        searches:owner?.deepSearchChannels||0,searchFailures:owner?.deepSearchFailedChannels||0,searchExhausted:owner?.deepSearchExhaustedChannels||0,searchPageLimited:owner?.deepSearchPageLimitedChannels||0,searchHalted:owner?.deepSearchSystemicStopCode,errors:result.errors.length+(counts?.API_FAILED||0)+(counts?.PERSISTENCE_FAILED||0)
       });
       const skipped=[
         counts?.UNLINKED?`UNLINKED ${counts.UNLINKED}`:'',
@@ -235,7 +235,7 @@ export function ChannelRunway(){
       ].filter(Boolean).join(' • ');
       const stats=result.stats;
       const complete=Boolean(owner&&updated===active.length&&!owner.failed&&!owner.stoppedForQuota&&!result.errors.length&&(!stats||(!stats.failed&&!stats.credentialBlocked)));
-      const text=`Проверено ${owner?.rows.length||0}/${active.length} • подтверждено ${updated} • Search попыток ${owner?.deepSearchChannels||0} • Search ошибок ${owner?.deepSearchFailedChannels||0} • Search завершён ${owner?.deepSearchExhaustedChannels||0} • лимит страниц ${owner?.deepSearchPageLimitedChannels||0} • inventory API ${owner?.apiRequests||0} • general quota ${owner?.quotaUnits||0} • search calls ${owner?.searchCalls||0} • Render READY ${result.local.ready} • local quota 0${skipped?' • '+skipped:''}`;
+      const text=`Проверено ${owner?.rows.length||0}/${active.length} • подтверждено ${updated} • Search попыток ${owner?.deepSearchChannels||0} • Search ошибок ${owner?.deepSearchFailedChannels||0} • Search завершён ${owner?.deepSearchExhaustedChannels||0} • лимит страниц ${owner?.deepSearchPageLimitedChannels||0}${owner?.deepSearchSystemicStopCode?' • Search остановлен '+owner.deepSearchSystemicStopCode:''} • inventory API ${owner?.apiRequests||0} • general quota ${owner?.quotaUnits||0} • search calls ${owner?.searchCalls||0} • Render READY ${result.local.ready} • local quota 0${skipped?' • '+skipped:''}`;
       toast((complete?'✓ ':'⚠ ')+text);
     }catch(e){
       setFleetAudit({done:0,total:active.length,confirmed:0,partial:0,blocked:0,searches:0,searchFailures:0,searchExhausted:0,searchPageLimited:0,errors:1});
@@ -261,6 +261,7 @@ export function ChannelRunway(){
       <span className="fleetPartial">Неполные данные {fleetAudit.partial}</span>
       <span className="fleetBlocked">Недоступно {fleetAudit.blocked}</span>
       <span>Search попыток {fleetAudit.searches} • ошибок {fleetAudit.searchFailures} • до конца {fleetAudit.searchExhausted} • лимит страниц {fleetAudit.searchPageLimited}</span>
+      {fleetAudit.searchHalted&&<span className="fleetError">Search остановлен: {fleetAudit.searchHalted} • повторять тот же фильтр для остальных каналов запрещено</span>}
       {fleetAudit.errors>0&&<span className="fleetError">Ошибки {fleetAudit.errors}</span>}
       {fleetAudit.done!==fleetAudit.total&&<strong>Не все каналы проверены!</strong>}
     </div>}
