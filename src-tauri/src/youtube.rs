@@ -4016,6 +4016,25 @@ fn owner_schedule_reconciliation_reasons(
     if verified_supplement_scheduled>0{reasons.push("UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH")}
     reasons
 }
+// Classify provider search errors without storing raw text, URLs, account
+// identifiers, or OAuth credentials. A failed search cannot prove zero Scheduled.
+fn owner_search_safe_failure_code(status:u16,payload:&Value)->String{
+    let reason=payload.pointer("/error/errors/0/reason").and_then(Value::as_str).unwrap_or("");
+    let category=match reason{
+        "invalidSearchFilter"=>"INVALID_SEARCH_FILTER",
+        "incompatibleParameters"=>"INCOMPATIBLE_PARAMETERS",
+        "invalidChannelId"=>"INVALID_CHANNEL_ID",
+        "insufficientPermissions"=>"INSUFFICIENT_PERMISSIONS",
+        "forbidden"=>"FORBIDDEN",
+        "quotaExceeded"=>"QUOTA_EXCEEDED",
+        "rateLimitExceeded"=>"RATE_LIMIT_EXCEEDED",
+        "dailyLimitExceeded"=>"DAILY_LIMIT_EXCEEDED",
+        "authError"=>"AUTH_ERROR",
+        "backendError"=>"BACKEND_ERROR",
+        _=>"OTHER",
+    };
+    format!("OWNER_SEARCH_HTTP_{status}_{category}")
+}
 fn owner_search_page_budget(requested:Option<u32>)->u32{
     // The frontend reserves Search capacity; native code enforces a hard cap.
     requested.unwrap_or(2).clamp(1,12)
@@ -4147,6 +4166,7 @@ pub async fn youtube_list_existing_videos(
     let mut search_pages=0usize;
     let mut search_exhausted=false;
     let mut search_error:Option<String>=None;
+    let mut search_error_code:Option<String>=None;
     let mut search_candidate_count=0usize;
     let mut supplemental_ids=Vec::<String>::new();
     let mut supplement_seen=std::collections::HashSet::<String>::new();
@@ -4170,12 +4190,18 @@ pub async fn youtube_list_existing_videos(
             emit_youtube_api_request(&app,"search.list",operation_id.as_deref());
             let response=match request.send().await{
                 Ok(r)=>r,
-                Err(e)=>{search_error=Some(format!("OWNER_SEARCH_NETWORK: {e}"));break}
+                Err(_e)=>{
+                    search_error_code=Some("OWNER_SEARCH_NETWORK_ERROR".to_string());
+                    search_error=Some("OWNER_SEARCH_NETWORK_ERROR".to_string());
+                    break
+                }
             };
             let status=response.status();
             let value:Value=response.json().await.unwrap_or_else(|_|json!({}));
             if !status.is_success(){
-                search_error=Some(format!("OWNER_SEARCH_API: {}",youtube_error(&value,"Owner search unavailable")));
+                let code=owner_search_safe_failure_code(status.as_u16(),&value);
+                search_error=Some(code.clone());
+                search_error_code=Some(code);
                 break
             }
             search_candidate_count+=append_owner_search_candidates(
@@ -4276,6 +4302,7 @@ pub async fn youtube_list_existing_videos(
         search_limit_reached,search_exhausted,!supplemental_missing.is_empty(),
         verified_supplement_scheduled
     ){reason(code)}
+    if let Some(ref code)=search_error_code{reason(code)}
     let schedule_complete=reasons.is_empty();
     let observed_total=if playlist_exhausted&&!limit_truncated{unique_video_ids}else{std::cmp::max(playlist_reported_total,unique_video_ids)};
     let expected=if playlist_exhausted&&!limit_truncated{unique_video_ids}else{std::cmp::min(std::cmp::max(playlist_reported_total,unique_video_ids),limit)};
@@ -4330,6 +4357,7 @@ pub async fn youtube_list_existing_videos(
         "searchPagesFetched":search_pages,
         "searchExhausted":search_exhausted,
         "searchError":search_error,
+        "searchErrorCode":search_error_code,
         "knownScheduledIdsChecked":known_id_checks,
         "supplementalMissingCount":supplemental_missing.len(),
         "supplementalCandidateCount":search_candidate_count,
@@ -7939,6 +7967,21 @@ mod v241_oauth_singleflight_tests {
 #[cfg(test)]
 mod false_zero_owner_search_regression_tests{
  use super::*;
+ #[test]fn search_failure_diagnostic_is_safe_and_precise(){
+   let invalid=json!({"error":{"message":"sensitive private details", "errors":[{"reason":"invalidSearchFilter"}]}});
+   let insufficient=json!({"error":{"message":"some email@example.com", "errors":[{"reason":"insufficientPermissions"}]}});
+   let unknown=json!({"error":{"message":"untrusted arbitrary text", "errors":[{"reason":"token_with_private_id_123"}]}});
+   assert_eq!(owner_search_safe_failure_code(400,&invalid),"OWNER_SEARCH_HTTP_400_INVALID_SEARCH_FILTER");
+   assert_eq!(owner_search_safe_failure_code(403,&insufficient),"OWNER_SEARCH_HTTP_403_INSUFFICIENT_PERMISSIONS");
+   assert_eq!(owner_search_safe_failure_code(500,&unknown),"OWNER_SEARCH_HTTP_500_OTHER");
+   assert_eq!(owner_search_safe_failure_code(502,&json!({})),"OWNER_SEARCH_HTTP_502_OTHER");
+   for code in [owner_search_safe_failure_code(400,&invalid),owner_search_safe_failure_code(403,&insufficient),owner_search_safe_failure_code(500,&unknown)]{
+     assert!(code.chars().all(|ch|ch.is_ascii_uppercase()||ch.is_ascii_digit()||ch=='_'));
+     assert!(!code.contains("sensitive"));
+     assert!(!code.contains("email"));
+     assert!(!code.contains("token_with"));
+   }
+ }
  #[test]fn owner_search_page_budget_clamps_invalid_or_excessive_caller_values(){
    assert_eq!(owner_search_page_budget(None),2);
    assert_eq!(owner_search_page_budget(Some(0)),1);
