@@ -231,6 +231,7 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
    expect(result.deepSearchChannels).toBe(1);
    expect(result.deepSearchFailedChannels).toBe(1);
    expect(result.deepSearchExhaustedChannels||0).toBe(0);
+   expect(result.deepSearchPageLimitedChannels||0).toBe(0);
    expect(result.searchCalls).toBe(1);
    expect(result.quotaUnits).toBe(4);
    const rec=loadChannelRunwayStore().channels['owner-400'];
@@ -253,6 +254,7 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
    expect(result.deepSearchChannels).toBe(1);
    expect(result.deepSearchFailedChannels||0).toBe(0);
    expect(result.deepSearchExhaustedChannels).toBe(1);
+   expect(result.deepSearchPageLimitedChannels||0).toBe(0);
    expect(result.counts.PARTIAL_DATA).toBe(1);
    expect(loadChannelRunwayStore().channels['search-exhausted'].dataState).toBe('PARTIAL_DATA');
  });
@@ -261,8 +263,28 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
    const s=readFileSync('src/ChannelRunway.tsx','utf8');
    expect(s).toContain('Search попыток {fleetAudit.searches}');
    expect(s).toContain('ошибок {fleetAudit.searchFailures}');
-   expect(s).toContain('страниц исчерпано {fleetAudit.searchExhausted}');
+   expect(s).toContain('до конца {fleetAudit.searchExhausted}');
+   expect(s).toContain('лимит страниц {fleetAudit.searchPageLimited}');
    expect(s).toContain('preciseSearchCodes');
+ });
+
+ it('a Search page cap is not reported as completed or as a transport failure',async()=>{
+   const ch=channel('search-limited',{youtubeProfileId:'p-search-limited',youtubeChannelId:'UC-search-limited'});
+   fixture.profiles=[profile('p-search-limited','UC-search-limited')];
+   fixture.responses.set('p-search-limited',{
+     channelId:'UC-search-limited',videos:[],syncComplete:true,complete:true,scheduleComplete:false,
+     searchUsed:true,searchExhausted:false,searchError:null,searchCalls:4,
+     incompleteReasons:['OWNER_SEARCH_NOT_EXHAUSTED','OWNER_SEARCH_PAGE_LIMIT'],
+     fullSyncApiRequests:10,fullSyncEstimatedQuotaCost:6
+   });
+   const result=await refreshOwnerInventoriesAuthoritative([ch],true,fixture.profiles);
+   expect(result.counts.PARTIAL_DATA).toBe(1);
+   expect(result.deepSearchChannels).toBe(1);
+   expect(result.deepSearchPageLimitedChannels).toBe(1);
+   expect(result.deepSearchFailedChannels||0).toBe(0);
+   expect(result.deepSearchExhaustedChannels||0).toBe(0);
+   expect(result.searchCalls).toBe(4);
+   expect(loadChannelRunwayStore().channels['search-limited'].runwayDays).toBeUndefined();
  });
 
 });
