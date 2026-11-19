@@ -145,6 +145,7 @@ export type OwnerInventoryRefreshSummary={
   deepSearchChannels?:number;
   deepSearchFailedChannels?:number;
   deepSearchExhaustedChannels?:number;
+  deepSearchPageLimitedChannels?:number;
 };
 export type OwnerInventoryFleetProgress={done:number;total:number;channelName:string;status:OwnerInventoryFleetStatus};
 
@@ -263,6 +264,8 @@ export async function refreshOwnerInventoriesAuthoritative(
         if(result.searchError)summary.deepSearchFailedChannels=(summary.deepSearchFailedChannels||0)+1;
         if(result.searchExhausted===true&&!result.searchError)
           summary.deepSearchExhaustedChannels=(summary.deepSearchExhaustedChannels||0)+1;
+        if(result.searchExhausted!==true&&!result.searchError)
+          summary.deepSearchPageLimitedChannels=(summary.deepSearchPageLimitedChannels||0)+1;
       }
       const backendApi=Number(result.fullSyncApiRequests),backendQuota=Number(result.fullSyncEstimatedQuotaCost);
       const fallback=!Number.isFinite(backendApi)||backendApi<1?youtubeOperationActualCost(operationId):null;
