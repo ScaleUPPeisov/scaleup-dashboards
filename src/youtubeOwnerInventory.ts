@@ -49,6 +49,27 @@ export type OwnerYoutubeInventoryTotals={
 };
 
 const isFuture=(iso:string|undefined,now:number)=>Boolean(iso&&Number.isFinite(Date.parse(iso))&&Date.parse(iso)>now);
+
+// Owner-verified upload IDs are an independent discovery source for videos.list.
+// YouTube may omit private Scheduled videos from the uploads playlist. Preserve
+// future Scheduled first; then recent successful uploads lacking a publishAt.
+// Every ID is hydrated again under the EXACT connected OAuth owner Channel ID.
+// Never trust a history entry as current Scheduled without videos.list status.
+export function knownOwnerVideoIdsFromUploadHistory<T extends {
+  channelId:string;status:string;youtubeVideoId?:string|null;
+  youtubeChannelId?:string;profileId?:string;publishAt?:string|null;
+}>(history:readonly T[],channel:Pick<Channel,'id'|'youtubeChannelId'|'youtubeProfileId'>,nowMs=Date.now()){
+  const eligible=history.map((row,index)=>({row,index})).filter(({row})=>
+    row.channelId===channel.id&&row.status==='UPLOADED'&&
+    (!row.youtubeChannelId||row.youtubeChannelId===channel.youtubeChannelId)&&
+    (!row.profileId||row.profileId===channel.youtubeProfileId)&&
+    /^[A-Za-z0-9_-]{11}$/.test(String(row.youtubeVideoId||'')));
+  const scheduled=eligible.filter(({row})=>isFuture(row.publishAt||undefined,nowMs))
+    .sort((a,b)=>Date.parse(b.row.publishAt!)-Date.parse(a.row.publishAt!));
+  const recent=eligible.filter(({row})=>!isFuture(row.publishAt||undefined,nowMs))
+    .sort((a,b)=>b.index-a.index);
+  return [...new Set([...scheduled,...recent].map(({row})=>String(row.youtubeVideoId)))].slice(0,50)
+}
 const sameLocalDay=(iso:string|undefined,now:Date)=>{
   if(!iso)return false;
   const d=new Date(iso);
@@ -255,13 +276,18 @@ export async function refreshOwnerInventoriesAuthoritative(
       // Reserve the fleet budget here, but do NOT count an actual Search
       // request until native confirms it attempted search.list.
       if(targeted)fleetDeepSearches++;
-      const cachedFuture=[...Object.values(prior?.baseline||{}),...(prior?.videos||[])]
+      const cachedRows=[...Object.values(prior?.baseline||{}),...(prior?.videos||[])];
+      const cachedFuture=cachedRows
         .filter(v=>v.privacyStatus==='private'&&Boolean(v.publishAt)&&Date.parse(v.publishAt!)>Date.now())
+        .sort((a,b)=>Date.parse(b.publishAt!)-Date.parse(a.publishAt!))
         .map(v=>v.id);
+      // Recover private rows even if the prior snapshot lacked publishAt.
+      // Remote videos.list is always authoritative for their current status.
+      const cachedPrivate=cachedRows.filter(v=>v.privacyStatus==='private').map(v=>v.id);
       // Re-read owner-verified VYRON upload-history IDs even during a search
       // cooldown: no extra search.list call, no history mutation, no OAuth reset.
       const fromHistory=ownerKnownScheduledIds?.[channel.id]||[];
-      const knownScheduledIds=force?[...new Set([...fromHistory,...cachedFuture])]
+      const knownScheduledIds=force?[...new Set([...cachedFuture,...fromHistory,...cachedPrivate])]
         .filter(id=>/^[A-Za-z0-9_-]{11}$/.test(id)).slice(0,50):[];
       ownerAttemptAt.set(channel.id,Date.now());
       const result=await api.youtubeListExisting(linked.profile.id,5000,operationId,targeted,knownScheduledIds,targeted?allowedSearchPages:0);
