@@ -4035,6 +4035,18 @@ fn owner_search_safe_failure_code(status:u16,payload:&Value)->String{
     };
     format!("OWNER_SEARCH_HTTP_{status}_{category}")
 }
+// The authenticated forMine filter selects owner uploads. Do not add
+// channelId here: independently verify every candidate against the exact
+// OAuth channel using the authoritative videos.list snippet.channelId.
+fn owner_search_query_parameters()->[(&'static str,&'static str);5]{
+    [
+        ("part","snippet"),
+        ("forMine","true"),
+        ("type","video"),
+        ("maxResults","50"),
+        ("order","date"),
+    ]
+}
 fn owner_search_page_budget(requested:Option<u32>)->u32{
     // The frontend reserves Search capacity; native code enforces a hard cap.
     requested.unwrap_or(2).clamp(1,12)
@@ -4184,7 +4196,7 @@ pub async fn youtube_list_existing_videos(
             let expected=profile.channel_id.as_deref().unwrap_or("");
             let mut request=client.get("https://www.googleapis.com/youtube/v3/search")
                 .bearer_auth(&token)
-                .query(&[("part","snippet"),("forMine","true"),("type","video"),("channelId",expected),("maxResults","50"),("order","date")]);
+                .query(&owner_search_query_parameters());
             if let Some(ref token)=search_page{request=request.query(&[("pageToken",token.as_str())])}
             search_pages+=1;
             emit_youtube_api_request(&app,"search.list",operation_id.as_deref());
@@ -7967,6 +7979,30 @@ mod v241_oauth_singleflight_tests {
 #[cfg(test)]
 mod false_zero_owner_search_regression_tests{
  use super::*;
+ #[test]fn owner_search_query_uses_single_authenticated_owner_filter_and_safe_limits(){
+   let query=owner_search_query_parameters();
+   assert_eq!(query.len(),5);
+   assert!(query.contains(&("forMine","true")));
+   assert!(query.contains(&("type","video")));
+   assert!(query.contains(&("maxResults","50")));
+   assert!(query.contains(&("part","snippet")));
+   assert!(query.contains(&("order","date")));
+   assert!(!query.iter().any(|(key,_)|*key=="channelId"));
+   assert!(!query.iter().any(|(key,_)|*key=="forDeveloper"||*key=="forContentOwner"));
+ }
+ #[test]fn owner_only_search_candidates_never_promote_wrong_channel_or_search_snippets(){
+   let response=json!({"items":[
+      {"id":{"videoId":"VID_owner_1"},"snippet":{"channelId":"UC_owner"}},
+      {"id":{"videoId":"VID_wrong_2"},"snippet":{"channelId":"UC_other"}},
+      {"id":{"videoId":"VID_owner_3"},"snippet":{"channelId":"UC_owner"}}
+   ]});
+   let mut supp=Vec::new();
+   let mut seen=std::collections::HashSet::new();
+   let playlist=std::collections::HashSet::from(["VID_owner_1".to_string()]);
+   let count=append_owner_search_candidates(&response,"UC_owner",&playlist,&mut seen,&mut supp);
+   assert_eq!(count,2);
+   assert_eq!(supp,vec!["VID_owner_3".to_string()]);
+ }
  #[test]fn search_failure_diagnostic_is_safe_and_precise(){
    let invalid=json!({"error":{"message":"sensitive private details", "errors":[{"reason":"invalidSearchFilter"}]}});
    let insufficient=json!({"error":{"message":"some email@example.com", "errors":[{"reason":"insufficientPermissions"}]}});
