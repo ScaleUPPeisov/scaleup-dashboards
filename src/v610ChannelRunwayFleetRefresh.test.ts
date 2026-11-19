@@ -38,7 +38,7 @@ vi.mock('./youtubeQuota',()=>({
 vi.mock('./youtubeCache',()=>({markYoutubeCache:vi.fn()}));
 
 import {api} from './api';
-import {refreshOwnerInventoriesAuthoritative} from './youtubeOwnerInventory';
+import {knownOwnerVideoIdsFromUploadHistory,refreshOwnerInventoriesAuthoritative} from './youtubeOwnerInventory';
 import {loadChannelRunwayStore,upsertChannelRunwayFromYoutube} from './channelRunwayStore';
 import {CHANNEL_RUNWAY_STORAGE_KEY} from './channelRunwayCore';
 
@@ -354,6 +354,50 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
    expect(result.deepSearchChannels).toBe(2);
    expect(result.deepSearchFailedChannels).toBe(1);
    expect(result.deepSearchPageLimitedChannels).toBe(1);
+ });
+
+ it('recovers owner uploads without publishAt so an absent uploads-playlist Scheduled can be rehydrated',()=>{
+   const ch=channel('neon',{youtubeProfileId:'p-neon',youtubeChannelId:'UC-neon'});
+   const history=[
+     {channelId:'neon',youtubeChannelId:'UC-neon',profileId:'p-neon',status:'UPLOADED',youtubeVideoId:'N0000000001'},
+     {channelId:'neon',youtubeChannelId:'UC-neon',profileId:'p-neon',status:'UPLOADED',youtubeVideoId:'N0000000002',publishAt:'2099-12-12T18:00:00Z'},
+     {channelId:'neon',youtubeChannelId:'UC-neon',profileId:'p-neon',status:'UPLOADED',youtubeVideoId:'N0000000003',publishAt:'2099-11-12T18:00:00Z'},
+     {channelId:'neon',youtubeChannelId:'UC-neon',profileId:'p-neon',status:'UPLOADED',youtubeVideoId:'N0000000004'},
+     {channelId:'wrong',youtubeChannelId:'UC-neon',profileId:'p-neon',status:'UPLOADED',youtubeVideoId:'N0000000005'},
+     {channelId:'neon',youtubeChannelId:'UC-other',profileId:'p-neon',status:'UPLOADED',youtubeVideoId:'N0000000006'},
+     {channelId:'neon',youtubeChannelId:'UC-neon',profileId:'p-other',status:'UPLOADED',youtubeVideoId:'N0000000007'},
+     {channelId:'neon',youtubeChannelId:'UC-neon',profileId:'p-neon',status:'FAILED',youtubeVideoId:'N0000000008'},
+     {channelId:'neon',youtubeChannelId:'UC-neon',profileId:'p-neon',status:'UPLOADED',youtubeVideoId:'not-video-id'},
+   ];
+   const ids=knownOwnerVideoIdsFromUploadHistory(history,ch,Date.parse('2026-11-19T00:00:00Z'));
+   expect(ids).toEqual(['N0000000002','N0000000003','N0000000004','N0000000001']);
+   // No historical ID itself establishes remote Scheduled until videos.list.
+   expect(ids).not.toContain('N0000000005');
+   expect(ids).not.toContain('N0000000006');
+   expect(ids).not.toContain('N0000000007');
+ });
+
+ it('owner history recovery is bounded to 50 IDs with Scheduled IDs ranked ahead',()=>{
+   const ch=channel('c',{youtubeProfileId:'p',youtubeChannelId:'UC-c'});
+   const history=Array.from({length:75},(_,i)=>({
+      channelId:'c',youtubeChannelId:'UC-c',profileId:'p',status:'UPLOADED',
+      youtubeVideoId:'VID'+String(i).padStart(8,'0'),
+   }));
+   history.push({channelId:'c',youtubeChannelId:'UC-c',profileId:'p',status:'UPLOADED',
+      youtubeVideoId:'SPECIAL0001',publishAt:'2099-01-25T00:00:00Z'});
+   const ids=knownOwnerVideoIdsFromUploadHistory(history,ch,Date.parse('2026-11-19T00:00:00Z'));
+   expect(ids).toHaveLength(50);
+   expect(ids[0]).toBe('SPECIAL0001');
+   expect(ids).toContain('VID00000074');
+   expect(ids).not.toContain('VID00000000');
+   expect(new Set(ids).size).toBe(50);
+ });
+
+ it('both fleet and individual owner refreshes use the same missing-publishAt recovery',()=>{
+   const fleet=readFileSync('src/fullChannelRefresh.ts','utf8');
+   const row=readFileSync('src/ChannelRunway.tsx','utf8');
+   expect(fleet).toContain('knownOwnerVideoIdsFromUploadHistory(history,channel)');
+   expect(row).toContain('knownOwnerVideoIdsFromUploadHistory(uploadHistory,channel)');
  });
 
 });
