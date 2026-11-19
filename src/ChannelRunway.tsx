@@ -5,7 +5,7 @@ import type {Channel,YoutubeProfile} from './types';
 import {classifyYoutubeChannels} from './youtubeStatisticsCenter';
 import {refreshYoutubeProfileStatistics,type ChannelStatisticsRefreshProgress} from './youtubeChannelStatsRuntime';
 import {refreshAllChannelData} from './fullChannelRefresh';
-import {refreshOwnerInventoriesAuthoritative} from './youtubeOwnerInventory';
+import {knownOwnerVideoIdsFromUploadHistory,refreshOwnerInventoriesAuthoritative} from './youtubeOwnerInventory';
 import {compactChannelStat,subscriberStatLabel} from './youtubeChannelStats';
 import {
   compareYoutubeOnlyRunwayPriority,
@@ -183,13 +183,10 @@ export function ChannelRunway(){
     if(!linked){toast(`${channel.name}: YouTube не связан точно с OAuth profile • API call не выполнен`);return}
     setBusy(channel.id);
     try{
-      const knownOwnerVideoIds=uploadHistory
-        .filter(v=>v.channelId===channel.id&&v.status==='UPLOADED'&&
-          (!v.youtubeChannelId||v.youtubeChannelId===linked.youtubeChannelId)&&
-          (!v.profileId||v.profileId===linked.profile.id)&&
-          v.publishAt&&Date.parse(v.publishAt)>Date.now())
-        .sort((a,b)=>Date.parse(b.publishAt!)-Date.parse(a.publishAt!))
-        .map(v=>v.youtubeVideoId).filter(id=>/^[A-Za-z0-9_-]{11}$/.test(id)).slice(0,50);
+      // A locally recorded owner upload may still be Scheduled even when the
+      // Google uploads playlist omits it or the history publishAt is missing.
+      // The native layer rechecks its real status via videos.list.
+      const knownOwnerVideoIds=knownOwnerVideoIdsFromUploadHistory(uploadHistory,channel);
       const result=await refreshOwnerInventoriesAuthoritative([channel],true,profiles,{[channel.id]:knownOwnerVideoIds});
       const row=result.rows[0];
       setSnapshot(loadChannelRunwayStore());
