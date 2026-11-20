@@ -184,6 +184,21 @@ export function classifyIncompleteOwnerCoverage(ownerMixed:boolean):OwnerInvento
   return ownerMixed?'API_FAILED':'PARTIAL_DATA';
 }
 
+// Never persist raw provider or OAuth exceptions from the native owner read.
+// The displayed code is intentionally bounded to trusted method/status/reason enums.
+export function safeOwnerInventoryFailureCode(error:unknown):string{
+  const raw=String(error??'');
+  const method=raw.match(/\bOWNER_INVENTORY_(?:CHANNELS_LIST|PLAYLIST_ITEMS_LIST|VIDEOS_LIST)_(?:NETWORK_ERROR|INVALID_JSON|HTTP_[0-9]{3}_(?:QUOTA_EXCEEDED|DAILY_LIMIT_EXCEEDED|RATE_LIMIT_EXCEEDED|INSUFFICIENT_PERMISSIONS|FORBIDDEN|UNAUTHORIZED|PLAYLIST_NOT_ACCESSIBLE|PLAYLIST_NOT_FOUND|CHANNEL_NOT_FOUND|VIDEO_NOT_FOUND|BACKEND_ERROR|INVALID_PARAMETER|OTHER))\b/);
+  if(method)return method[0];
+  const auth=raw.match(/\bOWNER_INVENTORY_AUTH_(?:INVALID_GRANT|CLIENT_MISMATCH|REFRESH_TOKEN_MISSING|KEYCHAIN_FAILURE|REFRESH_FAILED|AUTH_PREFLIGHT_FAILED)\b/);
+  if(auth)return auth[0];
+  const identity=raw.match(/\b(?:EXPECTED_CHANNEL_MISSING|OWNER_CHANNEL_MISSING|OWNER_CHANNEL_MISMATCH|OWNER_UPLOADS_MISSING|AUTHORITATIVE_CHANNEL_ID_MISMATCH)\b/);
+  if(identity)return identity[0];
+  // The previous version passed String(error) straight into the persisted
+  // runway store; that could contain private Google error response text.
+  return 'OWNER_INVENTORY_UNCLASSIFIED_ERROR';
+}
+
 const BLOCKED_OWNER_CREDENTIAL_STATES=new Set(['NEEDS_ONE_TIME_LOCAL_MIGRATION','CANONICAL_PRESENT_UNVERIFIED','CHECK_ON_USE','RECOVERABLE','KEYCHAIN_BLOCKED','RECONNECT_REQUIRED','MISSING','WRONG_CHANNEL','FAILED','KEYCHAIN_ERROR']);
 
 function emptyOwnerCounts():Record<OwnerInventoryFleetStatus,number>{
@@ -382,7 +397,7 @@ export async function refreshOwnerInventoriesAuthoritative(
     }catch(error){
       const actual=youtubeOperationActualCost(operationId),apiRequests=Object.values(actual.methods).reduce((n,x)=>n+x.calls,0),quotaUnits=actual.buckets.general;
       summary.apiRequests+=apiRequests;summary.quotaUnits+=quotaUnits;
-      report({channelId:channel.id,channelName:channel.name,status:'API_FAILED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:String(error)});
+      report({channelId:channel.id,channelName:channel.name,status:'API_FAILED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:safeOwnerInventoryFailureCode(error)});
     }
   }
   if(summary.rows.length!==enabled.length){
