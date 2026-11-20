@@ -4096,6 +4096,44 @@ fn full_sync_estimate(video_count:usize)->Value{
     json!({"playlistPages":playlist_pages,"hydrationBatches":hydration_batches,"apiRequests":api_requests,"estimatedQuotaCost":api_requests})
 }
 
+ // OWNER INVENTORY: a failed provider request must leave a precise, privacy-safe
+ // diagnostic. Never persist Google messages, request URLs or OAuth details.
+ fn owner_inventory_safe_http_code(method:&str,status:u16,payload:&Value)->String{
+     let method=match method{
+         "CHANNELS_LIST"=>"CHANNELS_LIST",
+         "PLAYLIST_ITEMS_LIST"=>"PLAYLIST_ITEMS_LIST",
+         "VIDEOS_LIST"=>"VIDEOS_LIST",
+         _=>"UNKNOWN_METHOD"
+     };
+     let reason=payload.pointer("/error/errors/0/reason").and_then(Value::as_str).unwrap_or("");
+     let category=match reason{
+         "quotaExceeded"=>"QUOTA_EXCEEDED",
+         "dailyLimitExceeded"=>"DAILY_LIMIT_EXCEEDED",
+         "rateLimitExceeded"|"userRateLimitExceeded"=>"RATE_LIMIT_EXCEEDED",
+         "insufficientPermissions"=>"INSUFFICIENT_PERMISSIONS",
+         "forbidden"=>"FORBIDDEN",
+         "unauthorized"|"authError"=>"UNAUTHORIZED",
+         "playlistItemsNotAccessible"=>"PLAYLIST_NOT_ACCESSIBLE",
+         "playlistNotFound"=>"PLAYLIST_NOT_FOUND",
+         "channelNotFound"=>"CHANNEL_NOT_FOUND",
+         "videoNotFound"=>"VIDEO_NOT_FOUND",
+         "backendError"=>"BACKEND_ERROR",
+         "invalidParameter"=>"INVALID_PARAMETER",
+         _=>"OTHER"
+     };
+     format!("OWNER_INVENTORY_{method}_HTTP_{status}_{category}")
+ }
+ fn owner_inventory_safe_auth_code(raw:&str)->String{
+     let upper=raw.to_ascii_uppercase();
+     let category=if upper.contains("OAUTH_INVALID_GRANT"){"INVALID_GRANT"}
+     else if upper.contains("OAUTH_CLIENT_MISMATCH"){"CLIENT_MISMATCH"}
+     else if upper.contains("REFRESH_TOKEN_MISSING"){"REFRESH_TOKEN_MISSING"}
+     else if upper.contains("KEYCHAIN"){"KEYCHAIN_FAILURE"}
+     else if upper.contains("OAUTH_REFRESH_FAILED"){"REFRESH_FAILED"}
+     else {"AUTH_PREFLIGHT_FAILED"};
+     format!("OWNER_INVENTORY_AUTH_{category}")
+ }
+
 #[tauri::command]
 pub async fn youtube_list_existing_videos(
     app: AppHandle,
@@ -4106,7 +4144,7 @@ pub async fn youtube_list_existing_videos(
     known_scheduled_ids: Option<Vec<String>>,
     max_search_pages: Option<u32>,
 ) -> Result<Value, String> {
-    let (token, profile) = valid_access_token(&app, &profile_id).await?;
+    let (token, profile) = valid_access_token(&app, &profile_id).await.map_err(|e|owner_inventory_safe_auth_code(&e))?;
     let limit = max_results.unwrap_or(1000).clamp(1, 5000) as usize;
     let client = reqwest::Client::new();
 
@@ -4114,9 +4152,9 @@ pub async fn youtube_list_existing_videos(
     let r=client.get("https://www.googleapis.com/youtube/v3/channels")
         .bearer_auth(&token)
         .query(&[("part","contentDetails"),("mine","true")])
-        .send().await.map_err(|e|format!("YouTube channel: {e}"))?;
-    let st=r.status();let cv:Value=r.json().await.map_err(|e|e.to_string())?;
-    if !st.is_success(){return Err(youtube_error(&cv,"Не удалось получить канал YouTube"))}
+        .send().await.map_err(|_|"OWNER_INVENTORY_CHANNELS_LIST_NETWORK_ERROR".to_string())?;
+    let st=r.status();let cv:Value=r.json().await.map_err(|_|"OWNER_INVENTORY_CHANNELS_LIST_INVALID_JSON".to_string())?;
+    if !st.is_success(){return Err(owner_inventory_safe_http_code("CHANNELS_LIST",st.as_u16(),&cv))}
     // Do not silently scan another Brand Account's uploads playlist.
     let uploads=owner_uploads_playlist_for_profile(&cv,profile.channel_id.as_deref())?;
 
@@ -4146,9 +4184,9 @@ pub async fn youtube_list_existing_videos(
         if let Some(ref t)=page{q=q.query(&[("pageToken",t.as_str())])}
         emit_youtube_api_request(&app,"playlistItems.list",operation_id.as_deref());
         playlist_calls+=1;
-        let rr=q.send().await.map_err(|e|format!("YouTube uploads page {playlist_calls}: {e}"))?;
-        let st=rr.status();let v:Value=rr.json().await.map_err(|e|e.to_string())?;
-        if !st.is_success(){return Err(youtube_error(&v,"Не удалось получить полный uploads playlist"))}
+        let rr=q.send().await.map_err(|_|"OWNER_INVENTORY_PLAYLIST_ITEMS_LIST_NETWORK_ERROR".to_string())?;
+        let st=rr.status();let v:Value=rr.json().await.map_err(|_|"OWNER_INVENTORY_PLAYLIST_ITEMS_LIST_INVALID_JSON".to_string())?;
+        if !st.is_success(){return Err(owner_inventory_safe_http_code("PLAYLIST_ITEMS_LIST",st.as_u16(),&v))}
         if playlist_calls==1{
             playlist_reported_total=v.pointer("/pageInfo/totalResults").and_then(|x|x.as_u64()).unwrap_or(0) as usize;
         }
@@ -4184,17 +4222,17 @@ pub async fn youtube_list_existing_videos(
         let rr=match response{
             Ok(x)=>x,
             Err(e)=>{
-                hydration_errors.push(format!("batch {video_calls}: network {e}"));
+                let _=e;hydration_errors.push("OWNER_INVENTORY_VIDEOS_LIST_NETWORK_ERROR".to_string());
                 failed_hydration_ids.extend(chunk.iter().cloned());
                 continue
             }
         };
         let st=rr.status();let v:Value=rr.json().await.unwrap_or_else(|_|json!({}));
         if !st.is_success(){
-            let err=youtube_error(&v,"Не удалось получить authoritative videos.list batch");
-            let lower=err.to_ascii_lowercase();
-            if lower.contains("quota")||lower.contains("dailylimit")||lower.contains("ratelimit"){return Err(err)}
-            hydration_errors.push(format!("batch {video_calls}: {err}"));
+            let code=owner_inventory_safe_http_code("VIDEOS_LIST",st.as_u16(),&v);
+            if code.contains("QUOTA_EXCEEDED")||code.contains("DAILY_LIMIT_EXCEEDED")||
+               code.contains("RATE_LIMIT_EXCEEDED")||st.as_u16()==429{return Err(code)}
+            hydration_errors.push(code);
             failed_hydration_ids.extend(chunk.iter().cloned());
             continue
         }
@@ -4287,12 +4325,12 @@ pub async fn youtube_list_existing_videos(
             .send().await;
         let result=match response{
             Ok(r)=>r,
-            Err(e)=>{hydration_errors.push(format!("supplement {search_hydration_calls}: {e}"));supplemental_missing.extend(chunk.iter().cloned());continue}
+            Err(_)=>{hydration_errors.push("OWNER_INVENTORY_VIDEOS_LIST_NETWORK_ERROR".to_string());supplemental_missing.extend(chunk.iter().cloned());continue}
         };
         let status=result.status();
         let payload:Value=result.json().await.unwrap_or_else(|_|json!({}));
         if !status.is_success(){
-            hydration_errors.push(format!("supplement {search_hydration_calls}: {}",youtube_error(&payload,"Owner supplement hydration failed")));
+            hydration_errors.push(owner_inventory_safe_http_code("VIDEOS_LIST",status.as_u16(),&payload));
             supplemental_missing.extend(chunk.iter().cloned());
             continue
         }
@@ -8066,6 +8104,25 @@ mod false_zero_owner_search_regression_tests{
      assert!(!code.contains("sensitive"));
      assert!(!code.contains("email"));
      assert!(!code.contains("token_with"));
+   }
+ }
+ #[test]fn inventory_api_errors_are_method_specific_and_never_expose_google_messages(){
+   let forbidden=json!({"error":{"message":"private-name@example.com and token_with_secret","errors":[{"reason":"insufficientPermissions"}]}});
+   let unknown=json!({"error":{"message":"private-access-token","errors":[{"reason":"unexpected_private_value"}]}});
+   assert_eq!(owner_inventory_safe_http_code("CHANNELS_LIST",403,&forbidden),"OWNER_INVENTORY_CHANNELS_LIST_HTTP_403_INSUFFICIENT_PERMISSIONS");
+   assert_eq!(owner_inventory_safe_http_code("PLAYLIST_ITEMS_LIST",500,&unknown),"OWNER_INVENTORY_PLAYLIST_ITEMS_LIST_HTTP_500_OTHER");
+   assert_eq!(owner_inventory_safe_http_code("VIDEOS_LIST",429,&json!({"error":{"errors":[{"reason":"rateLimitExceeded"}]}})),"OWNER_INVENTORY_VIDEOS_LIST_HTTP_429_RATE_LIMIT_EXCEEDED");
+   assert_eq!(owner_inventory_safe_auth_code("OAUTH_INVALID_GRANT: user-private-data"),"OWNER_INVENTORY_AUTH_INVALID_GRANT");
+   assert_eq!(owner_inventory_safe_auth_code("untrusted-private-text"),"OWNER_INVENTORY_AUTH_AUTH_PREFLIGHT_FAILED");
+   for code in [
+     owner_inventory_safe_http_code("CHANNELS_LIST",403,&forbidden),
+     owner_inventory_safe_http_code("PLAYLIST_ITEMS_LIST",500,&unknown),
+     owner_inventory_safe_auth_code("invalid bearer something")
+   ]{
+     assert!(code.chars().all(|x|x.is_ascii_uppercase()||x.is_ascii_digit()||x=='_'));
+     assert!(!code.contains("private"));
+     assert!(!code.contains("token"));
+     assert!(!code.contains("example.com"));
    }
  }
  #[test]fn owner_search_page_budget_clamps_invalid_or_excessive_caller_values(){
