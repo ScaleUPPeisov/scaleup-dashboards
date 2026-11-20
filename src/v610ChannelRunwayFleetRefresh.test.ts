@@ -38,7 +38,7 @@ vi.mock('./youtubeQuota',()=>({
 vi.mock('./youtubeCache',()=>({markYoutubeCache:vi.fn()}));
 
 import {api} from './api';
-import {knownOwnerVideoIdsFromUploadHistory,refreshOwnerInventoriesAuthoritative} from './youtubeOwnerInventory';
+import {knownOwnerVideoIdsFromUploadHistory,refreshOwnerInventoriesAuthoritative,safeOwnerInventoryFailureCode} from './youtubeOwnerInventory';
 import {loadChannelRunwayStore,upsertChannelRunwayFromYoutube} from './channelRunwayStore';
 import {CHANNEL_RUNWAY_STORAGE_KEY} from './channelRunwayCore';
 
@@ -286,6 +286,32 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
    expect(result.deepSearchExhaustedChannels||0).toBe(0);
    expect(result.searchCalls).toBe(4);
    expect(loadChannelRunwayStore().channels['search-limited'].runwayDays).toBeUndefined();
+ });
+
+ it('turns provider errors into stable method + status diagnostics without leaking account data',()=>{
+   expect(safeOwnerInventoryFailureCode(new Error('OWNER_INVENTORY_CHANNELS_LIST_HTTP_403_INSUFFICIENT_PERMISSIONS: private@example.com')))
+     .toBe('OWNER_INVENTORY_CHANNELS_LIST_HTTP_403_INSUFFICIENT_PERMISSIONS');
+   expect(safeOwnerInventoryFailureCode('OWNER_INVENTORY_PLAYLIST_ITEMS_LIST_NETWORK_ERROR')).toBe('OWNER_INVENTORY_PLAYLIST_ITEMS_LIST_NETWORK_ERROR');
+   expect(safeOwnerInventoryFailureCode('OWNER_INVENTORY_AUTH_INVALID_GRANT leaked-refresh-token')).toBe('OWNER_INVENTORY_AUTH_INVALID_GRANT');
+   expect(safeOwnerInventoryFailureCode('OWNER_CHANNEL_MISMATCH: private channel')).toBe('OWNER_CHANNEL_MISMATCH');
+   expect(safeOwnerInventoryFailureCode('Provider error: private@example.com token=secret')).toBe('OWNER_INVENTORY_UNCLASSIFIED_ERROR');
+   expect(safeOwnerInventoryFailureCode('OWNER_INVENTORY_VIDEOS_LIST_HTTP_429_RATE_LIMIT_EXCEEDED')).toBe('OWNER_INVENTORY_VIDEOS_LIST_HTTP_429_RATE_LIMIT_EXCEEDED');
+ });
+
+ it('an owner API failure preserves historical Scheduled while persisting only the safe error code',async()=>{
+   const ch=channel('afterglow',{youtubeProfileId:'p-afterglow',youtubeChannelId:'UC-afterglow'});
+   fixture.profiles=[profile('p-afterglow','UC-afterglow')];
+   upsertChannelRunwayFromYoutube(ch,[scheduled('verified-old',21)],new Date('2026-11-18T10:00:00Z'));
+   vi.mocked(api.youtubeListExisting).mockRejectedValueOnce(new Error('OWNER_INVENTORY_CHANNELS_LIST_HTTP_403_INSUFFICIENT_PERMISSIONS; Google private@example.com token=secret'));
+   const result=await refreshOwnerInventoriesAuthoritative([ch],true,fixture.profiles);
+   expect(result.counts.API_FAILED).toBe(1);
+   expect(result.rows[0].error).toBe('OWNER_INVENTORY_CHANNELS_LIST_HTTP_403_INSUFFICIENT_PERMISSIONS');
+   const rec=loadChannelRunwayStore().channels.afterglow;
+   expect(rec.scheduledVideoCount).toBe(1);
+   expect(rec.scheduledUntil).toBe('2099-01-21');
+   expect(rec.lastRefreshError).toBe('OWNER_INVENTORY_CHANNELS_LIST_HTTP_403_INSUFFICIENT_PERMISSIONS');
+   expect(rec.lastRefreshError).not.toContain('private@example.com');
+   expect(rec.lastRefreshError).not.toContain('token=secret');
  });
 
  it('a failed channels.list before search cannot count as a deep owner Search',async()=>{
