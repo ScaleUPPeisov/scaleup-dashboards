@@ -3998,9 +3998,10 @@ fn append_owner_search_candidates(
     candidates
 }
 const MAX_KNOWN_OWNER_VIDEO_IDS:usize=500;
-// History is an ID discovery source, never a trusted Scheduled state. Include
-// a 501st valid, distinct ID only to mark non-exhaustive history coverage.
-// The caller hydrates accepted IDs in videos.list groups of at most 50.
+// History is an ID discovery source, never a trusted Scheduled state.
+// The 500-ID hydration budget applies only to IDs not already covered by the
+// uploads playlist or owner Search. Known duplicates must not consume capacity
+// and suppress a later private Scheduled ID absent from those sources.
 fn append_known_owner_video_ids(
     known_ids:Vec<String>,
     playlist_seen:&std::collections::HashSet<String>,
@@ -4013,11 +4014,11 @@ fn append_known_owner_video_ids(
     for id in known_ids{
         if id.len()!=11||!id.chars().all(|c|c.is_ascii_alphanumeric()||c=='-'||c=='_'){continue}
         if !unique.insert(id.clone()){continue}
+        if playlist_seen.contains(&id)||supplement_seen.contains(&id){continue}
         if accepted>=MAX_KNOWN_OWNER_VIDEO_IDS{truncated=true;break}
         accepted+=1;
-        if !playlist_seen.contains(&id)&&supplement_seen.insert(id.clone()){
-            supplemental_ids.push(id);
-        }
+        supplement_seen.insert(id.clone());
+        supplemental_ids.push(id);
     }
     (accepted,truncated)
 }
@@ -8080,7 +8081,7 @@ mod false_zero_owner_search_regression_tests{
    let playlist=std::collections::HashSet::from(["VID00000001".to_string()]);
    let mut seen=std::collections::HashSet::new();let mut extra=Vec::new();
    let (checked,truncated)=append_known_owner_video_ids(ids,&playlist,&mut seen,&mut extra);
-   assert_eq!(checked,75);
+   assert_eq!(checked,74);
    assert!(!truncated);
    assert_eq!(extra.len(),74);
    assert!(!extra.contains(&"VID00000001".to_string()));
@@ -8090,6 +8091,25 @@ mod false_zero_owner_search_regression_tests{
    assert_eq!(checked,MAX_KNOWN_OWNER_VIDEO_IDS);
    assert!(truncated);
    assert_eq!(extra.len(),MAX_KNOWN_OWNER_VIDEO_IDS);
+ }
+ #[test]fn playlist_and_search_known_ids_never_exhaust_the_missing_id_budget(){
+   // 520 historical IDs, but the first 510 are already playlist-verified.
+   // A missing private Scheduled ID at position 520 must still be hydrated.
+   let ids=(0..520).map(|i|format!("VID{i:08}")).collect::<Vec<_>>();
+   let playlist=(0..510).map(|i|format!("VID{i:08}")).collect::<std::collections::HashSet<_>>();
+   let mut already_found=std::collections::HashSet::from(["VID00000510".to_string()]);
+   let mut extra=vec!["VID00000510".to_string()];
+   let (checked,truncated)=append_known_owner_video_ids(ids,&playlist,&mut already_found,&mut extra);
+   assert_eq!(checked,9);
+   assert!(!truncated);
+   assert_eq!(extra.len(),10);
+   assert_eq!(extra.last().unwrap(),"VID00000519");
+   let ids=(0..=MAX_KNOWN_OWNER_VIDEO_IDS).map(|i|format!("ID_{i:08}")).collect::<Vec<_>>();
+   let mut already_found=std::collections::HashSet::new();
+   let mut extra=Vec::new();
+   let (checked,truncated)=append_known_owner_video_ids(ids,&std::collections::HashSet::new(),&mut already_found,&mut extra);
+   assert_eq!(checked,MAX_KNOWN_OWNER_VIDEO_IDS);
+   assert!(truncated);
  }
  #[test]fn full_uploads_playlist_is_not_proof_of_empty_scheduled(){
    assert_eq!(owner_schedule_reconciliation_reasons(0,false,false,false,false,false,0),
