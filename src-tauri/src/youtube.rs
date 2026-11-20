@@ -3997,6 +3997,31 @@ fn append_owner_search_candidates(
     }
     candidates
 }
+const MAX_KNOWN_OWNER_VIDEO_IDS:usize=500;
+// History is an ID discovery source, never a trusted Scheduled state. Include
+// a 501st valid, distinct ID only to mark non-exhaustive history coverage.
+// The caller hydrates accepted IDs in videos.list groups of at most 50.
+fn append_known_owner_video_ids(
+    known_ids:Vec<String>,
+    playlist_seen:&std::collections::HashSet<String>,
+    supplement_seen:&mut std::collections::HashSet<String>,
+    supplemental_ids:&mut Vec<String>
+)->(usize,bool){
+    let mut unique=std::collections::HashSet::<String>::new();
+    let mut accepted=0usize;
+    let mut truncated=false;
+    for id in known_ids{
+        if id.len()!=11||!id.chars().all(|c|c.is_ascii_alphanumeric()||c=='-'||c=='_'){continue}
+        if !unique.insert(id.clone()){continue}
+        if accepted>=MAX_KNOWN_OWNER_VIDEO_IDS{truncated=true;break}
+        accepted+=1;
+        if !playlist_seen.contains(&id)&&supplement_seen.insert(id.clone()){
+            supplemental_ids.push(id);
+        }
+    }
+    (accepted,truncated)
+}
+
 fn owner_schedule_reconciliation_reasons(
     scheduled_count:usize,verify:bool,search_error:bool,
     search_limit_reached:bool,search_exhausted:bool,
@@ -4194,7 +4219,6 @@ pub async fn youtube_list_existing_videos(
     let mut search_candidate_count=0usize;
     let mut supplemental_ids=Vec::<String>::new();
     let mut supplement_seen=std::collections::HashSet::<String>::new();
-    let mut known_id_checks=0usize;
     let mut search_limit_reached=false;
     let verify=verify_scheduled.unwrap_or(false);
     if verify{
@@ -4247,15 +4271,9 @@ pub async fn youtube_list_existing_videos(
     // Local owner-upload history is independent of search indexing. Hydrate its
     // IDs through authenticated videos.list even when search.list is cooling
     // down; never trust cached Scheduled state or channel ownership blindly.
-    let mut known_seen=std::collections::HashSet::<String>::new();
-    for id in known_scheduled_ids.unwrap_or_default().into_iter().filter(|id|
-        id.len()==11&&id.chars().all(|c|c.is_ascii_alphanumeric()||c=='-'||c=='_')
-    ){
-        if known_seen.len()>=50{break}
-        if !known_seen.insert(id.clone()){continue}
-        known_id_checks+=1;
-        if !seen.contains(&id)&&supplement_seen.insert(id.clone()){supplemental_ids.push(id)}
-    }
+    let (known_id_checks,known_ids_truncated)=append_known_owner_video_ids(
+        known_scheduled_ids.unwrap_or_default(),&seen,&mut supplement_seen,&mut supplemental_ids
+    );
     let mut search_hydration_calls=0usize;
     let mut supplemental_missing=Vec::<String>::new();
     for chunk in supplemental_ids.chunks(50){
@@ -4335,6 +4353,7 @@ pub async fn youtube_list_existing_videos(
         verified_supplement_scheduled
     ){reason(code)}
     if let Some(ref code)=search_error_code{reason(code)}
+    if known_ids_truncated{reason("KNOWN_SCHEDULED_IDS_TRUNCATED")}
     let schedule_complete=reasons.is_empty();
     let observed_total=if playlist_exhausted&&!limit_truncated{unique_video_ids}else{std::cmp::max(playlist_reported_total,unique_video_ids)};
     let expected=if playlist_exhausted&&!limit_truncated{unique_video_ids}else{std::cmp::min(std::cmp::max(playlist_reported_total,unique_video_ids),limit)};
@@ -4391,6 +4410,7 @@ pub async fn youtube_list_existing_videos(
         "searchError":search_error,
         "searchErrorCode":search_error_code,
         "knownScheduledIdsChecked":known_id_checks,
+        "knownScheduledIdsTruncated":known_ids_truncated,
         "supplementalMissingCount":supplemental_missing.len(),
         "supplementalCandidateCount":search_candidate_count,
         "playlistCalls":playlist_calls,
@@ -8053,6 +8073,23 @@ mod false_zero_owner_search_regression_tests{
    assert_eq!(owner_search_page_budget(Some(4)),4);
    assert_eq!(owner_search_page_budget(Some(12)),12);
    assert_eq!(owner_search_page_budget(Some(100)),12);
+ }
+ #[test]fn known_owner_recovery_reads_beyond_fifty_without_silent_overflow(){
+   let mut ids=(0..75).map(|i|format!("VID{i:08}")).collect::<Vec<_>>();
+   ids.push("VID00000000".to_string()); // duplicate never consumes capacity
+   let playlist=std::collections::HashSet::from(["VID00000001".to_string()]);
+   let mut seen=std::collections::HashSet::new();let mut extra=Vec::new();
+   let (checked,truncated)=append_known_owner_video_ids(ids,&playlist,&mut seen,&mut extra);
+   assert_eq!(checked,75);
+   assert!(!truncated);
+   assert_eq!(extra.len(),74);
+   assert!(!extra.contains(&"VID00000001".to_string()));
+   let ids=(0..=MAX_KNOWN_OWNER_VIDEO_IDS).map(|i|format!("VID{i:08}")).collect::<Vec<_>>();
+   let mut seen=std::collections::HashSet::new();let mut extra=Vec::new();
+   let (checked,truncated)=append_known_owner_video_ids(ids,&std::collections::HashSet::new(),&mut seen,&mut extra);
+   assert_eq!(checked,MAX_KNOWN_OWNER_VIDEO_IDS);
+   assert!(truncated);
+   assert_eq!(extra.len(),MAX_KNOWN_OWNER_VIDEO_IDS);
  }
  #[test]fn full_uploads_playlist_is_not_proof_of_empty_scheduled(){
    assert_eq!(owner_schedule_reconciliation_reasons(0,false,false,false,false,false,0),

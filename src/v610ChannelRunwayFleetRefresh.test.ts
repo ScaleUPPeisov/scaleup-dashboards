@@ -377,7 +377,7 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
    expect(ids).not.toContain('N0000000007');
  });
 
- it('owner history recovery is bounded to 50 IDs with Scheduled IDs ranked ahead',()=>{
+ it('owner history recovery preserves IDs beyond 50 with Scheduled first',()=>{
    const ch=channel('c',{youtubeProfileId:'p',youtubeChannelId:'UC-c'});
    const history:Array<{
      channelId:string;youtubeChannelId:string;profileId:string;status:string;youtubeVideoId:string;publishAt?:string
@@ -388,11 +388,23 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
    history.push({channelId:'c',youtubeChannelId:'UC-c',profileId:'p',status:'UPLOADED',
       youtubeVideoId:'SPECIAL0001',publishAt:'2099-01-25T00:00:00Z'});
    const ids=knownOwnerVideoIdsFromUploadHistory(history,ch,Date.parse('2026-11-19T00:00:00Z'));
-   expect(ids).toHaveLength(50);
+   expect(ids).toHaveLength(76);
    expect(ids[0]).toBe('SPECIAL0001');
    expect(ids).toContain('VID00000074');
-   expect(ids).not.toContain('VID00000000');
-   expect(new Set(ids).size).toBe(50);
+   expect(ids).toContain('VID00000000');
+   expect(new Set(ids).size).toBe(76);
+ });
+
+ it('owner history carries an overflow sentinel, never silently claiming full coverage',()=>{
+   const ch=channel('c',{youtubeProfileId:'p',youtubeChannelId:'UC-c'});
+   const history=Array.from({length:550},(_,i)=>({
+     channelId:'c',youtubeChannelId:'UC-c',profileId:'p',status:'UPLOADED',
+     youtubeVideoId:'VID'+String(i).padStart(8,'0'),
+   }));
+   const ids=knownOwnerVideoIdsFromUploadHistory(history,ch);
+   expect(ids).toHaveLength(501);
+   expect(new Set(ids).size).toBe(501);
+   // Rust verifies 500 IDs in ten videos.list batches and flags the 501st.
  });
 
  it('both fleet and individual owner refreshes use the same missing-publishAt recovery',()=>{

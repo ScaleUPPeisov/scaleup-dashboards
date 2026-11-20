@@ -13,6 +13,9 @@ const ownerInventoryRuns=new Map<string,Promise<OwnerInventoryRefreshSummary>>()
 const ownerAttemptAt=new Map<string,number>();
 const ownerSearchAt=new Map<string,number>();
 const OWNER_SEARCH_COOLDOWN_MS=10*60*1000;
+// 500 distinct owner-known IDs plus one sentinel: native batches them via videos.list
+// and reports incompleteness instead of silently discarding the 501st ID.
+export const OWNER_KNOWN_VIDEO_ID_LIMIT=500;
 // Explicit full-fleet runs can deep-check incomplete channels only: 2 pages
 // per channel, up to 33 channels, with a search-bucket reserve for other work.
 export const MANUAL_FLEET_DEEP_SEARCH_CHANNEL_CAP=33;
@@ -68,7 +71,7 @@ export function knownOwnerVideoIdsFromUploadHistory<T extends {
     .sort((a,b)=>Date.parse(b.row.publishAt!)-Date.parse(a.row.publishAt!));
   const recent=eligible.filter(({row})=>!isFuture(row.publishAt||undefined,nowMs))
     .sort((a,b)=>b.index-a.index);
-  return [...new Set([...scheduled,...recent].map(({row})=>String(row.youtubeVideoId)))].slice(0,50)
+  return [...new Set([...scheduled,...recent].map(({row})=>String(row.youtubeVideoId)))].slice(0,OWNER_KNOWN_VIDEO_ID_LIMIT+1)
 }
 const sameLocalDay=(iso:string|undefined,now:Date)=>{
   if(!iso)return false;
@@ -288,7 +291,7 @@ export async function refreshOwnerInventoriesAuthoritative(
       // cooldown: no extra search.list call, no history mutation, no OAuth reset.
       const fromHistory=ownerKnownScheduledIds?.[channel.id]||[];
       const knownScheduledIds=force?[...new Set([...cachedFuture,...fromHistory,...cachedPrivate])]
-        .filter(id=>/^[A-Za-z0-9_-]{11}$/.test(id)).slice(0,50):[];
+        .filter(id=>/^[A-Za-z0-9_-]{11}$/.test(id)).slice(0,OWNER_KNOWN_VIDEO_ID_LIMIT+1):[];
       ownerAttemptAt.set(channel.id,Date.now());
       const result=await api.youtubeListExisting(linked.profile.id,5000,operationId,targeted,knownScheduledIds,targeted?allowedSearchPages:0);
       if(targeted&&result.searchUsed===true){
