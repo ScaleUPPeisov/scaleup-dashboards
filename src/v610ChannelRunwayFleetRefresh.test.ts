@@ -395,16 +395,18 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
    expect(new Set(ids).size).toBe(76);
  });
 
- it('owner history carries an overflow sentinel, never silently claiming full coverage',()=>{
+ it('owner history forwards all IDs to native so playlist duplicates do not hide later Scheduled',()=>{
    const ch=channel('c',{youtubeProfileId:'p',youtubeChannelId:'UC-c'});
    const history=Array.from({length:550},(_,i)=>({
      channelId:'c',youtubeChannelId:'UC-c',profileId:'p',status:'UPLOADED',
      youtubeVideoId:'VID'+String(i).padStart(8,'0'),
    }));
    const ids=knownOwnerVideoIdsFromUploadHistory(history,ch);
-   expect(ids).toHaveLength(501);
-   expect(new Set(ids).size).toBe(501);
-   // Rust verifies 500 IDs in ten videos.list batches and flags the 501st.
+   expect(ids).toHaveLength(550);
+   expect(new Set(ids).size).toBe(550);
+   expect(ids).toContain('VID00000549');
+   // Native checks which IDs were already in playlist/Search before applying
+   // its 500 additional-ID hydration cap. Excess novel IDs remain PARTIAL.
  });
 
  it('both fleet and individual owner refreshes use the same missing-publishAt recovery',()=>{
