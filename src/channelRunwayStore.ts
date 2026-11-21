@@ -227,7 +227,25 @@ export function recalculateChannelRunway(
       next.channels[channel.id]=recalculateRunwayRecord({...verified,inventoryEvidenceVersion:2,independentScheduleEvidenceVersion:3},now);
       continue;
     }
-    next.channels[channel.id]=channelUnknown(channel,now);
+    // First-run/legacy storage has no Runway record but may retain positive
+    // Scheduled video IDs. Recover those as historical PARTIAL evidence only;
+    // an uploads-only cache can never create a new CONFIRMED schedule.
+    const legacyRows=confirmedBaseline(cached);
+    const nativeRows=cachedNative?Object.values(cachedNative.baseline||{}):[];
+    const historicalRows=legacyRows.length?legacyRows:nativeRows.length?nativeRows:(cachedNative?.videos||[]);
+    const historical=deriveRunwayRecord(channel,historicalRows,now,undefined,false);
+    if(historical.scheduledVideoCount>0){
+      next.channels[channel.id]=recalculateRunwayRecord({
+        ...historical,
+        dataState:'PARTIAL_DATA',
+        lastObservedAt:cachedNative?.updatedAt||cached?.updatedAt,
+        lastObservedScheduledCount:historical.scheduledVideoCount,
+        lastObservedScheduledUntil:historical.scheduledUntil,
+        runwayDays:undefined,status:'no-data',priority:'unknown'
+      },now);
+    }else{
+      next.channels[channel.id]=channelUnknown(channel,now);
+    }
   }
   // Recalculation may be scoped to one channel. Pruning all other records here
   // erased the historical Scheduled evidence of the other 32 channels.
