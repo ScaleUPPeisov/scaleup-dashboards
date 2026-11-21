@@ -303,25 +303,26 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
   it('owner search discovers private Scheduled absent uploads without corrupting last verified inventory',async()=>{
     vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-18T05:00:00Z'));
     try{
+      const isolatedChannel=channel('owner-search-supplement');
       const firstFuture=editable('first','private','2026-12-05T10:00:00Z');
       fixture.responses.set(profile.id,{...response(),videos:[firstFuture],scheduledCount:1,uniqueVideoIds:1,videosHydrated:1});
-      expect((await refreshOwnerInventoriesAuthoritative([channel()],true,[profile])).rows[0].status).toBe('UPDATED');
-      const saved=structuredClone(fixture.inventoryFiles.get('lumiere'));
+      expect((await refreshOwnerInventoriesAuthoritative([isolatedChannel],true,[profile])).rows[0].status).toBe('UPDATED');
+      const saved=structuredClone(fixture.inventoryFiles.get(isolatedChannel.id));
       fixture.responses.set(profile.id,{...response(),videos:[editable('not-in-uploads','private','2026-12-12T10:00:00Z')],
         scheduledCount:1,uniqueVideoIds:0,videosHydrated:0,searchUsed:true,searchSupplementCount:1,
         syncComplete:true,scheduleComplete:false,incompleteReasons:['UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH']});
-      const second=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
+      const second=await refreshOwnerInventoriesAuthoritative([isolatedChannel],true,[profile]);
       expect(second.rows[0].status).toBe('PARTIAL_DATA');
       expect(second.rows[0].observedScheduled).toBe(1);
       expect(second.rows[0].observedThrough).toBe('2026-12-12T10:00:00Z');
       expect(second.rows[0].diagnosticReasons).toContain('UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH');
-      expect(fixture.inventoryFiles.get('lumiere')).toEqual(saved);
-      const r=loadChannelRunwayStore().channels.lumiere;
+      expect(fixture.inventoryFiles.get(isolatedChannel.id)).toEqual(saved);
+      const r=loadChannelRunwayStore().channels[isolatedChannel.id];
       expect(r.dataState).toBe('PARTIAL_DATA');
       expect(r.status).toBe('no-data');
       expect(r.runwayDays).toBeUndefined();
       expect(r.scheduledUntil).toBe('2026-12-12');
-      const afterReload=recalculateChannelRunway([channel()],new Date(),false,storage as any).channels.lumiere;
+      const afterReload=recalculateChannelRunway([isolatedChannel],new Date(),false,storage as any).channels[isolatedChannel.id];
       expect(afterReload.dataState).toBe('PARTIAL_DATA');
       expect(afterReload.runwayDays).toBeUndefined();
       expect(afterReload.scheduledUntil).toBe('2026-12-12');
