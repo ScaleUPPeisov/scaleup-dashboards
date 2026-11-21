@@ -19,6 +19,9 @@ export type ChannelRunwayRecord={
   // v2 means this record came from a source whose schedule coverage was checked.
   // Legacy zeroes without this proof cannot claim CONFIRMED_EMPTY.
   inventoryEvidenceVersion?:2;
+  // v3: an exhausted owner Search or equivalent independent coverage proof.
+  // Persisted v2 positive counts remain historical, never automatically CURRENT.
+  independentScheduleEvidenceVersion?:3;
   lastRefreshAttemptAt?:string;
   lastRefreshError?:string;
   // Authenticated videos.list findings from the most recent incomplete read.
