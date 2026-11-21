@@ -73,7 +73,7 @@ function lumiereVideos(){
 function response(){
   const videos=lumiereVideos();
   return{channelId:'UC-LUMIERE',channelTitle:'Lumière de Minuit',youtubeFound:20,playlistReportedTotal:20,uniqueVideoIds:20,videosHydrated:20,
-    privateCount:0,publicCount:5,scheduledCount:15,scheduleComplete:true,syncComplete:true,complete:true,fullSyncApiRequests:3,fullSyncEstimatedQuotaCost:3,videos}
+    privateCount:0,publicCount:5,scheduledCount:15,scheduleComplete:true,syncComplete:true,complete:true,scheduledCoverageVerified:true,fullSyncApiRequests:3,fullSyncEstimatedQuotaCost:3,videos}
 }
 
 describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
@@ -251,7 +251,53 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
   it('uploads-only completed zero is NOT confirmed empty even when backend marks complete',()=>{
     expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:true,videos:[]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
     expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:false,videos:[editable('s','private','2026-12-12T10:00:00Z')]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
-    expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:true,videos:[editable('s','private','2026-12-12T10:00:00Z')]},Date.parse('2026-11-18T05:00:00Z'))).toBe(true);
+    expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:true,videos:[editable('s','private','2026-12-12T10:00:00Z')]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
+    expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:true,scheduledCoverageVerified:true,videos:[editable('s','private','2026-12-12T10:00:00Z')]},Date.parse('2026-11-18T05:00:00Z'))).toBe(true);
+  });
+
+
+  it('never promotes a 20-to-7 drop when historical future Video IDs are absent from the owner response',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-21T12:00:00Z'));
+    try{
+      const oldVideos=[
+        editable('PREVID00001','private','2026-12-12T10:00:00Z'),
+        editable('PREVID00002','private','2026-12-15T10:00:00Z')
+      ];
+      await replaceExistingCacheFromSync('lumiere',oldVideos,{
+        channelId:'UC-LUMIERE',syncComplete:true,scheduleComplete:true
+      });
+      fixture.responses.set(profile.id,{
+        ...response(),videos:[oldVideos[0]],scheduledCoverageVerified:true
+      });
+      const result=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
+      expect(result.rows[0].status).toBe('PARTIAL_DATA');
+      expect(result.rows[0].diagnosticReasons).toContain('PREVIOUS_SCHEDULED_IDS_NOT_RECONCILED');
+      expect((api.youtubeListExisting as any).mock.calls[0][4]).toContain('PREVID00002');
+      expect((await loadExistingCache('lumiere'))?.baseline['PREVID00002']).toBeDefined();
+      expect(loadChannelRunwayStore().channels.lumiere.dataState).not.toBe('CONFIRMED_SCHEDULE');
+    }finally{vi.useRealTimers()}
+  });
+
+  it('accepts a real decrease only after the former Scheduled ID is returned with a changed owner status',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-21T12:00:00Z'));
+    try{
+      const oldVideos=[
+        editable('PREVID00001','private','2026-12-12T10:00:00Z'),
+        editable('PREVID00002','private','2026-12-15T10:00:00Z')
+      ];
+      await replaceExistingCacheFromSync('lumiere',oldVideos,{
+        channelId:'UC-LUMIERE',syncComplete:true,scheduleComplete:true
+      });
+      fixture.responses.set(profile.id,{
+        ...response(),videos:[
+          oldVideos[0],
+          editable('PREVID00002','public',undefined,'2026-11-21T10:00:00Z')
+        ],scheduledCoverageVerified:true
+      });
+      const result=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
+      expect(result.rows[0].status).toBe('UPDATED');
+      expect(loadChannelRunwayStore().channels.lumiere.scheduledVideoCount).toBe(1);
+    }finally{vi.useRealTimers()}
   });
 
   it('owner search discovers private Scheduled absent uploads without corrupting last verified inventory',async()=>{
