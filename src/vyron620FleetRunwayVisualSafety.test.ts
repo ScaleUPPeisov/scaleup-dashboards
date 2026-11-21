@@ -7,10 +7,11 @@ describe('VYRON fleet runway evidence-aware visual contract',()=>{
 
   it('orders historical and confirmed visible numeric days, without adding local files',()=>{
     const s=source();
-    expect(s).toContain('historicalScheduledDays:rec.status');
+    expect(s).toContain("historicalScheduledDays:evidence.kind!=='CURRENT'");
     expect(s).toContain('compareYoutubeOnlyRunwayPriority(rank(a),rank(b))');
-    expect(s).toContain('rec.dataState===\'PARTIAL_DATA\'');
+    expect(s).toContain('runwayDisplayEvidence(row.record,now)');
     expect(s).not.toContain('localReadyVideos:row.content.readyVideoCount');
+    expect(s).toContain("evidence.kind==='UNKNOWN'");
   });
 
   it('shows red amber yellow green for confirmed and marked historical risk',()=>{
@@ -21,8 +22,8 @@ describe('VYRON fleet runway evidence-aware visual contract',()=>{
     expect(c).toContain('.channelRunway .runwayRow-partial');
     expect(c).toContain('.channelRunway .runwayStatus.partial');
     expect(c).toContain('.channelRunway .runwayDays.historical');
-    expect(s).toContain("ТРЕБУЕТ СВЕРКИ YOUTUBE");
-    expect(s).toContain("record.status==='no-data'?'historical':''");
+    expect(s).toContain("ИСТОРИЧЕСКИЙ ЗАПАС • СВЕРИТЬ");
+    expect(s).toContain("!isCurrent?'historical':''");
   });
 
   it('reports every channel with true progress, separately from confirmed inventory',()=>{
