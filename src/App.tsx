@@ -63,6 +63,7 @@ import {SafeArtwork} from './SafeArtwork';
 import {OwnerProfile} from './OwnerProfile';
 import {beginStartupQuotaProbe} from './startupQuotaProbe';
 import {ExistingInventoryMigrationBridge} from './ExistingInventoryMigrationBridge';
+import {runP0OwnerKnownIdsReadOnly} from './youtubeOwnerInventory';
 
 async function notifyUpdateAvailable(version:string){
   const notifiedKey='vyron:update-notified-version';
@@ -139,6 +140,29 @@ function PublishLedgerHydrator(){
   useEffect(()=>{if(booted)restorePublishLedgerFromUploadHistory(uploadHistory)},[booted,uploadHistory]);
   return null;
 }
+
+function P0OwnerVerificationBridge(){
+  const booted=useApp(s=>s.booted);
+  useEffect(()=>{
+    if(!booted)return;
+    let disposed=false;
+    // Allow startup inventory migrations and owner schedulers to settle
+    // before a single, strict-budget known-ID refresh. No Search is attempted.
+    const timer=window.setTimeout(()=>{
+      if(disposed)return;
+      void api.youtubeProfiles().then(profiles=>{
+        if(disposed)return;
+        const current=useApp.getState();
+        return runP0OwnerKnownIdsReadOnly(
+          current.channels,profiles,current.uploadHistory,()=>disposed
+        );
+      }).catch(()=>{});
+    },30000);
+    return()=>{disposed=true;window.clearTimeout(timer)};
+  },[booted]);
+  return null;
+}
+
 const STARTUP_DEADLINE_MS=20_000;
 function withStartupDeadline<T>(work:Promise<T>,label:string):Promise<T>{
   return new Promise((resolve,reject)=>{
@@ -283,7 +307,7 @@ export function App(){
   </div>;
   if(!booted||!license)return <Boot/>;
   if(!license.valid)return <Activation onActivated={setLicense}/>;
-  return <div className="appShell"><ExistingInventoryMigrationBridge/><LiveInventoryBridge/><ChannelRunwayScheduler/><ProductionStatusBridge/><ChannelStatisticsScheduler/><OwnerInventoryScheduler/><UploadProcessingMonitor/><RecoveryGate/><Sidebar/><main className="main"><Topbar/><PageRouter license={license}/></main><GlobalTaskIndicator/><GlobalUploadIndicator/><UploadCenterGlobal/><GlobalTaskCenter/><CommandPalette/><MetadataQueueAssignmentBridge/><PublishLedgerHydrator/><M1PerformanceProbe/>{fpsMonitor&&<FpsMonitor/>}<UpdateExperience/><MajorUpdateCelebration/><NotificationCenter/><div className="bgGlow a"/><div className="bgGlow b"/></div>
+  return <div className="appShell"><ExistingInventoryMigrationBridge/><LiveInventoryBridge/><ChannelRunwayScheduler/><ProductionStatusBridge/><ChannelStatisticsScheduler/><OwnerInventoryScheduler/><P0OwnerVerificationBridge/><UploadProcessingMonitor/><RecoveryGate/><Sidebar/><main className="main"><Topbar/><PageRouter license={license}/></main><GlobalTaskIndicator/><GlobalUploadIndicator/><UploadCenterGlobal/><GlobalTaskCenter/><CommandPalette/><MetadataQueueAssignmentBridge/><PublishLedgerHydrator/><M1PerformanceProbe/>{fpsMonitor&&<FpsMonitor/>}<UpdateExperience/><MajorUpdateCelebration/><NotificationCenter/><div className="bgGlow a"/><div className="bgGlow b"/></div>
 }
 const CachedDashboardRoute=React.memo(({mode}:{mode:'dashboard'|'autopilot'})=><><DashboardUploadSummary/><DashboardOS pageOverride={mode}/></>);
 const CachedChannelsRoute=React.memo(ChannelsOS);
