@@ -315,6 +315,14 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
     expect(scheduler).toContain('window.removeEventListener(EXISTING_INVENTORY_NATIVE_READY_EVENT,nativeReady)');
   });
 
+  it('P0 6.1.26 preserves 0-to-33 startup channel changes during native migration',()=>{
+    const src=readFileSync('src/ExistingInventoryMigrationBridge.tsx','utf8');
+    expect(src).toContain('pendingIds.current=channels.map(c=>c.id)');
+    expect(src).toContain('while(pendingIds.current!==null)');
+    expect(src).toContain('if(pendingIds.current!==null)continue');
+    expect(src).toContain('EXISTING_INVENTORY_NATIVE_READY_EVENT');
+  });
+
   it('uploads-only completed zero is NOT confirmed empty even when backend marks complete',()=>{
     expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:true,videos:[]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
     expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:false,videos:[editable('s','private','2026-12-12T10:00:00Z')]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
