@@ -438,3 +438,106 @@ export function refreshStaleOwnerInventories(channels:Channel[],force=false):Pro
   return task;
 }
 
+
+/**
+ * VYRON 6.1.25 one-shot owner verification for the eight P0 discrepant channels.
+ * This is a STRICT LOWER BOUND: known IDs cannot prove that Search indexed all
+ * private future uploads. No playlist/Search request, mutation or OAuth export.
+ * Only the current VYRON process touches its existing owner OAuth vault.
+ */
+const P0_OWNER_CHANNEL_NAMES=new Set([
+  'Glass City Lovers','Midnight Noir Lounge','Neon Drive FM','Mafia 1947 Lounge',
+  'Afterglow Highway','Rain & Roast Jazz','珈琲小路','After Dark Voice'
+]);
+const P0_LOCAL_EVIDENCE_PREFIX='vyron:p0-owner-evidence:625:';
+const P0_MAX_GENERAL_CALLS=20;
+const P0_GENERAL_RESERVE=200;
+const P0_RETRY_COOLDOWN_MS=6*60*60*1000;
+
+export type P0OwnerEvidence={
+  channelId:string;ownerChannelId:string;verifiedAt:string;status:'PARTIAL_DATA'|'OWNER_VERIFICATION_FAILED';
+  knownIds:number;hydratedIds:number;confirmedFutureScheduled:number;
+  latestVerifiedPublishAt?:string;notReturned:number;
+  generalCalls:number;searchCalls:0;coverage:'KNOWN_IDS_ONLY';
+  transitions:Array<{videoId:string;transition:'STILL_SCHEDULED'|'PUBLISHED'|'STATUS_CHANGED'|'NOT_RETURNED';currentPublishAt?:string}>;
+};
+export async function runP0OwnerKnownIdsReadOnly(
+  channels:Channel[],
+  profiles:Awaited<ReturnType<typeof api.youtubeProfiles>>,
+  history:Parameters<typeof knownOwnerVideoIdsFromUploadHistory>[0],
+  shouldStop:()=>boolean=()=>false,
+  nowMs=Date.now()
+):Promise<P0OwnerEvidence[]>{
+  const byProfile=new Map(profiles.map(p=>[p.id,p]));
+  const targets=channels.filter(c=>c.enabled!==false&&P0_OWNER_CHANNEL_NAMES.has(c.name));
+  await hydrateExistingInventoryCaches(targets.map(c=>c.id));
+  const results:P0OwnerEvidence[]=[];
+  let callsBudget=P0_MAX_GENERAL_CALLS;
+  for(const channel of targets){
+    if(shouldStop())break;
+    const profile=channel.youtubeProfileId?byProfile.get(channel.youtubeProfileId):undefined;
+    if(!profile||!channel.youtubeChannelId||
+       String(profile.channelId)!==String(channel.youtubeChannelId)||
+       BLOCKED_OWNER_CREDENTIAL_STATES.has(String(profile.credentialStatus||'')))continue;
+    const key=P0_LOCAL_EVIDENCE_PREFIX+channel.id;
+    let previous:{attemptAt?:string;result?:P0OwnerEvidence}|undefined;
+    try{previous=JSON.parse(localStorage.getItem(key)||'null')}catch{}
+    if(previous?.result?.status==='PARTIAL_DATA'){
+      results.push(previous.result);continue;
+    }
+    if(previous?.attemptAt&&nowMs-Date.parse(previous.attemptAt)<P0_RETRY_COOLDOWN_MS)continue;
+    const native=readExistingCache(channel.id);
+    const priorRows=[...Object.values(native?.baseline||{}),...(native?.videos||[])];
+    const fromHistory=knownOwnerVideoIdsFromUploadHistory(history,channel,nowMs);
+    // Full known-set read (including historically scheduled IDs now in the past)
+    // avoids hiding old transitions behind the latest uploads playlist.
+    const ids=[...new Set([...priorRows.map(x=>x.id),...fromHistory])]
+      .filter(x=>/^[A-Za-z0-9_-]{11}$/.test(x));
+    if(ids.length===0)continue;
+    const needed=Math.ceil(ids.length/50);
+    if(needed>callsBudget||needed>Math.max(0,youtubeQuotaBucketUsage('general').available-P0_GENERAL_RESERVE))
+      continue;
+    // Reserve a hard local session budget; never ask for Search or a full refresh.
+    callsBudget-=needed;
+    const attemptedAt=new Date().toISOString();
+    try{localStorage.setItem(key,JSON.stringify({attemptAt:attemptedAt}))}catch{continue}
+    const operationId='owner-known-ids-p0-625:'+channel.id+':'+Date.now();
+    bindYoutubeQuotaTraceContext(operationId,{
+      reason:'OWNER_P0_KNOWN_IDS_READONLY',channelIds:[channel.id],
+      mode:'MANUAL',estimatedUnits:needed
+    });
+    try{
+      const response=await api.youtubeRetryExistingHydration(profile.id,ids,operationId);
+      const ownerRows=(response.videos||[]).filter(v=>v.channelId===channel.youtubeChannelId);
+      const byId=new Map(ownerRows.map(v=>[v.id,v]));
+      const priorById=new Map(priorRows.map(v=>[v.id,v]));
+      const transitions:P0OwnerEvidence['transitions']=ids.map(id=>{
+        const fresh=byId.get(id),prior=priorById.get(id);
+        const published=fresh?.privacyStatus==='public'||fresh?.privacyStatus==='unlisted';
+        const future=fresh?.privacyStatus==='private'&&isFuture(fresh.publishAt,Date.now());
+        const transition=!fresh?'NOT_RETURNED':future?'STILL_SCHEDULED':published?'PUBLISHED':'STATUS_CHANGED';
+        return{videoId:id,transition,currentPublishAt:fresh?.publishAt}
+      });
+      const future=ownerRows.filter(v=>v.privacyStatus==='private'&&isFuture(v.publishAt,Date.now()));
+      const latest=future.map(x=>x.publishAt!).sort((a,b)=>Date.parse(a)-Date.parse(b)).at(-1);
+      // Targeted videos.list establishes a fresh minimum, NEVER an exhaustive
+      // schedule. Keep the previous complete inventory and historical Runway.
+      const evidence:P0OwnerEvidence={
+        channelId:channel.id,ownerChannelId:channel.youtubeChannelId,verifiedAt:new Date().toISOString(),
+        status:'PARTIAL_DATA',knownIds:ids.length,hydratedIds:ownerRows.length,
+        confirmedFutureScheduled:future.length,latestVerifiedPublishAt:latest,
+        notReturned:transitions.filter(x=>x.transition==='NOT_RETURNED').length,
+        generalCalls:Math.max(0,Number(response.apiRequests)||0),searchCalls:0,
+        coverage:'KNOWN_IDS_ONLY',transitions
+      };
+      try{localStorage.setItem(key,JSON.stringify({attemptAt:attemptedAt,result:evidence}))}catch{}
+      markRunwayRefreshIssue(channel,'PARTIAL_DATA','OWNER_KNOWN_ID_VERIFIED_SEARCH_COVERAGE_UNPROVEN',new Date(),undefined,ownerRows);
+      results.push(evidence);
+    }catch{
+      // No raw provider/OAuth error is persisted. In particular, no result
+      // may replace the previously verified baseline on a failed request.
+      try{localStorage.setItem(key,JSON.stringify({attemptAt:attemptedAt,errorCode:'OWNER_P0_VERIFICATION_FAILED'}))}catch{}
+    }
+  }
+  return results;
+}
