@@ -122,11 +122,19 @@ export function ownerInventoryFromVideos(channelId:string,videos:YoutubeExisting
   }
 }
 
-export function scheduledCoverageEstablished(result:{scheduleComplete?:boolean;syncComplete?:boolean;complete?:boolean;scheduledCoverageVerified?:boolean;videos?:YoutubeExistingVideo[]},nowMs=Date.now()){
+export function scheduledCoverageEstablished(result:{
+  scheduleComplete?:boolean;syncComplete?:boolean;complete?:boolean;scheduledCoverageVerified?:boolean;
+  searchUsed?:boolean;searchExhausted?:boolean;searchError?:string|null;
+  supplementalMissingCount?:number;knownScheduledIdsTruncated?:boolean;videos?:YoutubeExistingVideo[]
+},_nowMs=Date.now()){
   if(!(result.syncComplete??result.complete)||result.scheduleComplete!==true)return false;
-  const videos=Array.isArray(result.videos)?result.videos:[];
-  // Empty owner uploads and even empty owner search are not a proof of zero Scheduled.
-  return result.scheduledCoverageVerified===true||videos.some(v=>v.privacyStatus==='private'&&Boolean(v.publishAt)&&Date.parse(v.publishAt!)>nowMs);
+  // One verified Scheduled ID proves a lower bound, not exhaustive discovery.
+  // A successful uploads playlist alone is not independent schedule coverage.
+  // Legacy native responses must supply actual exhausted owner Search evidence;
+  // a newer backend may explicitly attest to that same property.
+  return result.scheduledCoverageVerified===true||
+    (result.searchUsed===true&&result.searchExhausted===true&&!result.searchError&&
+      result.supplementalMissingCount===0&&result.knownScheduledIdsTruncated!==true);
 }
 
 export function ownerInventoryForChannel(channelId:string,nowMs=Date.now()):OwnerYoutubeInventorySnapshot{
@@ -309,8 +317,10 @@ export async function refreshOwnerInventoriesAuthoritative(
       // Re-read owner-verified VYRON upload-history IDs even during a search
       // cooldown: no extra search.list call, no history mutation, no OAuth reset.
       const fromHistory=ownerKnownScheduledIds?.[channel.id]||[];
-      const knownScheduledIds=force?[...new Set([...cachedFuture,...fromHistory,...cachedPrivate])]
-        .filter(id=>/^[A-Za-z0-9_-]{11}$/.test(id)):[];
+      // Recheck historical owner-known IDs on every inventory refresh, not
+      // only manual scans. This costs cheap videos.list batches, never Search.
+      const knownScheduledIds=[...new Set([...cachedFuture,...fromHistory,...cachedPrivate])]
+        .filter(id=>/^[A-Za-z0-9_-]{11}$/.test(id));
       ownerAttemptAt.set(channel.id,Date.now());
       const result=await api.youtubeListExisting(linked.profile.id,5000,operationId,targeted,knownScheduledIds,targeted?allowedSearchPages:0);
       if(targeted&&result.searchUsed===true){
@@ -339,13 +349,23 @@ export async function refreshOwnerInventoriesAuthoritative(
       }
       // Do not mutate the last verified native inventory from an incomplete scan.
       const ownerMixed=(result.videos||[]).some(v=>v.channelId&&v.channelId!==linked.youtubeChannelId);
-      const coverageOk=scheduledCoverageEstablished(result)&&scheduleSyncTruthFromInfo(result)==='complete'&&!ownerMixed;
+      // A previously future Scheduled ID cannot vanish from a "complete"
+      // replacement without an owner videos.list transition or explicit gap.
+      // IDs returned as public/unlisted/private-without-future-publishAt are
+      // reconciled; missing IDs remain unresolved, not silently deleted.
+      const currentIds=new Set((result.videos||[]).map(v=>v.id));
+      const unresolvedHistoricalIds=cachedFuture.filter(id=>!currentIds.has(id));
+      const coverageOk=scheduledCoverageEstablished(result)&&scheduleSyncTruthFromInfo(result)==='complete'&&
+        !ownerMixed&&unresolvedHistoricalIds.length===0;
       if(!coverageOk){
         const observed=ownerMixed?[]:(result.videos||[]).filter(v=>
           v.channelId===linked.youtubeChannelId&&v.privacyStatus==='private'&&
           Boolean(v.publishAt)&&Number.isFinite(Date.parse(v.publishAt!))&&Date.parse(v.publishAt!)>Date.now());
         const observedThrough=observed.map(v=>v.publishAt!).sort((a,b)=>Date.parse(a)-Date.parse(b)).at(-1);
         const diagnosticReasons=Array.isArray(result.incompleteReasons)?result.incompleteReasons.slice(0,12):[];
+        if(unresolvedHistoricalIds.length>0)diagnosticReasons.push('PREVIOUS_SCHEDULED_IDS_NOT_RECONCILED');
+        if(result.scheduleComplete===true&&!scheduledCoverageEstablished(result))
+          diagnosticReasons.push('INDEPENDENT_SCHEDULE_COVERAGE_NOT_VERIFIED');
         // Native Rust emits allowlisted diagnostic codes. Never persist raw
         // Google messages that could contain user or OAuth account metadata.
         if(result.searchErrorCode&&/^[A-Z][A-Z0-9_]*$/.test(result.searchErrorCode))
