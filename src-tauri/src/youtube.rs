@@ -3893,6 +3893,8 @@ fn inventory_completeness_value(
     hydration_errors:&[String],
     schedule_data_incomplete_count:usize,
     playlist_reported_total:usize,
+    playlist_items_fetched:usize,
+    playlist_duplicate_count:usize,
 )->Value{
     let mut incomplete=Vec::<String>::new();
     if !playlist_exhausted{incomplete.push("PLAYLIST_NOT_EXHAUSTED".into())}
@@ -3907,8 +3909,18 @@ fn inventory_completeness_value(
     let page_info_mismatch=playlist_exhausted&&!limit_truncated&&playlist_reported_total>0&&playlist_reported_total!=unique_video_ids;
     if page_info_mismatch{
         warnings.push("PLAYLIST_TOTAL_METADATA_MISMATCH".into());
-        // An unexpected provider total can hide video IDs: this is not a proof of an empty schedule.
-        schedule_reasons.push("PLAYLIST_TOTAL_METADATA_MISMATCH".into());
+        // pageInfo counts playlist items, not unique Video IDs. An exhausted
+        // playlist with 222 returned items and 32 duplicate IDs can legitimately
+        // yield 190 unique videos without losing an ID.
+        if playlist_reported_total>playlist_items_fetched{
+            // 222 claimed but only 190 rows returned through the last page:
+            // the difference is NOT 32 Scheduled videos, yet coverage is unknown.
+            schedule_reasons.push("PLAYLIST_TOTAL_UNRESOLVED_GAP".into());
+        }
+    }
+    if playlist_exhausted&&!limit_truncated&&playlist_items_fetched!=
+        unique_video_ids.saturating_add(playlist_duplicate_count).saturating_add(playlist_unresolved){
+        schedule_reasons.push("PLAYLIST_PAGE_ACCOUNTING_MISMATCH".into());
     }
     let schedule_complete=schedule_reasons.is_empty();
     json!({
@@ -4026,7 +4038,8 @@ fn append_known_owner_video_ids(
 fn owner_schedule_reconciliation_reasons(
     scheduled_count:usize,verify:bool,search_error:bool,
     search_limit_reached:bool,search_exhausted:bool,
-    supplement_missing:bool,verified_supplement_scheduled:usize
+    supplement_missing:bool,verified_supplement_scheduled:usize,
+    history_only_scheduled:usize
 )->Vec<&'static str>{
     let mut reasons=Vec::new();
     if scheduled_count==0{reasons.push("SCHEDULE_EMPTY_NOT_INDEPENDENTLY_VERIFIED")}
@@ -4039,7 +4052,16 @@ fn owner_schedule_reconciliation_reasons(
     // Even when search.list is on cooldown, cached owner upload IDs can expose
     // Scheduled videos absent from uploads. Positive evidence is real, but the
     // union still does not prove exhaustive coverage.
-    if verified_supplement_scheduled>0{reasons.push("UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH")}
+    // When an exhausted owner Search supplied extra IDs and every one was
+    // hydrated against the exact owner, the union is reconciled; the presence
+    // of additional Scheduled is not itself missing coverage. If history
+    // disclosed a Scheduled ID absent from both Search and uploads, Search
+    // exhaustion is not reliable evidence of complete Scheduled coverage.
+    let reconciled=verify&&search_exhausted&&!search_error&&!search_limit_reached
+        &&!supplement_missing&&history_only_scheduled==0;
+    if verified_supplement_scheduled>0&&!reconciled{
+        reasons.push("UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH")
+    }
     reasons
 }
 // Classify provider search errors without storing raw text, URLs, account
@@ -4310,6 +4332,7 @@ pub async fn youtube_list_existing_videos(
     // Local owner-upload history is independent of search indexing. Hydrate its
     // IDs through authenticated videos.list even when search.list is cooling
     // down; never trust cached Scheduled state or channel ownership blindly.
+    let search_discovered_ids=supplement_seen.clone();
     let (known_id_checks,known_ids_truncated)=append_known_owner_video_ids(
         known_scheduled_ids.unwrap_or_default(),&seen,&mut supplement_seen,&mut supplemental_ids
     );
@@ -4356,11 +4379,15 @@ pub async fn youtube_list_existing_videos(
     let playlist_hydrated=out.len();
     let mut supplemental_hydrated=0usize;
     let mut verified_supplement_scheduled=0usize;
+    let mut history_only_scheduled=0usize;
     for (index,id) in supplemental_ids.iter().enumerate(){
         if let Some(item)=by_id.get(id){
             if let Some(row)=authoritative_inventory_row(item,ids.len()+index){
                 let (_,scheduled,_,_)=inventory_bucket_counts(&[row.clone()],Utc::now());
-                if scheduled>0{verified_supplement_scheduled+=1}
+                if scheduled>0{
+                    verified_supplement_scheduled+=1;
+                    if !search_discovered_ids.contains(id){history_only_scheduled+=1}
+                }
                 out.push(row);supplemental_hydrated+=1;
             }
         }
@@ -4378,6 +4405,8 @@ pub async fn youtube_list_existing_videos(
         &hydration_errors,
         schedule_incomplete_ids.len()+supplemental_missing.len(),
         playlist_reported_total,
+        playlist_items_fetched,
+        playlist_duplicate_count,
     );
     let sync_complete=completeness.get("syncComplete").and_then(Value::as_bool).unwrap_or(false);
     let mut reasons=completeness.get("incompleteReasons").and_then(Value::as_array).cloned().unwrap_or_default();
@@ -4389,7 +4418,7 @@ pub async fn youtube_list_existing_videos(
     for code in owner_schedule_reconciliation_reasons(
         scheduled_count_probe,verify,search_error.is_some(),
         search_limit_reached,search_exhausted,!supplemental_missing.is_empty(),
-        verified_supplement_scheduled
+        verified_supplement_scheduled,history_only_scheduled
     ){reason(code)}
     if let Some(ref code)=search_error_code{reason(code)}
     if known_ids_truncated{reason("KNOWN_SCHEDULED_IDS_TRUNCATED")}
@@ -4443,6 +4472,7 @@ pub async fn youtube_list_existing_videos(
         "scheduleComplete":schedule_complete,
         "draftCandidateCount":supplemental_ids.len(),
         "searchSupplementCount":verified_supplement_scheduled,
+        "historyOnlyScheduledOutsideSearchCount":history_only_scheduled,
         "searchUsed":search_used,
         "searchPagesFetched":search_pages,
         "searchExhausted":search_exhausted,
@@ -7436,7 +7466,7 @@ mod v2115_rc2_schedule_sync_hotfix_tests{
  #[test]
  fn complete_203_inventory_is_schedule_complete(){
   let errors=Vec::<String>::new();
-  let v=inventory_completeness_value(true,false,0,203,203,&errors,0,203);
+  let v=inventory_completeness_value(true,false,0,203,203,&errors,0,203,203,0);
   assert_eq!(v["syncComplete"],true);
   assert_eq!(v["scheduleComplete"],true);
   assert_eq!(v["incompleteReasons"],json!([]));
@@ -7444,23 +7474,52 @@ mod v2115_rc2_schedule_sync_hotfix_tests{
  #[test]
  fn page_info_mismatch_cannot_prove_schedule_coverage(){
   let errors=Vec::<String>::new();
-  let v=inventory_completeness_value(true,false,0,203,203,&errors,0,204);
+  let v=inventory_completeness_value(true,false,0,203,203,&errors,0,204,203,0);
   assert_eq!(v["syncComplete"],true);
   assert_eq!(v["scheduleComplete"],false);
   assert_eq!(v["pageInfoTotalMismatch"],true);
   assert_eq!(v["diagnosticWarnings"],json!(["PLAYLIST_TOTAL_METADATA_MISMATCH"]));
  }
  #[test]
+ fn exhausted_playlist_duplicates_explain_reported_222_vs_unique_190(){
+  let v=inventory_completeness_value(true,false,0,190,190,&[],0,222,222,32);
+  assert_eq!(v["syncComplete"],true);
+  assert_eq!(v["scheduleComplete"],true);
+  assert_eq!(v["pageInfoTotalMismatch"],true);
+  assert_eq!(v["diagnosticWarnings"],json!(["PLAYLIST_TOTAL_METADATA_MISMATCH"]));
+  assert_eq!(v["incompleteReasons"],json!([]));
+ }
+ #[test]
+ fn exhausted_playlist_222_reported_but_only_190_rows_is_unresolved(){
+  let v=inventory_completeness_value(true,false,0,190,190,&[],0,222,190,0);
+  assert_eq!(v["syncComplete"],true);
+  assert_eq!(v["scheduleComplete"],false);
+  assert!(v["incompleteReasons"].as_array().unwrap().contains(&json!("PLAYLIST_TOTAL_UNRESOLVED_GAP")));
+ }
+ #[test]
+ fn invalid_page_item_accounting_blocks_confirmation(){
+  let v=inventory_completeness_value(true,false,0,190,190,&[],0,222,222,20);
+  assert_eq!(v["scheduleComplete"],false);
+  assert!(v["incompleteReasons"].as_array().unwrap().contains(&json!("PLAYLIST_PAGE_ACCOUNTING_MISMATCH")));
+ }
+ #[test]
+ fn scheduled_outside_search_requires_partial_even_if_search_exhausted(){
+  assert!(owner_schedule_reconciliation_reasons(1,true,false,false,true,false,1,1)
+    .contains(&"UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH"));
+  assert!(owner_schedule_reconciliation_reasons(1,true,false,true,false,false,1,0)
+    .contains(&"UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH"));
+ }
+ #[test]
  fn missing_hydration_is_explicitly_incomplete(){
   let errors=Vec::<String>::new();
-  let v=inventory_completeness_value(true,false,0,203,202,&errors,0,203);
+  let v=inventory_completeness_value(true,false,0,203,202,&errors,0,203,203,0);
   assert_eq!(v["syncComplete"],false);
   assert!(v["incompleteReasons"].as_array().unwrap().iter().any(|x|x=="MISSING_VIDEO_HYDRATION"));
  }
  #[test]
  fn playlist_limit_and_not_exhausted_are_blocking(){
   let errors=Vec::<String>::new();
-  let v=inventory_completeness_value(false,true,0,1000,1000,&errors,0,1200);
+  let v=inventory_completeness_value(false,true,0,1000,1000,&errors,0,1200,1000,0);
   assert_eq!(v["syncComplete"],false);
   let r=v["incompleteReasons"].as_array().unwrap();
   assert!(r.iter().any(|x|x=="PLAYLIST_NOT_EXHAUSTED"));
@@ -7469,14 +7528,14 @@ mod v2115_rc2_schedule_sync_hotfix_tests{
  #[test]
  fn hydration_batch_failure_is_explicit(){
   let errors=vec!["batch 4: network timeout".to_string()];
-  let v=inventory_completeness_value(true,false,0,203,203,&errors,0,203);
+  let v=inventory_completeness_value(true,false,0,203,203,&errors,0,203,203,0);
   assert_eq!(v["syncComplete"],false);
   assert!(v["incompleteReasons"].as_array().unwrap().iter().any(|x|x=="HYDRATION_BATCH_FAILED"));
  }
  #[test]
  fn schedule_truth_is_separate_from_full_inventory_truth(){
   let errors=Vec::<String>::new();
-  let v=inventory_completeness_value(true,false,0,203,203,&errors,1,203);
+  let v=inventory_completeness_value(true,false,0,203,203,&errors,1,203,203,0);
   assert_eq!(v["syncComplete"],true);
   assert_eq!(v["scheduleComplete"],false);
   assert!(v["incompleteReasons"].as_array().unwrap().iter().any(|x|x=="SCHEDULE_DATA_INCOMPLETE"));
@@ -8169,9 +8228,9 @@ mod false_zero_owner_search_regression_tests{
    assert!(truncated);
  }
  #[test]fn full_uploads_playlist_is_not_proof_of_empty_scheduled(){
-   assert_eq!(owner_schedule_reconciliation_reasons(0,false,false,false,false,false,0),
+   assert_eq!(owner_schedule_reconciliation_reasons(0,false,false,false,false,false,0,0),
      vec!["SCHEDULE_EMPTY_NOT_INDEPENDENTLY_VERIFIED"]);
-   assert!(owner_schedule_reconciliation_reasons(0,true,false,false,true,false,0)
+   assert!(owner_schedule_reconciliation_reasons(0,true,false,false,true,false,0,0)
      .contains(&"SCHEDULE_EMPTY_NOT_INDEPENDENTLY_VERIFIED"));
  }
  #[test]fn private_scheduled_video_missing_from_uploads_is_recovered_by_owner_search(){
@@ -8188,9 +8247,9 @@ mod false_zero_owner_search_regression_tests{
    let verified=authoritative_inventory_row(&hydration,1).unwrap();
    let (_,scheduled,_,_)=inventory_bucket_counts(&[verified],chrono::DateTime::parse_from_rfc3339("2026-11-18T00:00:00Z").unwrap().with_timezone(&Utc));
    assert_eq!(scheduled,1);
-   assert!(owner_schedule_reconciliation_reasons(1,true,false,false,true,false,1)
+   assert!(!owner_schedule_reconciliation_reasons(1,true,false,false,true,false,1,0)
       .contains(&"UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH"));
-   assert!(owner_schedule_reconciliation_reasons(1,false,false,false,false,false,1)
+   assert!(owner_schedule_reconciliation_reasons(1,false,false,false,false,false,1,0)
       .contains(&"UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH"));
  }
  #[test]fn partial_search_and_wrong_channel_are_not_complete_evidence(){
@@ -8198,8 +8257,8 @@ mod false_zero_owner_search_regression_tests{
    let page=json!({"items":[{"id":{"videoId":"VIDEO_X"},"snippet":{"channelId":"UC_OTHER"}}]});
    assert_eq!(append_owner_search_candidates(&page,"UC_NEON",&seen,&mut candidates,&mut extra),0);
    assert!(extra.is_empty());
-   assert!(owner_schedule_reconciliation_reasons(0,true,true,false,false,false,0).contains(&"OWNER_SEARCH_FAILED"));
-   assert!(owner_schedule_reconciliation_reasons(0,true,false,true,false,false,0).contains(&"OWNER_SEARCH_PAGE_LIMIT"));
+   assert!(owner_schedule_reconciliation_reasons(0,true,true,false,false,false,0,0).contains(&"OWNER_SEARCH_FAILED"));
+   assert!(owner_schedule_reconciliation_reasons(0,true,false,true,false,false,0,0).contains(&"OWNER_SEARCH_PAGE_LIMIT"));
  }
 }
 
@@ -8222,10 +8281,10 @@ mod hotfix_runway_owner_identity_tests{
         assert_eq!(row["privacyStatus"],"private");
     }
     #[test]fn incomplete_video_hydration_never_confirms_schedule(){
-        let r=inventory_completeness_value(true,false,0,100,50,&[],0,100);
+        let r=inventory_completeness_value(true,false,0,100,50,&[],0,100,100,0);
         assert_eq!(r["syncComplete"],false);
         assert_eq!(r["scheduleComplete"],false);
-        let r=inventory_completeness_value(true,false,0,0,0,&[],0,0);
+        let r=inventory_completeness_value(true,false,0,0,0,&[],0,0,0,0);
         assert_eq!(r["scheduleComplete"],true);
     }
 }
