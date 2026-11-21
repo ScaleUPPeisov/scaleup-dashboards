@@ -39,17 +39,23 @@ function normalizeStoredRecord(id:string,value:unknown):ChannelRunwayRecord|unde
   const averagePublishIntervalDays=Number.isFinite(raw.averagePublishIntervalDays)?Number(raw.averagePublishIntervalDays):undefined;
   const status=VALID_STATUS.has(String(raw.status))?raw.status as ChannelRunwayRecord['status']:'no-data';
   const priority=VALID_PRIORITY.has(String(raw.priority))?raw.priority as ChannelRunwayRecord['priority']:'unknown';
+  // Previously persisted v2 CONFIRMED_SCHEDULE records were allowed solely
+  // because videos.list found a publishAt, not because Scheduled discovery
+  // was exhaustive. Fail closed until independent owner proof is reloaded.
+  const unprovenPositive=raw.dataState==='CONFIRMED_SCHEDULE'&&raw.independentScheduleEvidenceVersion!==3;
+  const unprovenEmpty=raw.dataState==='CONFIRMED_EMPTY'&&raw.independentScheduleEvidenceVersion!==3;
   return{
     ...raw,
     channelId,
     channelName,
     scheduledVideoCount,
-    dataState:raw.dataState==='CONFIRMED_EMPTY'&&raw.inventoryEvidenceVersion!==2?'UNKNOWN':VALID_DATA_STATE.has(String(raw.dataState))?raw.dataState:(raw.scheduledUntil?'STALE_CACHE':'UNKNOWN'),
+    dataState:unprovenPositive?'PARTIAL_DATA':unprovenEmpty?'UNKNOWN':
+      VALID_DATA_STATE.has(String(raw.dataState))?raw.dataState:(raw.scheduledUntil?'STALE_CACHE':'UNKNOWN'),
     averagePublishIntervalDays,
-    runwayDays,
+    runwayDays:unprovenPositive||unprovenEmpty?undefined:runwayDays,
     lastLocalCalculation:typeof raw.lastLocalCalculation==='string'&&raw.lastLocalCalculation?raw.lastLocalCalculation:'1970-01-01T00:00:00.000Z',
-    status,
-    priority
+    status:unprovenPositive||unprovenEmpty?'no-data':status,
+    priority:unprovenPositive||unprovenEmpty?'unknown':priority
   } as ChannelRunwayRecord;
 }
 
@@ -121,10 +127,10 @@ const validTime=(raw?:string)=>{const n=Date.parse(raw||'');return Number.isFini
 // A complete uploads playlist is not sufficient to prove a *zero* Scheduled inventory.
 // Positive videos.list + publishAt evidence may be used; negative evidence must be
 // explicitly independently validated (never claimed by the 6.1.18 backend).
-function trustedScheduledSnapshot(videos:YoutubeExistingVideo[],info:unknown,now:Date){
-  if(scheduleSyncTruthFromInfo(info)!=='complete')return false;
-  if((info as {scheduledCoverageVerified?:boolean}|null)?.scheduledCoverageVerified===true)return true;
-  return videos.some(v=>v.privacyStatus==='private'&&Boolean(v.publishAt)&&Date.parse(v.publishAt!)>now.getTime());
+function trustedScheduledSnapshot(_videos:YoutubeExistingVideo[],info:unknown,_now:Date){
+  // A positive videos.list row proves only its own existence, not that
+  // all Scheduled videos were discovered. Require independent owner coverage.
+  return scheduleSyncTruthFromInfo(info)==='complete';
 }
 
 export function recalculateChannelRunway(
@@ -156,7 +162,7 @@ export function recalculateChannelRunway(
       validTime(prior?.lastScheduleSync);
     if(latest&&validTime(latest.updatedAt)>priorTime){
       const verified=deriveRunwayRecord(channel,latest.videos,now,latest.updatedAt,true);
-      next.channels[channel.id]=recalculateRunwayRecord({...verified,inventoryEvidenceVersion:2},now);
+      next.channels[channel.id]=recalculateRunwayRecord({...verified,inventoryEvidenceVersion:2,independentScheduleEvidenceVersion:3},now);
       continue;
     }
     if(prior){
@@ -193,7 +199,7 @@ export function recalculateChannelRunway(
     }
     if(latest){
       const verified=deriveRunwayRecord(channel,latest.videos,now,latest.updatedAt,true);
-      next.channels[channel.id]=recalculateRunwayRecord({...verified,inventoryEvidenceVersion:2},now);
+      next.channels[channel.id]=recalculateRunwayRecord({...verified,inventoryEvidenceVersion:2,independentScheduleEvidenceVersion:3},now);
       continue;
     }
     next.channels[channel.id]=channelUnknown(channel,now);
@@ -213,7 +219,7 @@ export function upsertChannelRunwayFromYoutube(
   storage:StorageLike|undefined=browserStorage()
 ){
   const current=loadChannelRunwayStore(storage);
-  const record={...deriveRunwayRecord(channel,videos,now,now.toISOString(),true),inventoryEvidenceVersion:2 as const,lastRefreshAttemptAt:now.toISOString(),lastRefreshError:undefined};
+  const record={...deriveRunwayRecord(channel,videos,now,now.toISOString(),true),inventoryEvidenceVersion:2 as const,independentScheduleEvidenceVersion:3 as const,lastRefreshAttemptAt:now.toISOString(),lastRefreshError:undefined};
   const next:ChannelRunwayStore={
     ...current,
     version:1,
