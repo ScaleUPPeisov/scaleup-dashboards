@@ -204,7 +204,8 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
       expect(r.status).toBe('no-data');
       expect(r.runwayDays).toBeUndefined();
       expect(r.lastRefreshError).toBe('AUTHORITATIVE_INVENTORY_INCOMPLETE');
-      expect(r.lastScheduleSync).toBeTruthy();
+      expect(r.lastObservedAt).toBeTruthy();
+      expect(r.lastScheduleSync).toBeUndefined(); // Unproven uploads-only cache is historical, not a full owner sync
     }finally{vi.useRealTimers()}
   });
 
