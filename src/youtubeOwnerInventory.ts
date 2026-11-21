@@ -482,7 +482,8 @@ export async function runP0OwnerKnownIdsReadOnly(
     const key=P0_LOCAL_EVIDENCE_PREFIX+channel.id;
     let previous:{attemptAt?:string;result?:P0OwnerEvidence}|undefined;
     try{previous=JSON.parse(localStorage.getItem(key)||'null')}catch{}
-    if(previous?.result?.status==='PARTIAL_DATA'){
+    if(previous?.result?.status==='PARTIAL_DATA'&&
+       nowMs-Date.parse(previous.result.verifiedAt)<P0_RETRY_COOLDOWN_MS){
       results.push(previous.result);continue;
     }
     if(previous?.attemptAt&&nowMs-Date.parse(previous.attemptAt)<P0_RETRY_COOLDOWN_MS)continue;
@@ -495,7 +496,8 @@ export async function runP0OwnerKnownIdsReadOnly(
       .filter(x=>/^[A-Za-z0-9_-]{11}$/.test(x));
     if(ids.length===0)continue;
     const needed=Math.ceil(ids.length/50);
-    if(needed>callsBudget||needed>Math.max(0,youtubeQuotaBucketUsage('general').available-P0_GENERAL_RESERVE))
+    if(youtubeQuotaState().blocked||needed>callsBudget||
+       needed>Math.max(0,youtubeQuotaBucketUsage('general').available-P0_GENERAL_RESERVE))
       continue;
     // Reserve a hard local session budget; never ask for Search or a full refresh.
     callsBudget-=needed;
@@ -510,9 +512,8 @@ export async function runP0OwnerKnownIdsReadOnly(
       const response=await api.youtubeRetryExistingHydration(profile.id,ids,operationId);
       const ownerRows=(response.videos||[]).filter(v=>v.channelId===channel.youtubeChannelId);
       const byId=new Map(ownerRows.map(v=>[v.id,v]));
-      const priorById=new Map(priorRows.map(v=>[v.id,v]));
       const transitions:P0OwnerEvidence['transitions']=ids.map(id=>{
-        const fresh=byId.get(id),prior=priorById.get(id);
+        const fresh=byId.get(id);
         const published=fresh?.privacyStatus==='public'||fresh?.privacyStatus==='unlisted';
         const future=fresh?.privacyStatus==='private'&&isFuture(fresh.publishAt,Date.now());
         const transition=!fresh?'NOT_RETURNED':future?'STILL_SCHEDULED':published?'PUBLISHED':'STATUS_CHANGED';
