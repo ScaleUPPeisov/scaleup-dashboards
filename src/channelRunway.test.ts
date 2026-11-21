@@ -111,7 +111,7 @@ describe('Channel Runway core',()=>{
     const records=Array.from({length:33},(_,i)=>{
       const name='channel-'+i;
       const base=deriveRunwayRecord(channel({id:name,name}),[scheduled('2027-01-04T18:00:00+07:00')],
-        new Date('2026-11-20T20:00:00Z'),'2026-11-20T20:00:00Z',true);
+        new Date('2026-11-21T02:00:00Z'),'2026-11-21T02:00:00Z',true);
       if(i===1)return {...base,dataState:'API_FAILED' as const,status:'no-data' as const,runwayDays:undefined};
       if(i===2)return {...base,dataState:'PARTIAL_DATA' as const,status:'no-data' as const,runwayDays:undefined,
         lastObservedAt:'2026-11-21T02:00:00Z',lastObservedScheduledCount:1,lastObservedScheduledUntil:'2026-11-25'};
