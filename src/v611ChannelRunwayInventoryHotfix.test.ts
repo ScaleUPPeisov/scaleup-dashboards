@@ -281,6 +281,31 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
     expect(again.scheduledVideoCount).toBe(16);
   });
 
+  it('P0 6.1.26 restores only a proved native schedule despite a newer legacy lastRefreshAttemptAt',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-21T12:10:25.100Z'));
+    try{
+      const ch=channel('migration-verified');
+      const vids=[editable('future-P0','private','2027-02-05T20:00:00+07:00')];
+      expect((await replaceExistingCacheFromSync(ch.id,vids,{
+        scheduleComplete:true,syncComplete:true,searchUsed:true,searchExhausted:true,
+        supplementalMissingCount:0,knownScheduledIdsTruncated:false
+      })).persisted).toBe(true);
+      storage.seed(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify({version:1,channels:{[ch.id]:{
+        channelId:ch.id,channelName:ch.name,scheduledVideoCount:1,scheduledUntil:'2027-02-05',
+        dataState:'CONFIRMED_SCHEDULE',inventoryEvidenceVersion:2,
+        lastScheduleSync:'2026-11-21T12:10:25.100Z',
+        lastRefreshAttemptAt:'2026-11-21T12:10:25.120Z',
+        lastLocalCalculation:'2026-11-21T12:10:25.120Z',
+        runwayDays:76,priority:'low',status:'large'
+      }}}));
+      const result=recalculateChannelRunway([ch],new Date('2026-11-21T13:00:00Z'),false,storage as any).channels[ch.id];
+      expect(result.dataState).toBe('CONFIRMED_SCHEDULE');
+      expect(result.independentScheduleEvidenceVersion).toBe(3);
+      expect(result.scheduledVideoCount).toBe(1);
+      expect(result.scheduledUntil).toBe('2027-02-05');
+    }finally{vi.useRealTimers()}
+  });
+
   it('uploads-only completed zero is NOT confirmed empty even when backend marks complete',()=>{
     expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:true,videos:[]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
     expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:false,videos:[editable('s','private','2026-12-12T10:00:00Z')]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
