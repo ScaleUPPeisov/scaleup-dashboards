@@ -287,27 +287,25 @@ export function ChannelRunway(){
         <span>Канал</span><span>На YouTube до</span><span>На диске</span><span>Остаток дней на YouTube</span><span>Scheduled</span><span>Ready</span><span>Cadence</span><span>Uploads</span><span>Статус</span><span>Действие</span>
       </div>
       {rows.length===0?<div className="empty"><b>Нет активных каналов</b><p>Content Runway не создаёт демонстрационные данные.</p></div>:rows.map(({channel,record,content,localRunway,uploadRemaining,uploadLimitKnown})=>{
-        const youtubeStatus=runwayStatus(content.remoteScheduledDays,record.status!=='no-data');
-        const freshObserved=record.dataState==='PARTIAL_DATA'&&Boolean(record.lastObservedAt)&&
-          Number(record.lastObservedScheduledCount||0)>0&&Boolean(record.lastObservedScheduledUntil);
-        const partialObserved=record.dataState==='PARTIAL_DATA'&&(record.scheduledVideoCount>0||freshObserved);
-        const meta=record.status==='no-data'&&partialObserved
-          ?{label:'ТРЕБУЕТ СВЕРКИ YOUTUBE',icon:'◐'}:statusMeta[youtubeStatus];
-        // Never silently display a ten-hour-old baseline as the current owner
-        // observation. Fresh owner-visible Scheduled IDs are lower bounds.
-        const shownThrough=record.status==='no-data'
-          ?(freshObserved?record.lastObservedScheduledUntil:partialObserved?record.scheduledUntil:undefined)
-          :content.scheduledThrough;
-        const partialDays=partialObserved&&shownThrough?Math.max(0,calendarDaysBetween(krasnoyarskClock(new Date()).dateKey,shownThrough)??0):undefined;
-        const historicalPartial=partialObserved&&!freshObserved;
+        const evidence=runwayDisplayEvidence(record);
+        const isCurrent=evidence.kind==='CURRENT';
+        const isObserved=evidence.kind==='OBSERVED_PARTIAL';
+        const isHistorical=evidence.kind==='HISTORICAL';
+        const hasEvidence=evidence.daysRemaining!==undefined;
+        const shownThrough=evidence.scheduledUntil;
+        const shownDays=evidence.daysRemaining;
+        const youtubeStatus=runwayStatus(shownDays,isCurrent);
+        const meta=isCurrent?statusMeta[youtubeStatus]:hasEvidence
+          ?{label:isObserved?'ЧАСТИЧНО ПОДТВЕРЖДЕНО':'ИСТОРИЧЕСКИЙ ЗАПАС • СВЕРИТЬ',icon:'◐'}
+          :{label:record.dataState==='API_FAILED'?'ОШИБКА API • ЗАПАС НЕИЗВЕСТЕН':'НУЖНА ПРОВЕРКА YOUTUBE',icon:'◐'};
         const diagnosticCodes=(record.lastRefreshError||'AUTHORITATIVE_INVENTORY_INCOMPLETE')
           .split(' | ').filter(x=>x&&x!=='AUTHORITATIVE_INVENTORY_INCOMPLETE');
         const preciseSearchCodes=diagnosticCodes.filter(x=>x.startsWith('OWNER_SEARCH_HTTP_')||x==='OWNER_SEARCH_NETWORK_ERROR');
         const partialReason=record.dataState==='PARTIAL_DATA'
           ?[...preciseSearchCodes,...diagnosticCodes.filter(x=>!preciseSearchCodes.includes(x))].slice(0,3).join(' • ')||'COVERAGE_UNVERIFIED'
           :'';
-        const visibleTone=record.status==='no-data'&&partialDays!==undefined?runwayStatus(partialDays,true):youtubeStatus;
-        const rowTone=record.status==='no-data'?(partialObserved?'partial':'unknown'):youtubeStatus;
+        const visibleTone=hasEvidence?runwayStatus(shownDays,true):'no-data';
+        const rowTone=isCurrent?youtubeStatus:hasEvidence?'partial':'unknown';
         return <div className={`runwayRow runwayRow-${rowTone}`} key={channel.id}>
           <span className="runwayChannel runwayChannelWithAvatar"><ChannelAvatar channel={channel} size="sm"/><span><b>{channel.name}</b><small>{syncLabel(record.lastScheduleSync)}</small><small title={record.lastRefreshError||''}>{partialReason?('Причина: '+partialReason):evidenceLabel(record.dataState)}</small><small>{linkedByLocalId.has(channel.id)?`Subs ${subscriberStatLabel(channel.stats)} • Views ${compactChannelStat(channel.stats?.viewCount??channel.stats?.views)}`:'YouTube: НЕ ПОДКЛЮЧЁН'}</small></span></span>
           <span>{shownThrough?<><b>📺 {dateLabel(shownThrough)}</b><small>{record.status==='no-data'?(record.dataState==='PARTIAL_DATA'?(freshObserved?'свежая дата owner-проверки • полнота неизвестна':'историческая дата • свежая полнота неизвестна'):'последняя сохранённая дата • не подтверждена'):content.remoteScheduledDays>0?`ещё ${content.remoteScheduledDays} дн.`:'подтверждённое расписание закончилось'}</small></>:<><b>{record.status==='no-data'?'📺 Нет подтверждённых данных':'📺 Будущих видео нет'}</b><small>{evidenceLabel(record.dataState)}</small></>}</span>
