@@ -17,12 +17,14 @@ Object.defineProperty(globalThis,'localStorage',{value:storage,configurable:true
 const fixture=vi.hoisted(()=>({
  profiles:[] as YoutubeProfile[],
  responses:new Map<string,{videos:YoutubeExistingVideo[];syncComplete:boolean;complete:boolean;scheduleComplete:boolean;channelId:string;fullSyncApiRequests?:number;fullSyncEstimatedQuotaCost?:number;searchCalls?:number;searchUsed?:boolean;searchExhausted?:boolean;searchError?:string|null;searchErrorCode?:string|null;scheduledCoverageVerified?:boolean;incompleteReasons?:string[]}>(),
- inventoryFiles:new Map<string,any>()
+ inventoryFiles:new Map<string,any>(),
+ retries:new Map<string,any>()
 }));
 vi.mock('./api',()=>({
  api:{
   youtubeProfiles:vi.fn(async()=>fixture.profiles),
   youtubeListExisting:vi.fn(async(profileId:string)=>fixture.responses.get(profileId)||{videos:[],syncComplete:false,complete:false,scheduleComplete:false,channelId:''}),
+  youtubeRetryExistingHydration:vi.fn(async(profileId:string)=>fixture.retries.get(profileId)||{videos:[],apiRequests:1,missingHydrationIds:[]}),
   youtubeInventoryRead:vi.fn(async(channelId:string)=>fixture.inventoryFiles.has(channelId)?{found:true,schemaVersion:2,channelId,path:'native',payload:fixture.inventoryFiles.get(channelId)}:{found:false,schemaVersion:2,channelId,path:'native'}),
   youtubeInventoryWrite:vi.fn(async(channelId:string,payload:any)=>{fixture.inventoryFiles.set(channelId,structuredClone(payload));return{ok:true,verified:true,schemaVersion:2,channelId,path:'native',bytes:JSON.stringify(payload).length}}),
   youtubeInventoryDelete:vi.fn(async(channelId:string)=>{fixture.inventoryFiles.delete(channelId);return{ok:true,channelId,deleted:true}})
@@ -32,13 +34,13 @@ vi.mock('./youtubeQuota',()=>({
  bindYoutubeQuotaTraceContext:vi.fn(),
  youtubeOperationActualCost:vi.fn(()=>({methods:{'playlistItems.list':{calls:1}},buckets:{general:1}})),
  youtubeQuotaState:vi.fn(()=>({blocked:false})),
- youtubeQuotaBucketUsage:vi.fn(()=>({available:100,used:0,limit:100,reserved:0})),
+ youtubeQuotaBucketUsage:vi.fn((bucket:string)=>({available:bucket==='general'?1000:100,used:0,limit:bucket==='general'?10000:100,reserved:0})),
  youtubeQuotaUsage:vi.fn(()=>({used:0,limit:10000}))
 }));
 vi.mock('./youtubeCache',()=>({markYoutubeCache:vi.fn()}));
 
 import {api} from './api';
-import {knownOwnerVideoIdsFromUploadHistory,refreshOwnerInventoriesAuthoritative,safeOwnerInventoryFailureCode} from './youtubeOwnerInventory';
+import {knownOwnerVideoIdsFromUploadHistory,refreshOwnerInventoriesAuthoritative,safeOwnerInventoryFailureCode,runP0OwnerKnownIdsReadOnly} from './youtubeOwnerInventory';
 import {loadChannelRunwayStore,upsertChannelRunwayFromYoutube} from './channelRunwayStore';
 import {CHANNEL_RUNWAY_STORAGE_KEY} from './channelRunwayCore';
 
@@ -56,7 +58,7 @@ function setResponse(profileId:string,count:number){fixture.responses.set(profil
 
 describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
  beforeEach(()=>{
-  fixture.profiles=[];fixture.responses.clear();fixture.inventoryFiles.clear();vi.clearAllMocks();
+  fixture.profiles=[];fixture.responses.clear();fixture.inventoryFiles.clear();fixture.retries.clear();vi.clearAllMocks();
   try{localStorage.clear()}catch{}
  });
 
@@ -82,6 +84,42 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
   expect(store.channels.D.scheduledUntil).toBe('2099-01-12');
   expect(store.channels.A.runwayDays).toBeGreaterThan(0);
  });
+
+  it('P0 owner verifier checks only known IDs in exact OAuth profile and preserves history as PARTIAL',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-21T12:00:00Z'));
+    try{
+      const ch=channel('p0-glass',{name:'Glass City Lovers',youtubeProfileId:'p0-glass',youtubeChannelId:'UC-P0-GLASS'});
+      const pf=profile('p0-glass','UC-P0-GLASS');
+      fixture.profiles=[pf];
+      const id='ABCDEFGHIJK';
+      fixture.retries.set(pf.id,{videos:[{...scheduled(id,20),channelId:'UC-P0-GLASS'}],apiRequests:1,missingHydrationIds:[]});
+      const history=[{channelId:ch.id,status:'UPLOADED',youtubeVideoId:id,youtubeChannelId:'UC-P0-GLASS',profileId:pf.id,publishAt:'2099-01-20T18:00:00Z'}];
+      const rows=await runP0OwnerKnownIdsReadOnly([ch],fixture.profiles,history);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].confirmedFutureScheduled).toBe(1);
+      expect(rows[0].coverage).toBe('KNOWN_IDS_ONLY');
+      expect(rows[0].searchCalls).toBe(0);
+      expect(rows[0].transitions).toEqual([{videoId:id,transition:'STILL_SCHEDULED',currentPublishAt:'2099-01-20T18:00:00+07:00'}]);
+      expect(api.youtubeRetryExistingHydration).toHaveBeenCalledTimes(1);
+      expect((api.youtubeRetryExistingHydration as any).mock.calls[0][1]).toEqual([id]);
+      expect(api.youtubeListExisting).not.toHaveBeenCalled();
+      expect(loadChannelRunwayStore().channels[ch.id].dataState).toBe('PARTIAL_DATA');
+      expect(loadChannelRunwayStore().channels[ch.id].lastObservedScheduledCount).toBe(1);
+      const again=await runP0OwnerKnownIdsReadOnly([ch],fixture.profiles,history);
+      expect(again).toHaveLength(1);
+      expect(api.youtubeRetryExistingHydration).toHaveBeenCalledTimes(1);
+    }finally{vi.useRealTimers()}
+  });
+
+  it('P0 verifier refuses mismatched owner OAuth and makes no API calls',async()=>{
+    const ch=channel('p0-nope',{name:'Glass City Lovers',youtubeProfileId:'p-nope',youtubeChannelId:'UC-EXPECTED'});
+    const pf=profile('p-nope','UC-OTHER');
+    const history=[{channelId:ch.id,status:'UPLOADED',youtubeVideoId:'ABCDEFGHIJK',profileId:pf.id}];
+    const rows=await runP0OwnerKnownIdsReadOnly([ch],[pf],history);
+    expect(rows).toEqual([]);
+    expect(api.youtubeRetryExistingHydration).not.toHaveBeenCalled();
+    expect(api.youtubeListExisting).not.toHaveBeenCalled();
+  });
 
  it('35-channel fleet classifies every enabled row and spends inventory quota only on actual eligible API calls',async()=>{
   const channels:Channel[]=[];
