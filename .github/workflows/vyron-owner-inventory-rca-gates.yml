@@ -10,6 +10,7 @@ on:
       - src/youtubeOwnerInventory.ts
       - src/fullChannelRefresh.ts
       - src/ChannelRunway.tsx
+      - src/App.tsx
       - src/api.ts
       - src/v610ChannelRunwayFleetRefresh.test.ts
       - src/channelRunwayCore.ts
@@ -51,7 +52,7 @@ jobs:
           node - <<'NODE'
           const {execFileSync}=require('node:child_process');
           const files=execFileSync('git',['diff','--name-only','08bef81a3683b788de5ff734612a9e9f6d94f920...HEAD'],{encoding:'utf8'}).trim().split('\n').filter(Boolean);
-          const allowed=new Set(['src-tauri/src/youtube.rs','src/youtubeOwnerInventory.ts','src/ChannelRunway.tsx','src/fullChannelRefresh.ts','src/api.ts','src/v610ChannelRunwayFleetRefresh.test.ts','src/channelRunwayCore.ts','src/channelRunway.test.ts','src/vyron620FleetRunwayVisualSafety.test.ts','src/v611ChannelRunwayInventoryHotfix.test.ts','.github/workflows/vyron-owner-inventory-rca-gates.yml']);
+          const allowed=new Set(['src-tauri/src/youtube.rs','src/youtubeOwnerInventory.ts','src/ChannelRunway.tsx','src/App.tsx','src/fullChannelRefresh.ts','src/api.ts','src/v610ChannelRunwayFleetRefresh.test.ts','src/channelRunwayCore.ts','src/channelRunway.test.ts','src/vyron620FleetRunwayVisualSafety.test.ts','src/v611ChannelRunwayInventoryHotfix.test.ts','.github/workflows/vyron-owner-inventory-rca-gates.yml']);
           for(const f of files)if(!allowed.has(f))throw Error('UNEXPECTED_CHANGED_FILE: '+f);
           console.log('VYRON_OWNER_RCA_CHANGE_SCOPE=PASS');
           NODE
