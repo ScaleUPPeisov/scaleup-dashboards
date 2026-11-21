@@ -161,7 +161,17 @@ export function recalculateChannelRunway(
       validTime(prior.lastRefreshAttemptAt):
       prior?.dataState==='CONFIRMED_EMPTY'&&prior.inventoryEvidenceVersion!==2?0:
       validTime(prior?.lastScheduleSync);
-    if(latest&&validTime(latest.updatedAt)>priorTime){
+    // Migration from a legacy false CONFIRMED_SCHEDULE may have a saved
+    // lastRefreshAttemptAt milliseconds later than the independent native
+    // snapshot. Re-promote only when the snapshot itself has v3 coverage proof,
+    // there is no later failed refresh, and the old record was v2/unproven.
+    // Otherwise, strict timestamp precedence still protects newer PARTIAL.
+    const canMigrateProvenNative=Boolean(latest&&prior&&
+      prior.dataState==='PARTIAL_DATA'&&
+      prior.inventoryEvidenceVersion===2&&
+      prior.independentScheduleEvidenceVersion!==3&&
+      !prior.lastRefreshError);
+    if(latest&&(validTime(latest.updatedAt)>priorTime||canMigrateProvenNative)){
       const verified=deriveRunwayRecord(channel,latest.videos,now,latest.updatedAt,true);
       next.channels[channel.id]=recalculateRunwayRecord({...verified,inventoryEvidenceVersion:2,independentScheduleEvidenceVersion:3},now);
       continue;
