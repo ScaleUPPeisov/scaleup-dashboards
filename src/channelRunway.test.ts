@@ -192,6 +192,22 @@ describe('Channel Runway core',()=>{
 });
 
 describe('Channel Runway persistence and 06:00 KRAT scheduler',()=>{
+  it('targeted recalculation of one channel never deletes the other 32 owner snapshots',()=>{
+    const storage=new MemoryStorage(),now=new Date('2026-11-21T03:00:00Z');
+    const channels=Array.from({length:33},(_,i)=>channel({id:'channel-'+i,name:'Channel '+i}));
+    for(const c of channels)upsertChannelRunwayFromYoutube(c,[scheduled('2027-01-04T18:00:00+07:00')],now,storage as any);
+    const before=loadChannelRunwayStore(storage as any);
+    expect(Object.keys(before.channels)).toHaveLength(33);
+    const one=recalculateChannelRunway([channels[0]],new Date('2026-11-21T04:00:00Z'),false,storage as any);
+    expect(Object.keys(one.channels)).toHaveLength(33);
+    for(const c of channels.slice(1)){
+      expect(one.channels[c.id]).toEqual(before.channels[c.id]);
+      expect(one.channels[c.id].scheduledUntil).toBe('2027-01-04');
+      expect(one.channels[c.id].scheduledVideoCount).toBe(1);
+    }
+    expect(Object.keys(loadChannelRunwayStore(storage as any).channels)).toHaveLength(33);
+  });
+
   it('persists scheduledUntil across restart-like reload',()=>{
     const storage=new MemoryStorage();
     const now=new Date('2026-09-02T08:00:00Z');
