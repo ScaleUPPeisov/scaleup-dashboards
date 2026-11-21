@@ -13,6 +13,10 @@ const ownerInventoryRuns=new Map<string,Promise<OwnerInventoryRefreshSummary>>()
 const ownerAttemptAt=new Map<string,number>();
 const ownerSearchAt=new Map<string,number>();
 const OWNER_SEARCH_COOLDOWN_MS=10*60*1000;
+// Native hydration budget: at most 500 *additional* owner-known IDs.
+// Forward all valid input IDs so playlist/Search duplicates do not use the cap;
+// native reports overflow if there are >500 still-uncovered IDs.
+export const OWNER_KNOWN_VIDEO_ID_LIMIT=500;
 // Explicit full-fleet runs can deep-check incomplete channels only: 2 pages
 // per channel, up to 33 channels, with a search-bucket reserve for other work.
 export const MANUAL_FLEET_DEEP_SEARCH_CHANNEL_CAP=33;
@@ -49,6 +53,30 @@ export type OwnerYoutubeInventoryTotals={
 };
 
 const isFuture=(iso:string|undefined,now:number)=>Boolean(iso&&Number.isFinite(Date.parse(iso))&&Date.parse(iso)>now);
+
+// Owner-verified upload IDs are an independent discovery source for videos.list.
+// YouTube may omit private Scheduled videos from the uploads playlist. Preserve
+// future Scheduled first; then recent successful uploads lacking a publishAt.
+// Every ID is hydrated again under the EXACT connected OAuth owner Channel ID.
+// Never trust a history entry as current Scheduled without videos.list status.
+export function knownOwnerVideoIdsFromUploadHistory<T extends {
+  channelId:string;status:string;youtubeVideoId?:string|null;
+  youtubeChannelId?:string;profileId?:string;publishAt?:string|null;
+}>(history:readonly T[],channel:Pick<Channel,'id'|'youtubeChannelId'|'youtubeProfileId'>,nowMs=Date.now()){
+  const eligible=history.map((row,index)=>({row,index})).filter(({row})=>
+    row.channelId===channel.id&&row.status==='UPLOADED'&&
+    (!row.youtubeChannelId||row.youtubeChannelId===channel.youtubeChannelId)&&
+    (!row.profileId||row.profileId===channel.youtubeProfileId)&&
+    /^[A-Za-z0-9_-]{11}$/.test(String(row.youtubeVideoId||'')));
+  const scheduled=eligible.filter(({row})=>isFuture(row.publishAt||undefined,nowMs))
+    .sort((a,b)=>Date.parse(b.row.publishAt!)-Date.parse(a.row.publishAt!));
+  const recent=eligible.filter(({row})=>!isFuture(row.publishAt||undefined,nowMs))
+    .sort((a,b)=>b.index-a.index);
+  // Forward the full known-ID set: the native bounded verifier counts only
+  // IDs absent from the uploads playlist and owner Search. Cutting input to
+  // 501 here could hide an unknown Scheduled ID behind 500 already-known IDs.
+  return [...new Set([...scheduled,...recent].map(({row})=>String(row.youtubeVideoId)))]
+}
 const sameLocalDay=(iso:string|undefined,now:Date)=>{
   if(!iso)return false;
   const d=new Date(iso);
@@ -143,6 +171,10 @@ export type OwnerInventoryRefreshSummary={
   searchCalls?:number;
   counts:Record<OwnerInventoryFleetStatus,number>;
   deepSearchChannels?:number;
+  deepSearchFailedChannels?:number;
+  deepSearchExhaustedChannels?:number;
+  deepSearchPageLimitedChannels?:number;
+  deepSearchSystemicStopCode?:string;
 };
 export type OwnerInventoryFleetProgress={done:number;total:number;channelName:string;status:OwnerInventoryFleetStatus};
 
@@ -150,6 +182,21 @@ export type OwnerInventoryFleetProgress={done:number;total:number;channelName:st
 // Preserve a distinct PARTIAL_DATA status rather than implying HTTP failure.
 export function classifyIncompleteOwnerCoverage(ownerMixed:boolean):OwnerInventoryFleetStatus{
   return ownerMixed?'API_FAILED':'PARTIAL_DATA';
+}
+
+// Never persist raw provider or OAuth exceptions from the native owner read.
+// The displayed code is intentionally bounded to trusted method/status/reason enums.
+export function safeOwnerInventoryFailureCode(error:unknown):string{
+  const raw=String(error??'');
+  const method=raw.match(/\bOWNER_INVENTORY_(?:CHANNELS_LIST|PLAYLIST_ITEMS_LIST|VIDEOS_LIST)_(?:NETWORK_ERROR|INVALID_JSON|HTTP_[0-9]{3}_(?:QUOTA_EXCEEDED|DAILY_LIMIT_EXCEEDED|RATE_LIMIT_EXCEEDED|INSUFFICIENT_PERMISSIONS|FORBIDDEN|UNAUTHORIZED|PLAYLIST_NOT_ACCESSIBLE|PLAYLIST_NOT_FOUND|CHANNEL_NOT_FOUND|VIDEO_NOT_FOUND|BACKEND_ERROR|INVALID_PARAMETER|OTHER))\b/);
+  if(method)return method[0];
+  const auth=raw.match(/\bOWNER_INVENTORY_AUTH_(?:INVALID_GRANT|CLIENT_MISMATCH|REFRESH_TOKEN_MISSING|KEYCHAIN_FAILURE|REFRESH_FAILED|AUTH_PREFLIGHT_FAILED)\b/);
+  if(auth)return auth[0];
+  const identity=raw.match(/\b(?:EXPECTED_CHANNEL_MISSING|OWNER_CHANNEL_MISSING|OWNER_CHANNEL_MISMATCH|OWNER_UPLOADS_MISSING|AUTHORITATIVE_CHANNEL_ID_MISMATCH)\b/);
+  if(identity)return identity[0];
+  // The previous version passed String(error) straight into the persisted
+  // runway store; that could contain private Google error response text.
+  return 'OWNER_INVENTORY_UNCLASSIFIED_ERROR';
 }
 
 const BLOCKED_OWNER_CREDENTIAL_STATES=new Set(['NEEDS_ONE_TIME_LOCAL_MIGRATION','CANONICAL_PRESENT_UNVERIFIED','CHECK_ON_USE','RECOVERABLE','KEYCHAIN_BLOCKED','RECONNECT_REQUIRED','MISSING','WRONG_CHANNEL','FAILED','KEYCHAIN_ERROR']);
@@ -196,7 +243,7 @@ export async function refreshOwnerInventoriesAuthoritative(
   const unlinked=new Set([...classification.unlinked,...classification.orphans].map(c=>c.id));
   const mismatched=new Set(classification.mismatched.map(c=>c.id));
   const eligibleById=new Map(classification.eligible.map(x=>[x.channel.id,x]));
-  let quotaStopped=false,fleetDeepSearches=0;
+  let quotaStopped=false,fleetDeepSearches=0,systemicSearchFilterError:string|undefined;
   const report=(row:OwnerInventoryRefreshRow)=>{
     pushOwnerRow(summary,row);
     // Include every channel, including unlinked/quota-blocked, in progress.
@@ -242,21 +289,44 @@ export async function refreshOwnerInventoriesAuthoritative(
       // Individual owner reconciliations may inspect more result pages, while
       // the full 33-channel audit stays bounded and cannot exhaust the bucket.
       const allowedSearchPages=force?Math.max(0,Math.min(manualOne?12:4,Math.floor(searchAvailable)-MANUAL_FLEET_SEARCH_MIN_AVAILABLE)):0;
-      const targeted=force&&allowedSearchPages>0&&
+      // A provider rejection of this query template is systemic, not
+      // evidence that 33 individual channels need the same failed request.
+      // Continue safe playlist/videos inventory, but stop repeating search.list.
+      const targeted=force&&!systemicSearchFilterError&&allowedSearchPages>0&&
         Date.now()-(ownerSearchAt.get(channel.id)||0)>=OWNER_SEARCH_COOLDOWN_MS&&
         (manualOne||(unverified&&fleetDeepSearches<MANUAL_FLEET_DEEP_SEARCH_CHANNEL_CAP));
-      if(targeted){fleetDeepSearches++;summary.deepSearchChannels=fleetDeepSearches}
-      const cachedFuture=[...Object.values(prior?.baseline||{}),...(prior?.videos||[])]
+      // Reserve the fleet budget here, but do NOT count an actual Search
+      // request until native confirms it attempted search.list.
+      if(targeted)fleetDeepSearches++;
+      const cachedRows=[...Object.values(prior?.baseline||{}),...(prior?.videos||[])];
+      const cachedFuture=cachedRows
         .filter(v=>v.privacyStatus==='private'&&Boolean(v.publishAt)&&Date.parse(v.publishAt!)>Date.now())
+        .sort((a,b)=>Date.parse(b.publishAt!)-Date.parse(a.publishAt!))
         .map(v=>v.id);
+      // Recover private rows even if the prior snapshot lacked publishAt.
+      // Remote videos.list is always authoritative for their current status.
+      const cachedPrivate=cachedRows.filter(v=>v.privacyStatus==='private').map(v=>v.id);
       // Re-read owner-verified VYRON upload-history IDs even during a search
       // cooldown: no extra search.list call, no history mutation, no OAuth reset.
       const fromHistory=ownerKnownScheduledIds?.[channel.id]||[];
-      const knownScheduledIds=force?[...new Set([...fromHistory,...cachedFuture])]
-        .filter(id=>/^[A-Za-z0-9_-]{11}$/.test(id)).slice(0,50):[];
+      const knownScheduledIds=force?[...new Set([...cachedFuture,...fromHistory,...cachedPrivate])]
+        .filter(id=>/^[A-Za-z0-9_-]{11}$/.test(id)):[];
       ownerAttemptAt.set(channel.id,Date.now());
       const result=await api.youtubeListExisting(linked.profile.id,5000,operationId,targeted,knownScheduledIds,targeted?allowedSearchPages:0);
-      if(targeted&&result.searchUsed===true)ownerSearchAt.set(channel.id,Date.now());
+      if(targeted&&result.searchUsed===true){
+        summary.deepSearchChannels=(summary.deepSearchChannels||0)+1;
+        ownerSearchAt.set(channel.id,Date.now());
+        if(result.searchError)summary.deepSearchFailedChannels=(summary.deepSearchFailedChannels||0)+1;
+        if(result.searchErrorCode==='OWNER_SEARCH_HTTP_400_INVALID_SEARCH_FILTER'||
+           result.searchErrorCode==='OWNER_SEARCH_HTTP_400_INCOMPATIBLE_PARAMETERS'){
+          systemicSearchFilterError=result.searchErrorCode;
+          summary.deepSearchSystemicStopCode=result.searchErrorCode;
+        }
+        if(result.searchExhausted===true&&!result.searchError)
+          summary.deepSearchExhaustedChannels=(summary.deepSearchExhaustedChannels||0)+1;
+        if(result.searchExhausted!==true&&!result.searchError)
+          summary.deepSearchPageLimitedChannels=(summary.deepSearchPageLimitedChannels||0)+1;
+      }
       const backendApi=Number(result.fullSyncApiRequests),backendQuota=Number(result.fullSyncEstimatedQuotaCost);
       const fallback=!Number.isFinite(backendApi)||backendApi<1?youtubeOperationActualCost(operationId):null;
       const apiRequests=Number.isFinite(backendApi)&&backendApi>=1?backendApi:Object.values(fallback?.methods||{}).reduce((n:number,x:any)=>n+Number(x.calls||0),0);
@@ -276,7 +346,12 @@ export async function refreshOwnerInventoriesAuthoritative(
           Boolean(v.publishAt)&&Number.isFinite(Date.parse(v.publishAt!))&&Date.parse(v.publishAt!)>Date.now());
         const observedThrough=observed.map(v=>v.publishAt!).sort((a,b)=>Date.parse(a)-Date.parse(b)).at(-1);
         const diagnosticReasons=Array.isArray(result.incompleteReasons)?result.incompleteReasons.slice(0,12):[];
-        if(result.searchError)diagnosticReasons.push('OWNER_SEARCH_ERROR: '+String(result.searchError).slice(0,220));
+        // Native Rust emits allowlisted diagnostic codes. Never persist raw
+        // Google messages that could contain user or OAuth account metadata.
+        if(result.searchErrorCode&&/^[A-Z][A-Z0-9_]*$/.test(result.searchErrorCode))
+          diagnosticReasons.push(result.searchErrorCode);
+        else if(result.searchError&&!diagnosticReasons.includes('OWNER_SEARCH_FAILED'))
+          diagnosticReasons.push('OWNER_SEARCH_FAILED');
         if(result.searchUsed&&!result.searchExhausted&&!diagnosticReasons.includes('OWNER_SEARCH_NOT_EXHAUSTED'))
           diagnosticReasons.push('OWNER_SEARCH_NOT_EXHAUSTED');
         const reason=ownerMixed?'AUTHORITATIVE_VIDEO_CHANNEL_MISMATCH':'AUTHORITATIVE_INVENTORY_INCOMPLETE';
@@ -322,7 +397,7 @@ export async function refreshOwnerInventoriesAuthoritative(
     }catch(error){
       const actual=youtubeOperationActualCost(operationId),apiRequests=Object.values(actual.methods).reduce((n,x)=>n+x.calls,0),quotaUnits=actual.buckets.general;
       summary.apiRequests+=apiRequests;summary.quotaUnits+=quotaUnits;
-      report({channelId:channel.id,channelName:channel.name,status:'API_FAILED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:String(error)});
+      report({channelId:channel.id,channelName:channel.name,status:'API_FAILED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:safeOwnerInventoryFailureCode(error)});
     }
   }
   if(summary.rows.length!==enabled.length){

@@ -198,8 +198,9 @@ export function recalculateChannelRunway(
     }
     next.channels[channel.id]=channelUnknown(channel,now);
   }
-  const validIds=new Set(channels.map(c=>c.id));
-  for(const id of Object.keys(next.channels))if(!validIds.has(id))delete next.channels[id];
+  // Recalculation may be scoped to one channel. Pruning all other records here
+  // erased the historical Scheduled evidence of the other 32 channels.
+  // Explicit channel deletion must be a separate intentional operation.
   if(markDaily)next.lastKrasnoyarskDate=krasnoyarskClock(now).dateKey;
   saveChannelRunwayStore(next,storage);
   return next;
