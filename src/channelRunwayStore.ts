@@ -1,5 +1,5 @@
 import type {Channel,YoutubeExistingVideo} from './types';
-import {readAuthoritativeExistingSnapshot,scheduleSyncTruthFromInfo} from './channelSchedule';
+import {readAuthoritativeExistingSnapshot,readExistingCache,scheduleSyncTruthFromInfo} from './channelSchedule';
 import {
   CHANNEL_RUNWAY_STORAGE_KEY,
   deriveRunwayRecord,
@@ -147,6 +147,7 @@ export function recalculateChannelRunway(
     // Prefer the newest *verified* inventory rather than pinning a stale previous
     // value just because it has lastScheduleSync. Never trust legacy zero evidence.
     const native=readAuthoritativeExistingSnapshot(channel.id);
+    const cachedNative=readExistingCache(channel.id);
     const cached=readExistingRunwayCache(channel.id,storage);
     const baseline=confirmedBaseline(cached);
     const candidates:Array<{videos:YoutubeExistingVideo[];updatedAt?:string}>=[];
@@ -190,6 +191,30 @@ export function recalculateChannelRunway(
             runwayDays:undefined,
             status:'no-data',
             priority:'unknown'
+          },now);
+          continue;
+        }
+      }
+      // Recover known positive Scheduled IDs as HISTORICAL/partial evidence,
+      // even if an older uploads-only cache has no independent coverage proof.
+      // This is never a source of CONFIRMED_SCHEDULE or CONFIRMED_EMPTY.
+      if(retained.dataState==='PARTIAL_DATA'&&!latest&&cachedNative){
+        const baseline=Object.values(cachedNative.baseline||{});
+        const known=baseline.length?baseline:cachedNative.videos||[];
+        const observed=deriveRunwayRecord(channel,known,now,undefined,false);
+        if(observed.scheduledVideoCount>0){
+          const until=[retained.scheduledUntil,observed.scheduledUntil]
+            .filter((x):x is string=>Boolean(x)).sort().at(-1);
+          next.channels[channel.id]=recalculateRunwayRecord({
+            ...retained,
+            scheduledVideoCount:Math.max(retained.scheduledVideoCount,observed.scheduledVideoCount),
+            scheduledUntil:until,
+            lastObservedAt:retained.lastObservedAt||cachedNative.updatedAt,
+            lastObservedScheduledCount:Math.max(retained.lastObservedScheduledCount||0,observed.scheduledVideoCount),
+            lastObservedScheduledUntil:[retained.lastObservedScheduledUntil,observed.scheduledUntil]
+              .filter((x):x is string=>Boolean(x)).sort().at(-1),
+            dataState:'PARTIAL_DATA',
+            runwayDays:undefined,status:'no-data',priority:'unknown'
           },now);
           continue;
         }
