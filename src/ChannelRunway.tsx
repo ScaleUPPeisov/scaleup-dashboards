@@ -12,6 +12,7 @@ import {
   calendarDaysBetween,
   dateKeyInKrasnoyarsk,
   runwayStatus,
+  runwayDisplayEvidence,
   krasnoyarskClock,
   quotaRiskCount,
   recommendedProductionIntervalDays,
@@ -123,7 +124,7 @@ export function ChannelRunway(){
   const usage=youtubeQuotaUsage();
   const rowState=useMemo(()=>{
     let failures=0;
-    const now=new Date(),todayKey=krasnoyarskClock(now).dateKey;
+    const now=new Date();
     const rows=active.map(channel=>{
       try{
         const record=snapshot.channels[channel.id];if(!record){failures++;return null}
@@ -139,16 +140,13 @@ export function ChannelRunway(){
       }catch{failures++;return null}
     }).filter((x):x is RunwayRow=>Boolean(x)).sort((a,b)=>{
       const rank=(row:RunwayRow)=>{
-        const rec=row.record;
-        const fresh=rec.dataState==='PARTIAL_DATA'&&Number(rec.lastObservedScheduledCount||0)>0&&Boolean(rec.lastObservedScheduledUntil);
-        const shownDate=fresh?rec.lastObservedScheduledUntil:rec.scheduledUntil;
+        const evidence=runwayDisplayEvidence(row.record,now);
         return{
           channelName:row.channel.name,
           remoteScheduledDays:row.content.remoteScheduledDays,
-          scheduledUntil:row.content.scheduledThrough||shownDate,
-          known:rec.status!=='no-data',
-          historicalScheduledDays:rec.status==='no-data'&&rec.dataState==='PARTIAL_DATA'&&shownDate
-            ?Math.max(0,calendarDaysBetween(todayKey,shownDate)??0):undefined
+          scheduledUntil:evidence.scheduledUntil,
+          known:evidence.kind==='CURRENT',
+          historicalScheduledDays:evidence.kind!=='CURRENT'?evidence.daysRemaining:undefined
         };
       };
       return compareYoutubeOnlyRunwayPriority(rank(a),rank(b));
@@ -161,20 +159,22 @@ export function ChannelRunway(){
   const quotaSettings=loadYoutubeQuotaPlan();
   const batchSize=Math.max(1,quotaSettings.videosPerChannel);
   const capacityPlan=buildYoutubeQuotaPlan(Math.max(1,active.length),batchSize,usage);
-  const attention=rows.filter(x=>x.record.status!=='no-data'&&x.content.remoteScheduledDays<=45);
-  const critical=rows.filter(x=>x.record.status!=='no-data'&&x.content.remoteScheduledDays<=14);
+  // Unknown channels require action; historical dates remain planning evidence.
+  const attention=rows.filter(x=>{const e=runwayDisplayEvidence(x.record);return e.kind==='UNKNOWN'||(e.daysRemaining!==undefined&&e.daysRemaining<=45)});
+  const critical=rows.filter(x=>{const days=runwayDisplayEvidence(x.record).daysRemaining;return days!==undefined&&days<=14});
   const attentionPlan=attention.length?buildYoutubeQuotaPlan(attention.length,batchSize,usage):null;
   const effectiveIntervals=rows.map(({channel,record})=>record.averagePublishIntervalDays||configuredScheduleAverageIntervalDays(channel)).filter((x):x is number=>Number.isFinite(x)&&Number(x)>0);
   const avgCadence=average(effectiveIntervals);
   const batchCoverageDays=avgCadence?Math.round(avgCadence*batchSize*10)/10:undefined;
   const tempo=recommendedProductionIntervalDays(active.length,batchCoverageDays||0);
-  const riskRecords=attention.map(x=>({...x.record,runwayDays:x.content.remoteScheduledDays}));
+  const riskRecords=attention.map(x=>({...x.record,runwayDays:runwayDisplayEvidence(x.record).daysRemaining}));
   const riskCount=quotaRiskCount(riskRecords,capacityPlan.todayChannels,capacityPlan.fullDayChannels);
-  const next=productionPriorityRows.find(x=>x.record.status!=='no-data');
+  const next=productionPriorityRows.find(x=>runwayDisplayEvidence(x.record).daysRemaining!==undefined)||productionPriorityRows[0];
+  const nextEvidence=next?runwayDisplayEvidence(next.record):undefined;
   const today=krasnoyarskClock(new Date()).dateKey;
   const nextStart=next?.record.nextProductionDate;
   const startLabel=nextStart?(nextStart<=today?'Сейчас':dateLabel(nextStart)):'—';
-  const calm=critical.length===0&&riskCount===0&&(next?.content.remoteScheduledDays??0)>45;
+  const calm=attention.length===0&&critical.length===0&&riskCount===0;
   const totalReady=rows.reduce((n,x)=>n+x.content.readyVideoCount,0);
   const generalRemaining=Math.max(0,usage.limit-usage.used);
 
@@ -269,17 +269,17 @@ export function ChannelRunway(){
       <div><small>YOUTUBE ПОДКЛЮЧЕНО</small><b>{youtubeClassification.eligible.length}</b><em>exact Profile + Channel ID</em></div>
       <div><small>НЕ ПОДКЛЮЧЕНО</small><b>{youtubeClassification.unlinked.length+youtubeClassification.orphans.length+youtubeClassification.mismatched.length}</b><em>API 0 • duplicates {youtubeClassification.duplicates.length}</em></div>
       <div><small>ГОТОВЫХ ВИДЕО</small><b>{totalReady}</b><em>локально • не означает uploaded</em></div>
-      <div><small>ТРЕБУЮТ ВНИМАНИЯ</small><b>{attention.length}</b><em>YouTube runway ≤ 45 дней</em></div>
+      <div><small>ТРЕБУЮТ ВНИМАНИЯ</small><b>{attention.length}</b><em>≤ 45 дней • включая неизвестные</em></div>
       <div><small>КРИТИЧЕСКИЕ</small><b>{critical.length}</b><em>YouTube ≤ 14 дней</em></div>
       <div><small>GENERAL API</small><b>{generalRemaining.toLocaleString('ru-RU')}</b><em>из {usage.limit.toLocaleString('ru-RU')} local ledger</em></div>
       <div><small>МОЖНО ОБРАБОТАТЬ СЕГОДНЯ</small><b>{capacityPlan.todayChannels}</b><em>по General API плану</em></div>
       <div><small>РЕКОМЕНДУЕМЫЙ ТЕМП</small><b>{tempoLabel(tempo)}</b><em>{batchCoverageDays?`пачка ≈ ${batchCoverageDays} дней`:`пачка ${batchSize} видео`}</em></div>
-      <div><small>СЛЕДУЮЩИЙ КАНАЛ</small><b>{next?.channel.name||'—'}</b><em>{next?`YouTube runway ${next.content.remoteScheduledDays} дн.`:'нет подтверждённых данных'}</em></div>
+      <div><small>СЛЕДУЮЩИЙ КАНАЛ</small><b>{next?.channel.name||'—'}</b><em>{nextEvidence?.daysRemaining!==undefined?`${nextEvidence.kind==='CURRENT'?'YouTube подтверждено':'Историческая/частичная оценка'} • ${nextEvidence.daysRemaining} дн.`:'запас неизвестен • нужна проверка'}</em></div>
     </div>
 
     <div className={`runwayAdvice ${calm?'good':riskCount?'danger':'work'}`}>
       <b>{calm?'Спешить не нужно.':riskCount?'Есть риск по производственному плану.':'Работа по плану.'}</b>
-      <span>{tempo?`При текущем запасе ориентир — ${tempoLabel(tempo)} `:''}{next?`Следующий: ${next.channel.name}, YouTube runway ${next.content.remoteScheduledDays} дней.`:'Сначала синхронизируй расписание каналов.'}{riskCount?` Риск не успеть: ${riskCount}.`:''}</span>
+      <span>{tempo?`При текущем запасе ориентир — ${tempoLabel(tempo)} `:''}{next?`Следующий: ${next.channel.name}, ${nextEvidence?.daysRemaining===undefined?'запас неизвестен':`${nextEvidence.kind==='CURRENT'?'подтверждено':'оценка по историческим/частичным данным'} ${nextEvidence.daysRemaining} дней`}.`:'Сначала синхронизируй расписание каналов.'}{riskCount?` Риск не успеть: ${riskCount}.`:''}</span>
     </div>
 
     <div className="runwayTable">
