@@ -16,7 +16,7 @@ Object.defineProperty(globalThis,'localStorage',{value:storage,configurable:true
 
 const fixture=vi.hoisted(()=>({
  profiles:[] as YoutubeProfile[],
- responses:new Map<string,{videos:YoutubeExistingVideo[];syncComplete:boolean;complete:boolean;scheduleComplete:boolean;channelId:string;fullSyncApiRequests?:number;fullSyncEstimatedQuotaCost?:number;searchCalls?:number;searchUsed?:boolean;searchExhausted?:boolean;searchError?:string|null;searchErrorCode?:string|null;incompleteReasons?:string[]}>(),
+ responses:new Map<string,{videos:YoutubeExistingVideo[];syncComplete:boolean;complete:boolean;scheduleComplete:boolean;channelId:string;fullSyncApiRequests?:number;fullSyncEstimatedQuotaCost?:number;searchCalls?:number;searchUsed?:boolean;searchExhausted?:boolean;searchError?:string|null;searchErrorCode?:string|null;scheduledCoverageVerified?:boolean;incompleteReasons?:string[]}>(),
  inventoryFiles:new Map<string,any>()
 }));
 vi.mock('./api',()=>({
@@ -52,7 +52,7 @@ const scheduled=(id:string,day:number):YoutubeExistingVideo=>({
  id,position:day,title:id,description:'',tags:[],categoryId:'10',privacyStatus:'private',
  publishAt:`2099-01-${String(Math.max(1,Math.min(28,day))).padStart(2,'0')}T18:00:00+07:00`,selected:false
 });
-function setResponse(profileId:string,count:number){fixture.responses.set(profileId,{channelId:'UC'+profileId.slice(1),videos:Array.from({length:count},(_,i)=>scheduled(profileId+'-'+i,i+1)),scheduleComplete:true,syncComplete:true,complete:true})}
+function setResponse(profileId:string,count:number){fixture.responses.set(profileId,{channelId:'UC'+profileId.slice(1),videos:Array.from({length:count},(_,i)=>scheduled(profileId+'-'+i,i+1)),scheduleComplete:true,syncComplete:true,complete:true,scheduledCoverageVerified:count>0})}
 
 describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
  beforeEach(()=>{
