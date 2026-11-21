@@ -210,8 +210,8 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
 
   it('historical partial evidence is labeled as cache, not current confirmed YouTube schedule',()=>{
     const screen=readFileSync('src/ChannelRunway.tsx','utf8');
-    expect(screen).toContain('Исторический кэш Scheduled: текущий запас не подтверждён');
-    expect(screen).toContain('историческая дата • свежая полнота неизвестна');
+    expect(screen).toContain('последняя проверенная дата • данные устарели');
+    expect(screen).toContain('Исторический запас; актуальность неизвестна');
     expect(screen).toContain('(кэш)*');
   });
 
