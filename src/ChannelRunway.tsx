@@ -5,7 +5,7 @@ import type {Channel,YoutubeProfile} from './types';
 import {classifyYoutubeChannels} from './youtubeStatisticsCenter';
 import {refreshYoutubeProfileStatistics,type ChannelStatisticsRefreshProgress} from './youtubeChannelStatsRuntime';
 import {refreshAllChannelData} from './fullChannelRefresh';
-import {knownOwnerVideoIdsFromUploadHistory,refreshOwnerInventoriesAuthoritative,runP0OwnerKnownIdsReadOnly} from './youtubeOwnerInventory';
+import {knownOwnerVideoIdsFromUploadHistory,refreshOwnerInventoriesAuthoritative} from './youtubeOwnerInventory';
 import {compactChannelStat,subscriberStatLabel} from './youtubeChannelStats';
 import {
   compareYoutubeOnlyRunwayPriority,
@@ -115,20 +115,6 @@ export function ChannelRunway(){
     return()=>{if(timer!==undefined)window.clearTimeout(timer);off()}
   },[]);
   useEffect(()=>{let live=true;void Promise.all([api.youtubeProfiles(),api.youtubeGoogleConfig()]).then(([p,c])=>{if(live){setProfiles(p);setGoogleConfig(c)}}).catch(()=>{});return()=>{live=false}},[]);
-  // VYRON 6.1.25 P0 owner probe: one bounded, persisted, read-only known-ID
-  // hydration per affected channel. No Search, no full-fleet refresh, no uploads.
-  useEffect(()=>{
-    if(!profiles.length)return;
-    let stopped=false;
-    void runP0OwnerKnownIdsReadOnly(
-      useApp.getState().channels,
-      profiles,
-      useApp.getState().uploadHistory,
-      ()=>stopped
-    ).then(rows=>{if(rows.length&&!stopped)setSnapshot(loadChannelRunwayStore())}).catch(()=>{});
-    return()=>{stopped=true};
-  },[profiles,signature]);
-
 
   const active=useMemo(()=>channels.filter(c=>c.enabled),[channels]);
   const youtubeClassification=useMemo(()=>classifyYoutubeChannels(active,profiles),[active,profiles]);
