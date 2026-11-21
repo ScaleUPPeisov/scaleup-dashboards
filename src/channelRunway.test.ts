@@ -239,7 +239,9 @@ describe('Channel Runway persistence and 06:00 KRAT scheduler',()=>{
     }));
     const result=recalculateChannelRunway([channel()],new Date('2026-09-02T08:00:00Z'),false,storage as any);
     expect(result.channels.neon.scheduledUntil).toBe('2026-10-01');
-    expect(result.channels.neon.runwayDays).toBe(29);
+    expect(result.channels.neon.scheduledVideoCount).toBe(1);
+    expect(result.channels.neon.dataState).toBe('PARTIAL_DATA');
+    expect(result.channels.neon.runwayDays).toBeUndefined(); // Legacy positive is historical until owner Search proves coverage
   });
 
   it('explicit Channel Runway YouTube sync stays authoritative over opaque Existing Videos cache',()=>{
