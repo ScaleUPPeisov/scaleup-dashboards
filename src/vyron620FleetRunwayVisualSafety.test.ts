@@ -11,7 +11,7 @@ describe('VYRON fleet runway evidence-aware visual contract',()=>{
     expect(s).toContain('compareYoutubeOnlyRunwayPriority(rank(a),rank(b))');
     expect(s).toContain('runwayDisplayEvidence(row.record,now)');
     expect(s).not.toContain('localReadyVideos:row.content.readyVideoCount');
-    expect(s).toContain("evidence.kind==='UNKNOWN'");
+    expect(s).toContain("e.kind==='UNKNOWN'");
   });
 
   it('shows red amber yellow green for confirmed and marked historical risk',()=>{
