@@ -306,6 +306,15 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
     }finally{vi.useRealTimers()}
   });
 
+  it('P0 6.1.26 native cache ready reconciles Runway even after daily scheduler marker exists',()=>{
+    const bridge=readFileSync('src/ExistingInventoryMigrationBridge.tsx','utf8');
+    const scheduler=readFileSync('src/ChannelRunwayScheduler.tsx','utf8');
+    expect(bridge).toContain('EXISTING_INVENTORY_NATIVE_READY_EVENT');
+    expect(scheduler).toContain('window.addEventListener(EXISTING_INVENTORY_NATIVE_READY_EVENT,nativeReady)');
+    expect(scheduler).toContain('recalculateChannelRunway(useApp.getState().channels,new Date(),false)');
+    expect(scheduler).toContain('window.removeEventListener(EXISTING_INVENTORY_NATIVE_READY_EVENT,nativeReady)');
+  });
+
   it('uploads-only completed zero is NOT confirmed empty even when backend marks complete',()=>{
     expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:true,videos:[]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
     expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:false,videos:[editable('s','private','2026-12-12T10:00:00Z')]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
