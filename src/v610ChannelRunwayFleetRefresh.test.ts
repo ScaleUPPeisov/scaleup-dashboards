@@ -444,7 +444,7 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
 
  it('master topbar separates exact OAuth connections from failures of YouTube Scheduled and task queue',()=>{
    const app=readFileSync('src/App.tsx','utf8');
-   expect(app).toContain('OAuth подключено {connectedCount}');
+   expect(app).toContain('Подключено {connectedCount}');
    expect(app).toContain('scheduleSummary.apiFailed');
    expect(app).toContain('scheduleSummary.partial');
    expect(app).toContain('scheduleSummary.unknown');
