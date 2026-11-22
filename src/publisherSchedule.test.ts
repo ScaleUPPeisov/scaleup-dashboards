@@ -30,7 +30,7 @@ describe('past-date auto repair',()=>{
 describe('P0: manual owner-sync fallback with individual Word times',()=>{
  it('schedules 15 videos each three days using existing file times after explicit start date',()=>{
   const now=new Date('2026-11-23T00:00:00Z');
-  const fileTimeRows=Array.from({length:15},(_,i)=>({publishTime:['07:00','09:00','11:00'][i%3]}));
+  const fileTimeRows=Array.from({length:15},(_,i)=>({publishTime:['07:00','09:00','11:00'][i%3],source:'p0-test'}));
   const r=resolvePublisherBatchSchedule({mode:'every_n_days',startDate:'2026-11-24',time:'',timeSource:'file',count:15,fileTimeRows,intervalDays:3,now});
   expect(r.items).toHaveLength(15);
   expect(r.dates).toHaveLength(15);
@@ -40,7 +40,7 @@ describe('P0: manual owner-sync fallback with individual Word times',()=>{
   expect(new Set(r.dates).size).toBe(15);
  });
  it('does not fabricate 15 dates without explicit manual start date',()=>{
-  const r=resolvePublisherBatchSchedule({mode:'every_n_days',startDate:'',time:'',timeSource:'file',count:15,fileTimeRows:Array.from({length:15},()=>({publishTime:'07:00'})),intervalDays:3,now:new Date('2026-11-23T00:00:00Z')});
+  const r=resolvePublisherBatchSchedule({mode:'every_n_days',startDate:'',time:'',timeSource:'file',count:15,fileTimeRows:Array.from({length:15},()=>({publishTime:'07:00',source:'p0-test'})),intervalDays:3,now:new Date('2026-11-23T00:00:00Z')});
   expect(r.dates).toHaveLength(0);
   expect(r.items).toHaveLength(15);
   expect(r.items.every(x=>x.status==='MISSING')).toBe(true);
