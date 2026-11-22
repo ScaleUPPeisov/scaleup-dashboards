@@ -258,7 +258,7 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
     expect(scheduleSyncTruthFromInfo({...uploadsOnly,searchUsed:true,searchExhausted:true,searchError:'OWNER_SEARCH_FAILED'})).toBe('incomplete');
     expect(scheduleSyncTruthFromInfo({...uploadsOnly,searchUsed:true,searchExhausted:true,supplementalMissingCount:1})).toBe('incomplete');
     expect(scheduleSyncTruthFromInfo({...uploadsOnly,searchUsed:true,searchExhausted:true,knownScheduledIdsTruncated:true})).toBe('incomplete');
-    expect(scheduleSyncTruthFromInfo({...uploadsOnly,searchUsed:true,searchExhausted:true,supplementalMissingCount:0})).toBe('complete');
+    expect(scheduleSyncTruthFromInfo({...uploadsOnly,searchUsed:true,searchExhausted:true,supplementalMissingCount:0})).toBe('incomplete');
     expect(scheduleSyncTruthFromInfo({...uploadsOnly,scheduledCoverageVerified:true})).toBe('complete');
   });
 
@@ -288,7 +288,7 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
       const vids=[editable('future-P0','private','2027-02-05T20:00:00+07:00')];
       expect((await replaceExistingCacheFromSync(ch.id,vids,{
         scheduleComplete:true,syncComplete:true,searchUsed:true,searchExhausted:true,
-        supplementalMissingCount:0,knownScheduledIdsTruncated:false
+        supplementalMissingCount:0,knownScheduledIdsTruncated:false,scheduledCoverageVerified:true
       })).persisted).toBe(true);
       storage.seed(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify({version:1,channels:{[ch.id]:{
         channelId:ch.id,channelName:ch.name,scheduledVideoCount:1,scheduledUntil:'2027-02-05',
@@ -327,6 +327,7 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
     expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:true,videos:[]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
     expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:false,videos:[editable('s','private','2026-12-12T10:00:00Z')]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
     expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:true,videos:[editable('s','private','2026-12-12T10:00:00Z')]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
+    expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:true,searchUsed:true,searchExhausted:true,supplementalMissingCount:0,videos:[editable('s','private','2026-12-12T10:00:00Z')]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
     expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:true,scheduledCoverageVerified:true,videos:[editable('s','private','2026-12-12T10:00:00Z')]},Date.parse('2026-11-18T05:00:00Z'))).toBe(true);
   });
 
