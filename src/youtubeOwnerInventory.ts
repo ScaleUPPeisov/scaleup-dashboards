@@ -296,7 +296,12 @@ export async function refreshOwnerInventoriesAuthoritative(
       // currently unverified channels, using the separate search bucket and a
       // hard per-run cap. Background refreshes remain zero-search.
       const stored=loadChannelRunwayStore().channels[channel.id];
-      const unverified=!stored||stored.status==='no-data';
+      // Production/visual status can outlive schedule verification. Select
+      // manual independent verification by the evidence state, not the
+      // saved urgency/status color of the channel row.
+      const unverified=!stored||
+        (stored.dataState!=='CONFIRMED_SCHEDULE'&&stored.dataState!=='CONFIRMED_EMPTY')||
+        stored.status==='no-data';
       const searchAvailable=youtubeQuotaBucketUsage('search').available;
       // Preserve the independent Search bucket reserve on every request.
       // Individual owner reconciliations may inspect more result pages, while
