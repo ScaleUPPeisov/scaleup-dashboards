@@ -18,7 +18,8 @@ const fixture=vi.hoisted(()=>({
  profiles:[] as YoutubeProfile[],
  responses:new Map<string,{videos:YoutubeExistingVideo[];syncComplete:boolean;complete:boolean;scheduleComplete:boolean;channelId:string;fullSyncApiRequests?:number;fullSyncEstimatedQuotaCost?:number;searchCalls?:number;searchUsed?:boolean;searchExhausted?:boolean;searchError?:string|null;searchErrorCode?:string|null;scheduledCoverageVerified?:boolean;incompleteReasons?:string[]}>(),
  inventoryFiles:new Map<string,any>(),
- retries:new Map<string,any>()
+ retries:new Map<string,any>(),
+ searchAvailable:100
 }));
 vi.mock('./api',()=>({
  api:{
@@ -34,7 +35,7 @@ vi.mock('./youtubeQuota',()=>({
  bindYoutubeQuotaTraceContext:vi.fn(),
  youtubeOperationActualCost:vi.fn(()=>({methods:{'playlistItems.list':{calls:1}},buckets:{general:1}})),
  youtubeQuotaState:vi.fn(()=>({blocked:false})),
- youtubeQuotaBucketUsage:vi.fn((bucket:string)=>({available:bucket==='general'?1000:100,used:0,limit:bucket==='general'?10000:100,reserved:0})),
+ youtubeQuotaBucketUsage:vi.fn((bucket:string)=>({available:bucket==='general'?1000:fixture.searchAvailable,used:0,limit:bucket==='general'?10000:100,reserved:0})),
  youtubeQuotaUsage:vi.fn(()=>({used:0,limit:10000}))
 }));
 vi.mock('./youtubeCache',()=>({markYoutubeCache:vi.fn()}));
@@ -58,7 +59,7 @@ function setResponse(profileId:string,count:number){fixture.responses.set(profil
 
 describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
  beforeEach(()=>{
-  fixture.profiles=[];fixture.responses.clear();fixture.inventoryFiles.clear();fixture.retries.clear();vi.clearAllMocks();
+  fixture.profiles=[];fixture.responses.clear();fixture.inventoryFiles.clear();fixture.retries.clear();fixture.searchAvailable=100;vi.clearAllMocks();
   try{localStorage.clear()}catch{}
  });
 
@@ -85,7 +86,22 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
   expect(store.channels.A.runwayDays).toBeGreaterThan(0);
  });
 
-  it('P0 owner verifier checks only known IDs in exact OAuth profile and preserves history as PARTIAL',async()=>{
+  it('explains zero owner Search attempts when the separate local search reserve is exhausted',async()=>{
+  const ch=channel('skip',{youtubeProfileId:'pskip',youtubeChannelId:'UCskip'});
+  fixture.profiles=[profile('pskip','UCskip')];
+  fixture.responses.set('pskip',{
+    channelId:'UCskip',videos:[],scheduleComplete:false,syncComplete:true,complete:true,
+    searchUsed:false,searchCalls:0
+  });
+  fixture.searchAvailable=12; // <= reserve means no independent Search request
+  const result=await refreshOwnerInventoriesAuthoritative([ch],true,fixture.profiles);
+  expect(result.rows[0].status).toBe('PARTIAL_DATA');
+  expect(result.searchSkips).toEqual({LOCAL_SEARCH_BUDGET_RESERVE:1});
+  expect(result.searchCalls||0).toBe(0);
+  expect((api.youtubeListExisting as any).mock.calls[0][3]).toBe(false);
+ });
+
+ it('P0 owner verifier checks only known IDs in exact OAuth profile and preserves history as PARTIAL',async()=>{
     vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-21T12:00:00Z'));
     try{
       const ch=channel('p0-glass',{name:'Glass City Lovers',youtubeProfileId:'p0-glass',youtubeChannelId:'UC-P0-GLASS'});
