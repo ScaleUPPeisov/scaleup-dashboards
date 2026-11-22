@@ -258,7 +258,9 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
     expect(scheduleSyncTruthFromInfo({...uploadsOnly,searchUsed:true,searchExhausted:true,searchError:'OWNER_SEARCH_FAILED'})).toBe('incomplete');
     expect(scheduleSyncTruthFromInfo({...uploadsOnly,searchUsed:true,searchExhausted:true,supplementalMissingCount:1})).toBe('incomplete');
     expect(scheduleSyncTruthFromInfo({...uploadsOnly,searchUsed:true,searchExhausted:true,knownScheduledIdsTruncated:true})).toBe('incomplete');
-    expect(scheduleSyncTruthFromInfo({...uploadsOnly,searchUsed:true,searchExhausted:true,supplementalMissingCount:0})).toBe('incomplete');
+    expect(scheduleSyncTruthFromInfo({...uploadsOnly,searchUsed:true,searchExhausted:true,searchLimitReached:true,supplementalMissingCount:0})).toBe('incomplete');
+    expect(scheduleSyncTruthFromInfo({...uploadsOnly,searchUsed:true,searchExhausted:true,supplementalMissingCount:0,historyOnlyScheduledOutsideSearchCount:1})).toBe('incomplete');
+    expect(scheduleSyncTruthFromInfo({...uploadsOnly,searchUsed:true,searchExhausted:true,supplementalMissingCount:0,historyOnlyScheduledOutsideSearchCount:0})).toBe('complete');
     expect(scheduleSyncTruthFromInfo({...uploadsOnly,scheduledCoverageVerified:true})).toBe('complete');
   });
 

@@ -377,9 +377,9 @@ export async function refreshOwnerInventoriesAuthoritative(
           diagnosticReasons.push('OWNER_SEARCH_FAILED');
         if(result.searchUsed&&!result.searchExhausted&&!diagnosticReasons.includes('OWNER_SEARCH_NOT_EXHAUSTED'))
           diagnosticReasons.push('OWNER_SEARCH_NOT_EXHAUSTED');
-        if(result.searchUsed&&result.searchExhausted&&!result.searchError&&result.scheduledCoverageVerified!==true&&
-          !diagnosticReasons.includes('OWNER_SEARCH_INDEX_NOT_AUTHORITATIVE'))
-          diagnosticReasons.push('OWNER_SEARCH_INDEX_NOT_AUTHORITATIVE');
+        if(result.searchUsed&&result.searchExhausted&&!result.searchError&&!scheduledCoverageEstablished(result)&&
+          !diagnosticReasons.includes('INDEPENDENT_SCHEDULE_COVERAGE_NOT_VERIFIED'))
+          diagnosticReasons.push('INDEPENDENT_SCHEDULE_COVERAGE_NOT_VERIFIED');
         const reason=ownerMixed?'AUTHORITATIVE_VIDEO_CHANNEL_MISMATCH':'AUTHORITATIVE_INVENTORY_INCOMPLETE';
         // Distinguish a real API failure from a partial, verified-positive owner
         // inventory. Never promote search snippets or non-owner rows to proof.

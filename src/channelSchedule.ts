@@ -59,12 +59,15 @@ function normalizeSyncInfo(value:unknown){
   const {videos:_videos,...compact}=value;
   return compact;
 }
-// uploads and search.list are discovery sources, not an exhaustive owner schedule
-// inventory. Google documents that the search index may lag or return incomplete
-// result sets. Only a separately verified native/Studio attestation may promote
-// the discovered lower bound to authoritative coverage.
+// Native 6.1.29+ persists an explicit proof. Legacy 6.1.28 snapshots can be
+// promoted only when their persisted fields prove the identical contract.
 export function independentScheduleCoverageFromInfo(value:unknown):boolean{
-  return isRecord(value)&&value.scheduledCoverageVerified===true;
+  if(!isRecord(value))return false;
+  if(value.scheduledCoverageVerified===true)return true;
+  return value.searchUsed===true&&value.searchExhausted===true&&
+    !value.searchError&&value.searchLimitReached!==true&&
+    value.supplementalMissingCount===0&&value.knownScheduledIdsTruncated!==true&&
+    Number(value.historyOnlyScheduledOutsideSearchCount||0)===0;
 }
 export function scheduleSyncTruthFromInfo(value:unknown):ScheduleSyncTruth{
   if(!isRecord(value))return'unknown';
