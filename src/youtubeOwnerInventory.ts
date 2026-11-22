@@ -180,6 +180,8 @@ export type OwnerInventoryRefreshSummary={
   requested:number;updated:number;failed:number;skippedFresh:number;skippedUnlinked:number;stoppedForQuota:boolean;
   apiRequests:number;quotaUnits:number;rows:OwnerInventoryRefreshRow[];
   searchCalls?:number;
+  // Search is intentionally optional; explain every zero-call manual audit.
+  searchSkips?:Record<string,number>;
   counts:Record<OwnerInventoryFleetStatus,number>;
   deepSearchChannels?:number;
   deepSearchFailedChannels?:number;
@@ -248,7 +250,7 @@ export async function refreshOwnerInventoriesAuthoritative(
 ):Promise<OwnerInventoryRefreshSummary>{
   const enabled=channels.filter(c=>c.enabled!==false);
   await hydrateExistingInventoryCaches(enabled.map(c=>c.id));
-  const summary:OwnerInventoryRefreshSummary={requested:0,updated:0,failed:0,skippedFresh:0,skippedUnlinked:0,stoppedForQuota:false,apiRequests:0,quotaUnits:0,rows:[],counts:emptyOwnerCounts()};
+  const summary:OwnerInventoryRefreshSummary={requested:0,updated:0,failed:0,skippedFresh:0,skippedUnlinked:0,stoppedForQuota:false,apiRequests:0,quotaUnits:0,rows:[],searchSkips:{},counts:emptyOwnerCounts()};
   const profiles=suppliedProfiles||await api.youtubeProfiles();
   const {classification,extras}=duplicateExtraChannelIds(enabled,profiles);
   const unlinked=new Set([...classification.unlinked,...classification.orphans].map(c=>c.id));
@@ -303,9 +305,16 @@ export async function refreshOwnerInventoriesAuthoritative(
       // A provider rejection of this query template is systemic, not
       // evidence that 33 individual channels need the same failed request.
       // Continue safe playlist/videos inventory, but stop repeating search.list.
-      const targeted=force&&!systemicSearchFilterError&&allowedSearchPages>0&&
-        Date.now()-(ownerSearchAt.get(channel.id)||0)>=OWNER_SEARCH_COOLDOWN_MS&&
-        (manualOne||(unverified&&fleetDeepSearches<MANUAL_FLEET_DEEP_SEARCH_CHANNEL_CAP));
+      const cooldownElapsed=Date.now()-(ownerSearchAt.get(channel.id)||0)>=OWNER_SEARCH_COOLDOWN_MS;
+      // This is a diagnostic decision only: do not spend extra quota or
+      // relax schedule coverage based on a local quota ledger estimate.
+      const searchSkipReason=!force?'BACKGROUND_REFRESH':
+        systemicSearchFilterError?'SYSTEMIC_SEARCH_FILTER_ERROR':
+        allowedSearchPages<=0?'LOCAL_SEARCH_BUDGET_RESERVE':
+        !cooldownElapsed?'SEARCH_COOLDOWN':
+        !manualOne&&!unverified?'ALREADY_VERIFIED':
+        !manualOne&&fleetDeepSearches>=MANUAL_FLEET_DEEP_SEARCH_CHANNEL_CAP?'FLEET_CAP':undefined;
+      const targeted=searchSkipReason===undefined;
       // Reserve the fleet budget here, but do NOT count an actual Search
       // request until native confirms it attempted search.list.
       if(targeted)fleetDeepSearches++;
@@ -326,6 +335,12 @@ export async function refreshOwnerInventoriesAuthoritative(
         .filter(id=>/^[A-Za-z0-9_-]{11}$/.test(id));
       ownerAttemptAt.set(channel.id,Date.now());
       const result=await api.youtubeListExisting(linked.profile.id,5000,operationId,targeted,knownScheduledIds,targeted?allowedSearchPages:0);
+      const finalSkipReason=targeted&&result.searchUsed!==true?'NATIVE_SEARCH_NOT_STARTED':searchSkipReason;
+      if(finalSkipReason){
+        const skips=summary.searchSkips||{};
+        skips[finalSkipReason]=(skips[finalSkipReason]||0)+1;
+        summary.searchSkips=skips;
+      }
       if(targeted&&result.searchUsed===true){
         summary.deepSearchChannels=(summary.deepSearchChannels||0)+1;
         ownerSearchAt.set(channel.id,Date.now());
