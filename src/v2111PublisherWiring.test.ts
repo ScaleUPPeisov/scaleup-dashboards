@@ -14,5 +14,17 @@ describe('PublisherOS storage/upload wiring',()=>{
  it('YouTube accepted videoId is persisted even when post-upload verification is uncertain',()=>{const branch=queueRuntime.indexOf('if(uploaded.verified===false)');const tail=queueRuntime.slice(branch,branch+4200);expect(branch).toBeGreaterThanOrEqual(0);expect(tail).toContain('recordVerifiedUpload');expect(tail).toContain("processingState:'PROCESSING_UNKNOWN'");expect(tail).toContain('youtubeVideoId:uploaded.videoId')});
  it('verification uncertainty blocks duplicate retry without pretending the upload failed before acceptance',()=>{const i=pub.indexOf('if(uploaded.verified===false)');const tail=pub.slice(i,i+2500);expect(tail).toContain("storageLifecycle:'UPLOADED'");expect(tail).toContain('youtubeVideoId:uploaded.videoId');expect(tail).toContain('Повторная загрузка заблокирована')});
  it('quota plan includes real videos.list verification',()=>expect(pub).toContain("method:'videos.list'"));
+ it('incomplete owner inventory falls back to explicit manual dates instead of blocking all publishing',()=>{
+  expect(pub).toContain("if(draft.scheduleMode!=='file')setScheduleStartMode('manual')");
+  expect(pub).toContain("scheduleStartMode==='manual'&&<label");
+  expect(pub).toContain("scheduleStartMode==='continue'&&scheduleSync.state!=='ready'");
+  expect(pub).toContain("scheduleSync.state==='ready'?scheduleSync.futureCount:'неизвестно'");
+  expect(pub).toContain("Существующие Scheduled не считаются нулём");
+ });
+ it('safe mode is not falsely represented as disabling actual video uploads',()=>{
+  expect(pub).toContain('Защитные проверки метаданных включены • реальная загрузка доступна');
+  expect(pub).not.toContain('Тестовый режим — реальная загрузка отключена');
+  expect(pub).toContain('safeMode:settings.youtubePublishSafeMode');
+ });
  it('frontend invokes existing youtube upload command',()=>expect(api).toContain("youtube_upload_video"));
 });
