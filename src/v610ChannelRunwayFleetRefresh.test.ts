@@ -284,7 +284,7 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
    const ch=channel('search-exhausted',{youtubeProfileId:'p-search-exhausted',youtubeChannelId:'UC-search-exhausted'});
    fixture.profiles=[profile('p-search-exhausted','UC-search-exhausted')];
    fixture.responses.set('p-search-exhausted',{
-     channelId:'UC-search-exhausted',videos:[],syncComplete:true,complete:true,scheduleComplete:false,
+     channelId:'UC-search-exhausted',videos:[],syncComplete:true,complete:true,scheduleComplete:true,
      searchUsed:true,searchExhausted:true,searchError:null,
      incompleteReasons:['PLAYLIST_TOTAL_METADATA_MISMATCH','SCHEDULE_EMPTY_NOT_INDEPENDENTLY_VERIFIED'],
      fullSyncApiRequests:5,fullSyncEstimatedQuotaCost:4,searchCalls:1
