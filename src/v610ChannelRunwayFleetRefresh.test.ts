@@ -101,6 +101,32 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
   expect((api.youtubeListExisting as any).mock.calls[0][3]).toBe(false);
  });
 
+ it('deep-checks a partial channel with a legacy large status, but not a confirmed v4 channel',async()=>{
+  const partial=channel('partial-legacy',{youtubeProfileId:'ppartial',youtubeChannelId:'UCpartial'});
+  const proven=channel('proven-v4',{youtubeProfileId:'pproven',youtubeChannelId:'UCproven'});
+  fixture.profiles=[profile('ppartial','UCpartial'),profile('pproven','UCproven')];
+  fixture.responses.set('ppartial',{
+    channelId:'UCpartial',videos:[],scheduleComplete:false,syncComplete:true,complete:true,
+    searchUsed:true,searchExhausted:false,searchCalls:1
+  });
+  fixture.responses.set('pproven',{
+    channelId:'UCproven',videos:[],scheduleComplete:false,syncComplete:true,complete:true,
+    searchUsed:false,searchCalls:0
+  });
+  const base={scheduledVideoCount:3,scheduledUntil:'2099-01-25',lastScheduleSync:'2026-11-20T00:00:00Z',lastLocalCalculation:'2026-11-20T00:00:00Z',status:'large',priority:'low'};
+  localStorage.setItem(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify({
+    version:1,channels:{
+      'partial-legacy':{...base,channelId:partial.id,channelName:partial.name,dataState:'PARTIAL_DATA'},
+      'proven-v4':{...base,channelId:proven.id,channelName:proven.name,dataState:'CONFIRMED_SCHEDULE',inventoryEvidenceVersion:2,independentScheduleEvidenceVersion:4}
+    }
+  }));
+  const result=await refreshOwnerInventoriesAuthoritative([partial,proven],true,fixture.profiles);
+  const calls=(api.youtubeListExisting as any).mock.calls as any[][];
+  expect(calls.find(args=>args[0]==='ppartial')?.[3]).toBe(true);
+  expect(calls.find(args=>args[0]==='pproven')?.[3]).toBe(false);
+  expect(result.searchSkips).toEqual({ALREADY_VERIFIED:1});
+ });
+
  it('P0 owner verifier checks only known IDs in exact OAuth profile and preserves history as PARTIAL',async()=>{
     vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-21T12:00:00Z'));
     try{
