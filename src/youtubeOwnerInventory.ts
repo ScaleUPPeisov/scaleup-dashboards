@@ -128,13 +128,9 @@ export function scheduledCoverageEstablished(result:{
   supplementalMissingCount?:number;knownScheduledIdsTruncated?:boolean;videos?:YoutubeExistingVideo[]
 },_nowMs=Date.now()){
   if(!(result.syncComplete??result.complete)||result.scheduleComplete!==true)return false;
-  // One verified Scheduled ID proves a lower bound, not exhaustive discovery.
-  // A successful uploads playlist alone is not independent schedule coverage.
-  // Legacy native responses must supply actual exhausted owner Search evidence;
-  // a newer backend may explicitly attest to that same property.
-  return result.scheduledCoverageVerified===true||
-    (result.searchUsed===true&&result.searchExhausted===true&&!result.searchError&&
-      result.supplementalMissingCount===0&&result.knownScheduledIdsTruncated!==true);
+  // Search exhaustion proves only that the current search-index traversal ended.
+  // It cannot prove that the index contains every private Scheduled video.
+  return result.scheduledCoverageVerified===true;
 }
 
 export function ownerInventoryForChannel(channelId:string,nowMs=Date.now()):OwnerYoutubeInventorySnapshot{
@@ -374,6 +370,9 @@ export async function refreshOwnerInventoriesAuthoritative(
           diagnosticReasons.push('OWNER_SEARCH_FAILED');
         if(result.searchUsed&&!result.searchExhausted&&!diagnosticReasons.includes('OWNER_SEARCH_NOT_EXHAUSTED'))
           diagnosticReasons.push('OWNER_SEARCH_NOT_EXHAUSTED');
+        if(result.searchUsed&&result.searchExhausted&&!result.searchError&&result.scheduledCoverageVerified!==true&&
+          !diagnosticReasons.includes('OWNER_SEARCH_INDEX_NOT_AUTHORITATIVE'))
+          diagnosticReasons.push('OWNER_SEARCH_INDEX_NOT_AUTHORITATIVE');
         const reason=ownerMixed?'AUTHORITATIVE_VIDEO_CHANNEL_MISMATCH':'AUTHORITATIVE_INVENTORY_INCOMPLETE';
         // Distinguish a real API failure from a partial, verified-positive owner
         // inventory. Never promote search snippets or non-owner rows to proof.
