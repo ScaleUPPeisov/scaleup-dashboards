@@ -22,7 +22,8 @@ import {classifyUploadState,clearStaleUploadLink,latestUploadRecord,markHistoryT
 import {configureUploadQueue,enqueueUpload,uploadQueueSnapshot,waitForUploadQueueEntries} from './uploadQueueRuntime';
 import {runSingleFlight} from './publisherSubmitSingleFlight';
 import {fingerprintForCurrentSource,type SourceFingerprint} from './publisherFingerprintIdentity';
-import {existingSyncIncompleteSummary,krasDateKey,readAuthoritativeExistingSnapshot,replaceExistingCacheFromSync} from './channelSchedule';
+import {krasDateKey,loadAuthoritativeExistingSnapshot,scheduleSyncTruthFromInfo} from './channelSchedule';
+import {knownOwnerVideoIdsFromUploadHistory,refreshOwnerInventoriesAuthoritative} from './youtubeOwnerInventory';
 import {journal} from './activityJournalRuntime';
 import {buildLegacyRecoveryPreview,canRefreshCurrentGenerationEvidence,classifyChannelRenderFiles,crossChannelScanRecoveryJobs,normalizeRenderPath,planRenderScanImport,summarizeRenderScan,type LegacyRecoveryPreview,type RenderScanRow,type RenderScanSummary} from './renderScanClassifier';
 import {completeTask,ensureTask,failTask,startTask,updateTask} from './taskEngine';
@@ -64,6 +65,8 @@ function PublisherOSAdvanced({activityRef}:{activityRef?:React.MutableRefObject<
  const [channelId,setChannelId]=useState(first),[draft,setDraft]=useState<PublishWorkspaceDraft>(()=>loadPublishWorkspace(first)),[busy,setBusy]=useState(false),[fingerprints,setFingerprints]=useState<Record<string,SourceFingerprint>>({}),[sessions,setSessions]=useState<YoutubeUploadSession[]>([]),[quotaRev,setQuotaRev]=useState(0),[clock,setClock]=useState(()=>youtubeQuotaClockSnapshot()),[removeRequest,setRemoveRequest]=useState<RemoveRequest|null>(null),[videoFilter,setVideoFilter]=useState<VideoFilter>('new'),[renderScanBusy,setRenderScanBusy]=useState(false),[renderScan,setRenderScan]=useState<RenderScanPreview|null>(null),[legacyRecoveryPreview,setLegacyRecoveryPreview]=useState<LegacyRecoveryPreview|null>(null),[lastQuotaReport,setLastQuotaReport]=useState<{plannedGeneral:number;actualGeneral:number;plannedUploads:number;actualUploads:number;remainingGeneral:number;remainingUploads:number|null}|null>(null),[quotaProjectKey,setQuotaProjectKey]=useState(''),[quotaProjectLabel,setQuotaProjectLabel]=useState('Не удалось определить API-проект для квоты');
  const initialChannelRef=useRef(first);
  const batchSubmitRef=useRef(false);
+ const scheduleSyncChannelRef=useRef(channelId);
+ scheduleSyncChannelRef.current=channelId;
  const [scheduleStartMode,setScheduleStartMode]=useState<'continue'|'manual'>(()=>{const saved=loadPublishWorkspace(first);return saved.scheduleMode!=='file'&&saved.scheduleStartDate?'manual':'continue'});
  const [scheduleSync,setScheduleSync]=useState<{state:'idle'|'loading'|'ready'|'error';lastScheduled?:string;suggestedStart?:string;note?:string;futureCount:number;occupied:string[];timezone:string;youtubeTime?:string;youtubeEvidenceCount?:number;youtubeEvidenceSource?:'scheduled'|'published';youtubeEvidenceAt?:string;syncedAt?:string}>({state:'idle',futureCount:0,occupied:[],timezone:PUBLISHER_TIMEZONE});
  const [globalDaily,setGlobalDaily]=useState(()=>globalDailyUploadStatus());
@@ -127,7 +130,61 @@ function PublisherOSAdvanced({activityRef}:{activityRef?:React.MutableRefObject<
  async function readDoc(fl:FileList|null){if(!fl?.length)return;const out:ImportedMetadata[]=[];let strict=false;for(const f of Array.from(fl)){const isDocx=f.name.toLowerCase().endsWith('.docx');strict=strict||isDocx;const text=isDocx?(await mammoth.extractRawText({arrayBuffer:await f.arrayBuffer()})).value:await f.text();out.push(...parseMetadataFile(f.name,text))}out.sort((a,b)=>(a.number??Number.MAX_SAFE_INTEGER)-(b.number??Number.MAX_SAFE_INTEGER));setDraftPatch({rows:out,docx:strict});const c=metadataCoverage(out,selected.length);if(selected.length&&!c.ok)notifyWarning('Недостаточно метаданных',`Word: ${out.length} • выбрано видео: ${selected.length} • не хватает: ${c.missing}`);else{if(selected.length)applyLocalPreparation(out,selected,true);notifySuccess('Word-файл сохранён и применён локально',selected.length?`${out.length} записей • автоматически применено ${selected.length}${c.surplus?` • лишних ${c.surplus}`:''}`:`Распознано ${out.length}. После выбора видео метаданные применятся автоматически.`)}}
  function applyLocalPreparation(rows:ImportedMetadata[],targets:VideoJob[],silent=false){if(!targets.length)return;const haveRows=rows.length>=targets.length;if(rows.length&&!haveRows){if(!silent)notifyWarning('Недостаточно метаданных',`Word: ${rows.length} • видео: ${targets.length}`);return}const localRows=targets.map((j,i)=>haveRows?metadataRowForJob(rows,j,i):undefined),localFilePublishAts=targets.map((j,i)=>{const x=localRows[i];return metadataPublishAt(x,x?undefined:j.publishAt)}),localSchedule=resolvePublisherBatchSchedule({mode:draft.scheduleMode,startDate:scheduleStart,time:effectiveScheduleTime,count:targets.length,timeSource:draft.scheduleTimeSource,fileTimeRows:localRows,filePublishAts:localFilePublishAts,occupied:scheduleSync.state==='ready'?scheduleSync.occupied:[],intervalDays:draft.intervalDays,fallbackIntervalDays:Math.max(1,channel?.publishIntervalDays||channel?.cadenceDays||1)});targets.forEach((j,i)=>{const x=localRows[i],p:Partial<VideoJob>={};if(x){p.metadataSource='import';p.metadataLocked=true;if(x.title)p.title=x.title;if(x.description)p.description=x.description;if(x.tags?.length)p.tags=x.tags}const nextTime=localSchedule.items[i]?.publishAt;if(nextTime)p.publishAt=nextTime;if(Object.keys(p).length){patchJob(j.id,p);if(j.folder)void api.writeJobMetadata(j.folder,p.title||j.title,p.description||j.description,p.tags||j.tags,p.publishAt||j.publishAt,x?'import':(j.metadataSource||'template'))}});if(!silent)notifySuccess('Метаданные подготовлены',`${targets.length} видео подготовлены локально.`)}
  useEffect(()=>{if(!routeIsActive()||!selected.length)return;if((draft.rows.length>=selected.length&&draft.rows.length>0)||draft.scheduleMode!=='file'){const timer=window.setTimeout(()=>{if(routeIsActive())applyLocalPreparation(draft.rows,selected,true)},120);return()=>window.clearTimeout(timer)}},[selected.map(j=>j.id).join('|'),JSON.stringify(draft.rows),draft.scheduleMode,draft.intervalDays,draft.scheduleTimeSource,scheduleStart,scheduleTime,scheduleSync.youtubeTime]);
- async function syncScheduleFromYoutube(){if(!profileId){notifyWarning('Синхронизация недоступна','Подключите YouTube OAuth для этого канала.');return}setScheduleSync(x=>({...x,state:'loading'}));try{const r=await api.youtubeListExisting(profileId,1000);void replaceExistingCacheFromSync(channelId,r.videos||[],r);const scheduleComplete=r.scheduleComplete??(r.complete&&!r.draftCandidateCount);let source=r.videos||[],sourceNote='';if(!scheduleComplete){const reasons=existingSyncIncompleteSummary(r),snapshot=readAuthoritativeExistingSnapshot(channelId),at=snapshot?.updatedAt?Date.parse(snapshot.updatedAt):NaN,ageMs=Number.isFinite(at)?Date.now()-at:Number.POSITIVE_INFINITY,fresh=Boolean(snapshot?.videos.length)&&ageMs>=0&&ageMs<=15*60*1000;if(fresh&&snapshot){source=snapshot.videos;sourceNote=`Текущая проверка неполная: ${reasons.join(' • ')}. Расписание рассчитано по последней полной синхронизации ${new Date(snapshot.updatedAt!).toLocaleString('ru-RU')}.`}else{const note=`Синхронизация канала неполная: ${reasons.join(' • ')}`;setScheduleSync(x=>({...x,state:'error',note,futureCount:0,lastScheduled:undefined,suggestedStart:undefined,occupied:[]}));if(draft.scheduleMode!=='file')setScheduleStartMode('manual');notifyWarning('YouTube не подтвердил полноту расписания','Автопродолжение недоступно. Выберите дату вручную и проверьте свободные даты в YouTube Studio. Существующие Scheduled не считаются нулём.');return}}const now=new Date(),evidence=inferYoutubePublishClock(source,now),occupied=futureScheduledPublishAts(source,now),syncedAt=now.toISOString();if(draft.scheduleTimeSource==='youtube'&&!evidence){const note=sourceNote||'На YouTube нет достоверного времени публикации: private без publishAt не используется как доказательство.';setScheduleSync({state:'ready',note,futureCount:occupied.length,occupied,timezone:PUBLISHER_TIMEZONE,syncedAt});notifyWarning('Время с YouTube не определено',note);return}const planningTime=draft.scheduleTimeSource==='youtube'?evidence!.time:schedulePlanningTime,plan=recommendScheduleContinuation(source,draft.scheduleMode,planningTime,now,draft.intervalDays),note=sourceNote||(plan.lastPublishAt?'Продолжаем после последней отложенной публикации YouTube':'Будущих отложенных публикаций нет — выбрана ближайшая безопасная дата');setScheduleSync({state:'ready',lastScheduled:plan.lastPublishAt,suggestedStart:plan.recommendedStart,note,futureCount:plan.futureCount,occupied:plan.occupied,timezone:plan.timezone,youtubeTime:evidence?.time,youtubeEvidenceCount:evidence?.evidenceCount,youtubeEvidenceSource:evidence?.source,youtubeEvidenceAt:evidence?.latestEvidenceAt,syncedAt});if(sourceNote)notifyWarning('Использован последний полный snapshot',sourceNote);else notifySuccess('Расписание синхронизировано',evidence?`Время с YouTube: ${evidence.time} KRAT • определено по ${evidence.evidenceCount} видео.`:plan.lastPublishAt?`Последняя дата на YouTube: ${scheduleDateTimeLabel(plan.lastPublishAt)}. Рекомендуемое начало: ${plan.recommendedStart}.`:`Будущих scheduled-видео нет. Рекомендуемое начало: ${plan.recommendedStart}.`)}catch(e){const h=humanizeError(e,'youtube');setScheduleSync(x=>({...x,state:'error',note:h.message}));notifyError(h.title,h.message,{technicalDetail:h.detail})}}
+ async function syncScheduleFromYoutube(){
+  const targetChannel=channel,targetId=channelId;
+  if(!targetChannel||!profileId||!targetChannel.youtubeChannelId){
+   notifyWarning('Синхронизация недоступна','Подключите точный YouTube OAuth-профиль канала.');
+   return
+  }
+  setScheduleSync(x=>({...x,state:'loading'}));
+  const incomplete=(reason:string)=>{
+   if(scheduleSyncChannelRef.current!==targetId)return;
+   setScheduleSync({state:'error',note:reason,futureCount:0,occupied:[],timezone:PUBLISHER_TIMEZONE});
+   if(draft.scheduleMode!=='file')setScheduleStartMode('manual');
+   notifyWarning('Расписание YouTube не подтверждено',reason+' Выберите ручную дату после сверки с YouTube Studio. Найденные ранее Scheduled не считаются нулём.');
+  };
+  try{
+   // Previously youtubeListExisting(profileId,1000) defaulted to
+   // verifyScheduled=false, causing an uploads-only false sync failure.
+   // Reuse the one-channel exact-owner bounded verification and quota guard.
+   const ids=knownOwnerVideoIdsFromUploadHistory(useApp.getState().uploadHistory,targetChannel);
+   const audit=await refreshOwnerInventoriesAuthoritative([targetChannel],true,undefined,{[targetId]:ids});
+   if(scheduleSyncChannelRef.current!==targetId)return;
+   const row=audit.rows.find(x=>x.channelId===targetId);
+   if(row?.status!=='UPDATED'){
+    const issue=row?.status==='PARTIAL_DATA'
+     ?(row.diagnosticReasons?.slice(0,3).join(' • ')||'SCHEDULE_COVERAGE_UNVERIFIED')
+     :row?.status||'OWNER_READ_UNAVAILABLE';
+    const skipped=Object.entries(audit.searchSkips||{}).map(([code,count])=>code+' '+count).join(' • ');
+    incomplete(issue+(skipped?' • Search: '+skipped:''));
+    return
+   }
+   // Audit awaits the verified native cache write and readback.
+   const snapshot=await loadAuthoritativeExistingSnapshot(targetId);
+   if(scheduleSyncChannelRef.current!==targetId)return;
+   if(!snapshot||scheduleSyncTruthFromInfo(snapshot.syncInfo)!=='complete'){
+    incomplete('Проверка завершилась, но подтверждённый native snapshot не удалось прочитать.');
+    return
+   }
+   const source=snapshot.videos,now=new Date();
+   const evidence=inferYoutubePublishClock(source,now),occupied=futureScheduledPublishAts(source,now),syncedAt=now.toISOString();
+   if(draft.scheduleTimeSource==='youtube'&&!evidence){
+    setScheduleSync({state:'ready',note:'Время с YouTube не определено. Выберите время из файла или задайте вручную.',futureCount:occupied.length,occupied,timezone:PUBLISHER_TIMEZONE,syncedAt});
+    notifyWarning('Время публикации не определено','В YouTube нет подтверждённого publishAt / publishedAt для выбора времени.');
+    return
+   }
+   const planningTime=draft.scheduleTimeSource==='youtube'?evidence!.time:schedulePlanningTime;
+   const plan=recommendScheduleContinuation(source,draft.scheduleMode,planningTime,now,draft.intervalDays);
+   setScheduleSync({state:'ready',lastScheduled:plan.lastPublishAt,suggestedStart:plan.recommendedStart,note:'Расписание подтверждено точным OAuth-каналом и сохранено локально.',futureCount:plan.futureCount,occupied:plan.occupied,timezone:plan.timezone,youtubeTime:evidence?.time,youtubeEvidenceCount:evidence?.evidenceCount,youtubeEvidenceSource:evidence?.source,youtubeEvidenceAt:evidence?.latestEvidenceAt,syncedAt});
+   notifySuccess('Расписание синхронизировано',plan.lastPublishAt?'Последняя дата: '+scheduleDateTimeLabel(plan.lastPublishAt)+' • начало: '+plan.recommendedStart:'Будущих Scheduled не обнаружено в подтверждённом inventory; начало: '+plan.recommendedStart);
+  }catch(error){
+   if(scheduleSyncChannelRef.current!==targetId)return;
+   const h=humanizeError(error,'youtube');
+   setScheduleSync(x=>({...x,state:'error',note:h.message}));
+   if(draft.scheduleMode!=='file')setScheduleStartMode('manual');
+   notifyError(h.title,h.message,{technicalDetail:h.detail});
+  }
+ }
  async function chooseThumbnails(){const x=await api.chooseImages();if(x.length){const mapped=mapThumbnailsToJobs(selected,x);for(const j of selected)if(mapped[j.id])patchJob(j.id,{thumbnailPath:mapped[j.id]});setDraftPatch({thumbs:x,allowMissingThumbs:false});notifySuccess('Обложки сохранены',`${x.length} изображений сопоставлены с выбранными видео.`)}}
  async function removeReady(ids:string[],deleteFromDisk:boolean){
    const wanted=[...new Set(ids)],all=useApp.getState().jobs;
