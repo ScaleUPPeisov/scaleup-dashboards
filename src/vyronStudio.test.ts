@@ -40,8 +40,8 @@ describe('VYRON Studio isolated design contract',()=>{
     }
   });
   it('does not hide publisher sections or disable actions through CSS',()=>{
-    expect(css).not.toMatch(/publishStep[^{}]*\\{[^{}]*display\\s*:\\s*none/);
-    expect(css).not.toMatch(/pointer-events\\s*:\\s*none/);
+    expect(css).not.toContain('.publishStep{display:none');
+    expect(css).not.toContain('pointer-events:none');
     expect(css).toContain('@media(max-width:1180px)');
   });
 });
