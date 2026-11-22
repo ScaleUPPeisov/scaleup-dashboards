@@ -266,7 +266,7 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
     const c=channel('proof-required');
     storage.seed(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify({version:1,channels:{[c.id]:{
       channelId:c.id,channelName:c.name,scheduledVideoCount:16,scheduledUntil:'2027-01-06',
-      dataState:'CONFIRMED_SCHEDULE',inventoryEvidenceVersion:2,
+      dataState:'CONFIRMED_SCHEDULE',inventoryEvidenceVersion:2,independentScheduleEvidenceVersion:3,
       lastScheduleSync:'2026-11-21T12:10:42Z',lastLocalCalculation:'2026-11-21T12:10:42Z',
       runwayDays:46,priority:'low',status:'large'
     }}}));
@@ -300,7 +300,7 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
       }}}));
       const result=recalculateChannelRunway([ch],new Date('2026-11-21T13:00:00Z'),false,storage as any).channels[ch.id];
       expect(result.dataState).toBe('CONFIRMED_SCHEDULE');
-      expect(result.independentScheduleEvidenceVersion).toBe(3);
+      expect(result.independentScheduleEvidenceVersion).toBe(4);
       expect(result.scheduledVideoCount).toBe(1);
       expect(result.scheduledUntil).toBe('2027-02-05');
     }finally{vi.useRealTimers()}
