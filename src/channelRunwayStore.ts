@@ -39,11 +39,11 @@ function normalizeStoredRecord(id:string,value:unknown):ChannelRunwayRecord|unde
   const averagePublishIntervalDays=Number.isFinite(raw.averagePublishIntervalDays)?Number(raw.averagePublishIntervalDays):undefined;
   const status=VALID_STATUS.has(String(raw.status))?raw.status as ChannelRunwayRecord['status']:'no-data';
   const priority=VALID_PRIORITY.has(String(raw.priority))?raw.priority as ChannelRunwayRecord['priority']:'unknown';
-  // Previously persisted v2 CONFIRMED_SCHEDULE records were allowed solely
-  // because videos.list found a publishAt, not because Scheduled discovery
-  // was exhaustive. Fail closed until independent owner proof is reloaded.
-  const unprovenPositive=raw.dataState==='CONFIRMED_SCHEDULE'&&raw.independentScheduleEvidenceVersion!==3;
-  const unprovenEmpty=raw.dataState==='CONFIRMED_EMPTY'&&raw.independentScheduleEvidenceVersion!==3;
+  // v3 treated exhausted search.list as exhaustive coverage. That assumption
+  // is invalid, so both v2 and v3 confirmations fail closed until a v4 explicit
+  // schedule coverage attestation is loaded.
+  const unprovenPositive=raw.dataState==='CONFIRMED_SCHEDULE'&&raw.independentScheduleEvidenceVersion!==4;
+  const unprovenEmpty=raw.dataState==='CONFIRMED_EMPTY'&&raw.independentScheduleEvidenceVersion!==4;
   return{
     ...raw,
     channelId,
@@ -169,11 +169,11 @@ export function recalculateChannelRunway(
     const canMigrateProvenNative=Boolean(latest&&prior&&
       prior.dataState==='PARTIAL_DATA'&&
       prior.inventoryEvidenceVersion===2&&
-      prior.independentScheduleEvidenceVersion!==3&&
+      prior.independentScheduleEvidenceVersion!==4&&
       !prior.lastRefreshError);
     if(latest&&(validTime(latest.updatedAt)>priorTime||canMigrateProvenNative)){
       const verified=deriveRunwayRecord(channel,latest.videos,now,latest.updatedAt,true);
-      next.channels[channel.id]=recalculateRunwayRecord({...verified,inventoryEvidenceVersion:2,independentScheduleEvidenceVersion:3},now);
+      next.channels[channel.id]=recalculateRunwayRecord({...verified,inventoryEvidenceVersion:2,independentScheduleEvidenceVersion:4},now);
       continue;
     }
     if(prior){
@@ -234,7 +234,7 @@ export function recalculateChannelRunway(
     }
     if(latest){
       const verified=deriveRunwayRecord(channel,latest.videos,now,latest.updatedAt,true);
-      next.channels[channel.id]=recalculateRunwayRecord({...verified,inventoryEvidenceVersion:2,independentScheduleEvidenceVersion:3},now);
+      next.channels[channel.id]=recalculateRunwayRecord({...verified,inventoryEvidenceVersion:2,independentScheduleEvidenceVersion:4},now);
       continue;
     }
     // First-run/legacy storage has no Runway record but may retain positive
@@ -272,7 +272,7 @@ export function upsertChannelRunwayFromYoutube(
   storage:StorageLike|undefined=browserStorage()
 ){
   const current=loadChannelRunwayStore(storage);
-  const record={...deriveRunwayRecord(channel,videos,now,now.toISOString(),true),inventoryEvidenceVersion:2 as const,independentScheduleEvidenceVersion:3 as const,lastRefreshAttemptAt:now.toISOString(),lastRefreshError:undefined};
+  const record={...deriveRunwayRecord(channel,videos,now,now.toISOString(),true),inventoryEvidenceVersion:2 as const,independentScheduleEvidenceVersion:4 as const,lastRefreshAttemptAt:now.toISOString(),lastRefreshError:undefined};
   const next:ChannelRunwayStore={
     ...current,
     version:1,
