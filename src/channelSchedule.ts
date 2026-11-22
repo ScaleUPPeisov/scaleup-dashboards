@@ -59,15 +59,12 @@ function normalizeSyncInfo(value:unknown){
   const {videos:_videos,...compact}=value;
   return compact;
 }
-// A complete uploads/video hydration is NOT proof that all owner Scheduled IDs
-// were discoverable. Only an exhausted owner Search (or an explicit independently
-// verified native attestation) can promote a schedule to authoritative.
+// uploads and search.list are discovery sources, not an exhaustive owner schedule
+// inventory. Google documents that the search index may lag or return incomplete
+// result sets. Only a separately verified native/Studio attestation may promote
+// the discovered lower bound to authoritative coverage.
 export function independentScheduleCoverageFromInfo(value:unknown):boolean{
-  if(!isRecord(value))return false;
-  if(value.scheduledCoverageVerified===true)return true;
-  return value.searchUsed===true&&value.searchExhausted===true&&
-    !value.searchError&&value.supplementalMissingCount===0&&
-    value.knownScheduledIdsTruncated!==true;
+  return isRecord(value)&&value.scheduledCoverageVerified===true;
 }
 export function scheduleSyncTruthFromInfo(value:unknown):ScheduleSyncTruth{
   if(!isRecord(value))return'unknown';
