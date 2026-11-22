@@ -22,7 +22,10 @@ describe('VYRON fleet runway evidence-aware visual contract',()=>{
     expect(c).toContain('.channelRunway .runwayRow-partial');
     expect(c).toContain('.channelRunway .runwayStatus.partial');
     expect(c).toContain('.channelRunway .runwayDays.historical');
-    expect(s).toContain("ИСТОРИЧЕСКИЙ ЗАПАС • СВЕРИТЬ");
+    expect(s).toContain("ДАННЫЕ УСТАРЕЛИ");
+    expect(s).toContain("НЕПОЛНАЯ ПРОВЕРКА");
+    expect(s).toContain('title={evidenceHint}');
+    expect(s).not.toContain("ИСТОРИЧЕСКИЙ ЗАПАС • СВЕРИТЬ");
     expect(s).toContain("!isCurrent?'historical':''");
   });
 
