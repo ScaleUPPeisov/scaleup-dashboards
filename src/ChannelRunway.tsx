@@ -295,21 +295,18 @@ export function ChannelRunway(){
         const shownDays=evidence.daysRemaining;
         const youtubeStatus=runwayStatus(shownDays,isCurrent);
         const meta=isCurrent?statusMeta[youtubeStatus]:hasEvidence
-          ?{label:isObserved?'ЧАСТИЧНО ПОДТВЕРЖДЕНО':'ИСТОРИЧЕСКИЙ ЗАПАС • СВЕРИТЬ',icon:'◐'}
-          :{label:record.dataState==='API_FAILED'?'ОШИБКА API • ЗАПАС НЕИЗВЕСТЕН':'НУЖНА ПРОВЕРКА YOUTUBE',icon:'◐'};
-        const diagnosticCodes=(record.lastRefreshError||'AUTHORITATIVE_INVENTORY_INCOMPLETE')
-          .split(' | ').filter(x=>x&&x!=='AUTHORITATIVE_INVENTORY_INCOMPLETE');
-        const preciseSearchCodes=diagnosticCodes.filter(x=>x.startsWith('OWNER_SEARCH_HTTP_')||x==='OWNER_SEARCH_NETWORK_ERROR');
-        const partialReason=record.dataState==='PARTIAL_DATA'
-          ?[...preciseSearchCodes,...diagnosticCodes.filter(x=>!preciseSearchCodes.includes(x))].slice(0,3).join(' • ')||'COVERAGE_UNVERIFIED'
-          :'';
+          ?{label:isObserved?'НЕПОЛНАЯ ПРОВЕРКА':'ДАННЫЕ УСТАРЕЛИ',icon:'◐'}
+          :{label:record.dataState==='API_FAILED'?'ОШИБКА YOUTUBE':'НЕТ ДАННЫХ',icon:'◐'};
+        // Full diagnostic codes remain available on hover, never as prominent row labels.
+        const evidenceHint=[evidenceLabel(record.dataState),record.lastRefreshError].filter(Boolean).join(' • ');
+        const shortEvidenceLabel=isCurrent?'Подтверждено':isObserved?'Найден минимум':isHistorical?'Последние известные данные':record.dataState==='API_FAILED'?'Ошибка YouTube':'Нужна проверка';
         const visibleTone=hasEvidence?runwayStatus(shownDays,true):'no-data';
         const rowTone=isCurrent?youtubeStatus:hasEvidence?'partial':'unknown';
         return <div className={`runwayRow runwayRow-${rowTone}`} key={channel.id}>
-          <span className="runwayChannel runwayChannelWithAvatar"><ChannelAvatar channel={channel} size="sm"/><span><b>{channel.name}</b><small>{syncLabel(record.lastScheduleSync)}</small><small title={record.lastRefreshError||''}>{partialReason?('Причина: '+partialReason):evidenceLabel(record.dataState)}</small><small>{linkedByLocalId.has(channel.id)?`Subs ${subscriberStatLabel(channel.stats)} • Views ${compactChannelStat(channel.stats?.viewCount??channel.stats?.views)}`:'YouTube: НЕ ПОДКЛЮЧЁН'}</small></span></span>
-          <span>{shownThrough?<><b>📺 {dateLabel(shownThrough)}</b><small>{isCurrent?(shownDays!==undefined&&shownDays>0?`ещё ${shownDays} дн.`:'подтверждённое расписание закончилось'):isObserved?'подтверждённый минимум • полнота неизвестна':isHistorical?'последняя проверенная дата • данные устарели':'требуется сверка'}</small></>:<><b>{isCurrent?'📺 Будущих видео нет':'📺 Нет подтверждённых данных'}</b><small>{evidenceLabel(record.dataState)}</small></>}</span>
+          <span className="runwayChannel runwayChannelWithAvatar"><ChannelAvatar channel={channel} size="sm"/><span><b>{channel.name}</b><small>{syncLabel(record.lastScheduleSync)}</small><small title={evidenceHint}>{shortEvidenceLabel}</small><small>{linkedByLocalId.has(channel.id)?`Subs ${subscriberStatLabel(channel.stats)} • Views ${compactChannelStat(channel.stats?.viewCount??channel.stats?.views)}`:'YouTube: НЕ ПОДКЛЮЧЁН'}</small></span></span>
+          <span>{shownThrough?<><b>📺 {dateLabel(shownThrough)}</b><small>{isCurrent?(shownDays!==undefined&&shownDays>0?`ещё ${shownDays} дн.`:'подтверждённое расписание закончилось'):isObserved?'найден минимум • нужна сверка':isHistorical?'последняя известная дата':'нужна проверка'}</small></>:<><b>{isCurrent?'📺 Будущих видео нет':'📺 Нет подтверждённых данных'}</b><small>{evidenceLabel(record.dataState)}</small></>}</span>
           <span>{content.readyVideoCount?<><b>💾 {content.readyVideoCount} видео</b><small>только локальные файлы</small></>:<><b>💾 0 видео</b><small>локального запаса нет</small></>}</span>
-          <span title='Остаток дней на YouTube • исторические данные не считаются текущим подтверждением'><b className={`runwayDays ${visibleTone} ${!isCurrent?'historical':''}`}>{shownDays===undefined?'—':isCurrent?`${shownDays} дн.`:isObserved?`≥${shownDays} дн.*`:`≈${shownDays} дн.*`}</b><small>{isCurrent?(shownThrough?`до ${dateLabel(shownThrough)}`:'пустое расписание подтверждено'):isObserved?'* Подтверждённый минимум; полнота неизвестна':isHistorical?(shownDays===0?'* Историческая дата прошла — требуется новый запрос':'* Исторический запас; актуальность неизвестна'):evidenceLabel(record.dataState)}</small><small>{!isCurrent?'Локальный прогноз с резервом':'Общий прогноз с локальным резервом'}: {localRunway.totalRunwayDays} дн.{localRunway.coverageThrough?` • до ${formatLocalCalendarDate(localRunway.coverageThrough)}`:''}</small></span>
+          <span title='Остаток дней на YouTube • исторические данные не считаются текущим подтверждением'><b className={`runwayDays ${visibleTone} ${!isCurrent?'historical':''}`}>{shownDays===undefined?'—':isCurrent?`${shownDays} дн.`:isObserved?`≥${shownDays} дн.*`:`≈${shownDays} дн.*`}</b><small>{isCurrent?(shownThrough?`до ${dateLabel(shownThrough)}`:'пустое расписание подтверждено'):isObserved?'* минимум, полнота не доказана':isHistorical?(shownDays===0?'* дата прошла • обновить':'* по сохранённым данным'):shortEvidenceLabel}</small><small>{!isCurrent?'Локальный прогноз с резервом':'Общий прогноз с локальным резервом'}: {localRunway.totalRunwayDays} дн.{localRunway.coverageThrough?` • до ${formatLocalCalendarDate(localRunway.coverageThrough)}`:''}</small></span>
           <span title={evidenceLabel(record.dataState)}>{!hasEvidence?'—':isCurrent?content.scheduledVideoCount:isObserved?`≥${evidence.scheduledCount}*`:`${evidence.scheduledCount} (кэш)*`}</span>
           <span><b>{content.readyVideoCount}</b></span>
           <span>{scheduleFrequencyTruthLabel(channel,record)}</span>
