@@ -320,7 +320,8 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
    expect(s).toContain('ошибок {fleetAudit.searchFailures}');
    expect(s).toContain('до конца {fleetAudit.searchExhausted}');
    expect(s).toContain('лимит страниц {fleetAudit.searchPageLimited}');
-   expect(s).toContain('preciseSearchCodes');
+   expect(s).toContain('title={evidenceHint}');
+   expect(s).toContain('Search не запускался — причины в подсказке');
  });
 
  it('a Search page cap is not reported as completed or as a transport failure',async()=>{
