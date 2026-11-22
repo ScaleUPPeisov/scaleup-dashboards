@@ -327,7 +327,12 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
     expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:true,videos:[]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
     expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:false,videos:[editable('s','private','2026-12-12T10:00:00Z')]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
     expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:true,videos:[editable('s','private','2026-12-12T10:00:00Z')]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
-    expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:true,searchUsed:true,searchExhausted:true,supplementalMissingCount:0,videos:[editable('s','private','2026-12-12T10:00:00Z')]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
+    const completedLegacy={syncComplete:true,scheduleComplete:true,searchUsed:true,searchExhausted:true,searchError:null,supplementalMissingCount:0,knownScheduledIdsTruncated:false,historyOnlyScheduledOutsideSearchCount:0,videos:[editable('s','private','2026-12-12T10:00:00Z')]};
+    expect(scheduledCoverageEstablished(completedLegacy,Date.parse('2026-11-18T05:00:00Z'))).toBe(true);
+    expect(scheduledCoverageEstablished({...completedLegacy,searchLimitReached:true})).toBe(false);
+    expect(scheduledCoverageEstablished({...completedLegacy,supplementalMissingCount:1})).toBe(false);
+    expect(scheduledCoverageEstablished({...completedLegacy,knownScheduledIdsTruncated:true})).toBe(false);
+    expect(scheduledCoverageEstablished({...completedLegacy,historyOnlyScheduledOutsideSearchCount:1})).toBe(false);
     expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:true,scheduledCoverageVerified:true,videos:[editable('s','private','2026-12-12T10:00:00Z')]},Date.parse('2026-11-18T05:00:00Z'))).toBe(true);
   });
 

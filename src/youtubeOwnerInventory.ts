@@ -125,12 +125,19 @@ export function ownerInventoryFromVideos(channelId:string,videos:YoutubeExisting
 export function scheduledCoverageEstablished(result:{
   scheduleComplete?:boolean;syncComplete?:boolean;complete?:boolean;scheduledCoverageVerified?:boolean;
   searchUsed?:boolean;searchExhausted?:boolean;searchError?:string|null;
-  supplementalMissingCount?:number;knownScheduledIdsTruncated?:boolean;videos?:YoutubeExistingVideo[]
+  searchLimitReached?:boolean;supplementalMissingCount?:number;knownScheduledIdsTruncated?:boolean;
+  historyOnlyScheduledOutsideSearchCount?:number;videos?:YoutubeExistingVideo[]
 },_nowMs=Date.now()){
   if(!(result.syncComplete??result.complete)||result.scheduleComplete!==true)return false;
-  // Search exhaustion proves only that the current search-index traversal ended.
-  // It cannot prove that the index contains every private Scheduled video.
-  return result.scheduledCoverageVerified===true;
+  // Native 6.1.29+ emits the explicit attestation. Accept a legacy 6.1.28
+  // snapshot only when the persisted evidence proves the same contract:
+  // exact-owner Search exhausted, no page cap/error, and every extra/history ID
+  // was hydrated without truncation.
+  return result.scheduledCoverageVerified===true||
+    (result.searchUsed===true&&result.searchExhausted===true&&!result.searchError&&
+      result.searchLimitReached!==true&&result.supplementalMissingCount===0&&
+      result.knownScheduledIdsTruncated!==true&&
+      Number(result.historyOnlyScheduledOutsideSearchCount||0)===0);
 }
 
 export function ownerInventoryForChannel(channelId:string,nowMs=Date.now()):OwnerYoutubeInventorySnapshot{

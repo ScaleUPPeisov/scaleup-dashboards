@@ -4042,21 +4042,20 @@ fn owner_schedule_reconciliation_reasons(
     history_only_scheduled:usize
 )->Vec<&'static str>{
     let mut reasons=Vec::new();
-    if scheduled_count==0{reasons.push("SCHEDULE_EMPTY_NOT_INDEPENDENTLY_VERIFIED")}
+    let reconciled=verify&&search_exhausted&&!search_error&&!search_limit_reached
+        &&!supplement_missing&&history_only_scheduled==0;
+    if scheduled_count==0&&!reconciled{reasons.push("SCHEDULE_EMPTY_NOT_INDEPENDENTLY_VERIFIED")}
     if verify{
         if search_error{reasons.push("OWNER_SEARCH_FAILED")}
         if search_limit_reached{reasons.push("OWNER_SEARCH_PAGE_LIMIT")}
         if supplement_missing{reasons.push("OWNER_SUPPLEMENT_HYDRATION_MISSING")}
         if !search_exhausted{reasons.push("OWNER_SEARCH_NOT_EXHAUSTED")}
     }
-    // search.list is only a discovery source. Exhausting its page tokens means
-    // the current search-index traversal ended; it is not an exhaustive owner
-    // schedule attestation. Positive owner-hydrated IDs remain valid lower-bound
-    // evidence, but they cannot promote the channel to complete coverage.
-    if verify&&search_exhausted&&!search_error{
-        reasons.push("OWNER_SEARCH_INDEX_NOT_AUTHORITATIVE")
-    }
-    if verified_supplement_scheduled>0{
+    // Search is a discovery source, while videos.list is authoritative for
+    // current owner/status/publishAt. The union is complete only when Search
+    // exhausted and every Search/history-only ID was hydrated under the exact
+    // OAuth owner with no page limit, truncation, or missing response.
+    if verified_supplement_scheduled>0&&!reconciled{
         reasons.push("UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH")
     }
     reasons
@@ -4420,6 +4419,11 @@ pub async fn youtube_list_existing_videos(
     if let Some(ref code)=search_error_code{reason(code)}
     if known_ids_truncated{reason("KNOWN_SCHEDULED_IDS_TRUNCATED")}
     let schedule_complete=reasons.is_empty();
+    // Persist an explicit proof so restarts and frontend migrations cannot
+    // demote a completed physical owner scan to PARTIAL_DATA.
+    let scheduled_coverage_verified=sync_complete&&schedule_complete&&verify&&search_used&&
+        search_exhausted&&search_error.is_none()&&!search_limit_reached&&
+        supplemental_missing.is_empty()&&!known_ids_truncated&&history_only_scheduled==0;
     let observed_total=if playlist_exhausted&&!limit_truncated{unique_video_ids}else{std::cmp::max(playlist_reported_total,unique_video_ids)};
     let expected=if playlist_exhausted&&!limit_truncated{unique_video_ids}else{std::cmp::min(std::cmp::max(playlist_reported_total,unique_video_ids),limit)};
     let (private_count,scheduled_count,public_count,unlisted_count)=inventory_bucket_counts(&out,Utc::now());
@@ -4467,13 +4471,14 @@ pub async fn youtube_list_existing_videos(
         "complete":sync_complete,
         "syncComplete":sync_complete,
         "scheduleComplete":schedule_complete,
-        "scheduledCoverageVerified":false,
+        "scheduledCoverageVerified":scheduled_coverage_verified,
         "draftCandidateCount":supplemental_ids.len(),
         "searchSupplementCount":verified_supplement_scheduled,
         "historyOnlyScheduledOutsideSearchCount":history_only_scheduled,
         "searchUsed":search_used,
         "searchPagesFetched":search_pages,
         "searchExhausted":search_exhausted,
+        "searchLimitReached":search_limit_reached,
         "searchError":search_error,
         "searchErrorCode":search_error_code,
         "knownScheduledIdsChecked":known_id_checks,
@@ -8229,8 +8234,8 @@ mod false_zero_owner_search_regression_tests{
    assert_eq!(owner_schedule_reconciliation_reasons(0,false,false,false,false,false,0,0),
      vec!["SCHEDULE_EMPTY_NOT_INDEPENDENTLY_VERIFIED"]);
    let exhausted=owner_schedule_reconciliation_reasons(0,true,false,false,true,false,0,0);
-   assert!(exhausted.contains(&"SCHEDULE_EMPTY_NOT_INDEPENDENTLY_VERIFIED"));
-   assert!(exhausted.contains(&"OWNER_SEARCH_INDEX_NOT_AUTHORITATIVE"));
+   assert!(!exhausted.contains(&"SCHEDULE_EMPTY_NOT_INDEPENDENTLY_VERIFIED"));
+   assert!(exhausted.is_empty());
  }
  #[test]fn private_scheduled_video_missing_from_uploads_is_recovered_by_owner_search(){
    let playlist_seen=["VIDEO_A".to_string()].into_iter().collect::<std::collections::HashSet<_>>();
@@ -8247,8 +8252,8 @@ mod false_zero_owner_search_regression_tests{
    let (_,scheduled,_,_)=inventory_bucket_counts(&[verified],chrono::DateTime::parse_from_rfc3339("2026-11-18T00:00:00Z").unwrap().with_timezone(&Utc));
    assert_eq!(scheduled,1);
    let reasons=owner_schedule_reconciliation_reasons(1,true,false,false,true,false,1,0);
-   assert!(reasons.contains(&"UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH"));
-   assert!(reasons.contains(&"OWNER_SEARCH_INDEX_NOT_AUTHORITATIVE"));
+   assert!(!reasons.contains(&"UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH"));
+   assert!(reasons.is_empty());
    assert!(owner_schedule_reconciliation_reasons(1,false,false,false,false,false,1,0)
       .contains(&"UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH"));
  }
