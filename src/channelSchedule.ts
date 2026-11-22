@@ -59,11 +59,25 @@ function normalizeSyncInfo(value:unknown){
   const {videos:_videos,...compact}=value;
   return compact;
 }
+// Native 6.1.29+ persists an explicit proof. Legacy 6.1.28 snapshots can be
+// promoted only when their persisted fields prove the identical contract.
+export function independentScheduleCoverageFromInfo(value:unknown):boolean{
+  if(!isRecord(value))return false;
+  if(value.scheduledCoverageVerified===true)return true;
+  return value.searchUsed===true&&value.searchExhausted===true&&
+    !value.searchError&&value.searchLimitReached!==true&&
+    value.supplementalMissingCount===0&&value.knownScheduledIdsTruncated!==true&&
+    Number(value.historyOnlyScheduledOutsideSearchCount||0)===0;
+}
 export function scheduleSyncTruthFromInfo(value:unknown):ScheduleSyncTruth{
   if(!isRecord(value))return'unknown';
-  if(value.scheduleComplete===true)return'complete';
-  if(value.scheduleComplete===false||value.complete===false)return'incomplete';
-  if(value.complete===true)return Number(value.draftCandidateCount||0)>0?'incomplete':'complete';
+  if(value.scheduleComplete===false||value.syncComplete===false||value.complete===false)return'incomplete';
+  if((value.scheduleComplete===true||value.complete===true)&&
+     independentScheduleCoverageFromInfo(value))return'complete';
+  // Older 6.1.24 and 6.1.25 uploads-only snapshots frequently stored
+  // scheduleComplete=true. Keep their positive rows as history, never as a
+  // complete/current schedule or a confirmed zero.
+  if(value.scheduleComplete===true||value.complete===true)return'incomplete';
   return'unknown';
 }
 export function futureScheduledVideos(videos:YoutubeExistingVideo[],nowMs=Date.now()){

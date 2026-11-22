@@ -1,4 +1,5 @@
 import {describe,expect,it} from 'vitest';
+import {resolvePublisherBatchSchedule} from './scheduleContinuation';
 import {publisherKrasnoyarskIso,publisherScheduleDateKeys,publisherScheduleDates,publisherSchedulePreview} from './publisherSchedule';
 
 describe('publisher schedule uses Metadata calendar semantics',()=>{
@@ -24,4 +25,24 @@ describe('past-date auto repair',()=>{
  it('I daily moves to nearest future slot',()=>{const now=new Date('2026-09-11T05:00:00.000Z');const r=repairPastPublishAt('2026-09-10T11:00:00.000Z',{kind:'daily',time:'18:00'},now);expect(r.status).toBe('RESCHEDULED');expect(Date.parse(r.publishAt!)).toBeGreaterThan(now.getTime())});
  it('J every two days preserves interval policy',()=>{const now=new Date('2026-09-11T05:00:00.000Z');const r=repairPastPublishAt('2026-09-10T11:00:00.000Z',{kind:'interval',intervalDays:2,time:'18:00'},now);expect(r.status).toBe('RESCHEDULED');expect(r.publishAt?.slice(0,10)).toBe('2026-09-12')});
  it('K impossible policy becomes SKIPPED_PAST_DATE',()=>{const r=repairPastPublishAt('2026-09-10T00:00:00.000Z',{kind:'unavailable'},new Date('2026-09-11T00:00:00.000Z'));expect(r.status).toBe('SKIPPED_PAST_DATE')});
+});
+
+describe('P0: manual owner-sync fallback with individual Word times',()=>{
+ it('schedules 15 videos each three days using existing file times after explicit start date',()=>{
+  const now=new Date('2026-11-23T00:00:00Z');
+  const fileTimeRows=Array.from({length:15},(_,i)=>({publishTime:['07:00','09:00','11:00'][i%3],source:'p0-test'}));
+  const r=resolvePublisherBatchSchedule({mode:'every_n_days',startDate:'2026-11-24',time:'',timeSource:'file',count:15,fileTimeRows,intervalDays:3,now});
+  expect(r.items).toHaveLength(15);
+  expect(r.dates).toHaveLength(15);
+  expect(r.items.every(x=>x.status!=='MISSING'&&x.publishAt&&Date.parse(x.publishAt)>now.getTime())).toBe(true);
+  expect(r.dates[0]).toBe('2026-11-24T00:00:00.000Z');
+  expect(r.dates[1]).toBe('2026-11-27T02:00:00.000Z');
+  expect(new Set(r.dates).size).toBe(15);
+ });
+ it('does not fabricate 15 dates without explicit manual start date',()=>{
+  const r=resolvePublisherBatchSchedule({mode:'every_n_days',startDate:'',time:'',timeSource:'file',count:15,fileTimeRows:Array.from({length:15},()=>({publishTime:'07:00',source:'p0-test'})),intervalDays:3,now:new Date('2026-11-23T00:00:00Z')});
+  expect(r.dates).toHaveLength(0);
+  expect(r.items).toHaveLength(15);
+  expect(r.items.every(x=>x.status==='MISSING')).toBe(true);
+ });
 });

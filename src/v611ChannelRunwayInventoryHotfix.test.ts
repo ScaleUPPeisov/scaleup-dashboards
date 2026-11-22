@@ -43,7 +43,7 @@ vi.mock('./youtubeQuota',()=>({
 vi.mock('./youtubeCache',()=>({markYoutubeCache:vi.fn()}));
 
 import {api} from './api';
-import {existingCacheKey,loadExistingCache,replaceExistingCacheFromSync} from './channelSchedule';
+import {existingCacheKey,loadExistingCache,replaceExistingCacheFromSync,scheduleSyncTruthFromInfo,independentScheduleCoverageFromInfo} from './channelSchedule';
 import {CHANNEL_RUNWAY_STORAGE_KEY} from './channelRunwayCore';
 import {loadChannelRunwayStore,recalculateChannelRunway} from './channelRunwayStore';
 import {ownerInventoryFromVideos,refreshOwnerInventoriesAuthoritative,scheduledCoverageEstablished} from './youtubeOwnerInventory';
@@ -73,7 +73,7 @@ function lumiereVideos(){
 function response(){
   const videos=lumiereVideos();
   return{channelId:'UC-LUMIERE',channelTitle:'Lumière de Minuit',youtubeFound:20,playlistReportedTotal:20,uniqueVideoIds:20,videosHydrated:20,
-    privateCount:0,publicCount:5,scheduledCount:15,scheduleComplete:true,syncComplete:true,complete:true,fullSyncApiRequests:3,fullSyncEstimatedQuotaCost:3,videos}
+    privateCount:0,publicCount:5,scheduledCount:15,scheduleComplete:true,syncComplete:true,complete:true,scheduledCoverageVerified:true,fullSyncApiRequests:3,fullSyncEstimatedQuotaCost:3,videos}
 }
 
 describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
@@ -204,14 +204,15 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
       expect(r.status).toBe('no-data');
       expect(r.runwayDays).toBeUndefined();
       expect(r.lastRefreshError).toBe('AUTHORITATIVE_INVENTORY_INCOMPLETE');
-      expect(r.lastScheduleSync).toBeTruthy();
+      expect(r.lastObservedAt).toBeTruthy();
+      expect(r.lastScheduleSync).toBeUndefined(); // Unproven uploads-only cache is historical, not a full owner sync
     }finally{vi.useRealTimers()}
   });
 
   it('historical partial evidence is labeled as cache, not current confirmed YouTube schedule',()=>{
     const screen=readFileSync('src/ChannelRunway.tsx','utf8');
-    expect(screen).toContain('Исторический кэш Scheduled: текущий запас не подтверждён');
-    expect(screen).toContain('историческая дата • свежая полнота неизвестна');
+    expect(screen).toContain('последняя известная дата');
+    expect(screen).toContain('по сохранённым данным');
     expect(screen).toContain('(кэш)*');
   });
 
@@ -238,7 +239,7 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
         runwayDays:0,priority:'critical',status:'ended'
       }}}));
       const future=editable('future-Dec12','private','2026-12-12T20:00:00+07:00');
-      const stored=await replaceExistingCacheFromSync(c.id,[future],{scheduleComplete:true,syncComplete:true,channelId:'UC-LUMIERE'});
+      const stored=await replaceExistingCacheFromSync(c.id,[future],{scheduleComplete:true,syncComplete:true,scheduledCoverageVerified:true,channelId:'UC-LUMIERE'});
       expect(stored.persisted).toBe(true);
       const r=recalculateChannelRunway([c],new Date(),false,storage as any).channels[c.id];
       expect(r.scheduledUntil).toBe('2026-12-12');
@@ -248,34 +249,163 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
     }finally{vi.useRealTimers()}
   });
 
+
+  it('P0 6.1.26 treats uploads-only positive schedules as partial, even if scheduleComplete=true',()=>{
+    const uploadsOnly={scheduleComplete:true,syncComplete:true,complete:true,searchUsed:false,searchExhausted:false};
+    expect(independentScheduleCoverageFromInfo(uploadsOnly)).toBe(false);
+    expect(scheduleSyncTruthFromInfo(uploadsOnly)).toBe('incomplete');
+    expect(scheduleSyncTruthFromInfo({...uploadsOnly,searchUsed:true,searchExhausted:false})).toBe('incomplete');
+    expect(scheduleSyncTruthFromInfo({...uploadsOnly,searchUsed:true,searchExhausted:true,searchError:'OWNER_SEARCH_FAILED'})).toBe('incomplete');
+    expect(scheduleSyncTruthFromInfo({...uploadsOnly,searchUsed:true,searchExhausted:true,supplementalMissingCount:1})).toBe('incomplete');
+    expect(scheduleSyncTruthFromInfo({...uploadsOnly,searchUsed:true,searchExhausted:true,knownScheduledIdsTruncated:true})).toBe('incomplete');
+    expect(scheduleSyncTruthFromInfo({...uploadsOnly,searchUsed:true,searchExhausted:true,searchLimitReached:true,supplementalMissingCount:0})).toBe('incomplete');
+    expect(scheduleSyncTruthFromInfo({...uploadsOnly,searchUsed:true,searchExhausted:true,supplementalMissingCount:0,historyOnlyScheduledOutsideSearchCount:1})).toBe('incomplete');
+    expect(scheduleSyncTruthFromInfo({...uploadsOnly,searchUsed:true,searchExhausted:true,supplementalMissingCount:0,historyOnlyScheduledOutsideSearchCount:0})).toBe('complete');
+    expect(scheduleSyncTruthFromInfo({...uploadsOnly,scheduledCoverageVerified:true})).toBe('complete');
+  });
+
+  it('P0 6.1.26 demotes a historical false CONFIRMED_SCHEDULE after restart but retains its 16 videos and date',()=>{
+    const c=channel('proof-required');
+    storage.seed(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify({version:1,channels:{[c.id]:{
+      channelId:c.id,channelName:c.name,scheduledVideoCount:16,scheduledUntil:'2027-01-06',
+      dataState:'CONFIRMED_SCHEDULE',inventoryEvidenceVersion:2,independentScheduleEvidenceVersion:3,
+      lastScheduleSync:'2026-11-21T12:10:42Z',lastLocalCalculation:'2026-11-21T12:10:42Z',
+      runwayDays:46,priority:'low',status:'large'
+    }}}));
+    const loaded=loadChannelRunwayStore(storage as any).channels[c.id];
+    expect(loaded.dataState).toBe('PARTIAL_DATA');
+    expect(loaded.scheduledVideoCount).toBe(16);
+    expect(loaded.scheduledUntil).toBe('2027-01-06');
+    expect(loaded.runwayDays).toBeUndefined();
+    expect(loaded.status).toBe('no-data');
+    const again=recalculateChannelRunway([c],new Date('2026-11-21T13:00:00Z'),false,storage as any).channels[c.id];
+    expect(again.dataState).toBe('PARTIAL_DATA');
+    expect(again.scheduledVideoCount).toBe(16);
+  });
+
+  it('P0 6.1.26 restores only a proved native schedule despite a newer legacy lastRefreshAttemptAt',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-21T12:10:25.100Z'));
+    try{
+      const ch=channel('migration-verified');
+      const vids=[editable('future-P0','private','2027-02-05T20:00:00+07:00')];
+      expect((await replaceExistingCacheFromSync(ch.id,vids,{
+        scheduleComplete:true,syncComplete:true,searchUsed:true,searchExhausted:true,
+        supplementalMissingCount:0,knownScheduledIdsTruncated:false,scheduledCoverageVerified:true
+      })).persisted).toBe(true);
+      storage.seed(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify({version:1,channels:{[ch.id]:{
+        channelId:ch.id,channelName:ch.name,scheduledVideoCount:1,scheduledUntil:'2027-02-05',
+        dataState:'CONFIRMED_SCHEDULE',inventoryEvidenceVersion:2,
+        lastScheduleSync:'2026-11-21T12:10:25.100Z',
+        lastRefreshAttemptAt:'2026-11-21T12:10:25.120Z',
+        lastLocalCalculation:'2026-11-21T12:10:25.120Z',
+        runwayDays:76,priority:'low',status:'large'
+      }}}));
+      const result=recalculateChannelRunway([ch],new Date('2026-11-21T13:00:00Z'),false,storage as any).channels[ch.id];
+      expect(result.dataState).toBe('CONFIRMED_SCHEDULE');
+      expect(result.independentScheduleEvidenceVersion).toBe(4);
+      expect(result.scheduledVideoCount).toBe(1);
+      expect(result.scheduledUntil).toBe('2027-02-05');
+    }finally{vi.useRealTimers()}
+  });
+
+  it('P0 6.1.26 native cache ready reconciles Runway even after daily scheduler marker exists',()=>{
+    const bridge=readFileSync('src/ExistingInventoryMigrationBridge.tsx','utf8');
+    const scheduler=readFileSync('src/ChannelRunwayScheduler.tsx','utf8');
+    expect(bridge).toContain('EXISTING_INVENTORY_NATIVE_READY_EVENT');
+    expect(scheduler).toContain('window.addEventListener(EXISTING_INVENTORY_NATIVE_READY_EVENT,nativeReady)');
+    expect(scheduler).toContain('recalculateChannelRunway(useApp.getState().channels,new Date(),false)');
+    expect(scheduler).toContain('window.removeEventListener(EXISTING_INVENTORY_NATIVE_READY_EVENT,nativeReady)');
+  });
+
+  it('P0 6.1.26 preserves 0-to-33 startup channel changes during native migration',()=>{
+    const src=readFileSync('src/ExistingInventoryMigrationBridge.tsx','utf8');
+    expect(src).toContain('pendingIds.current=channels.map(c=>c.id)');
+    expect(src).toContain('while(pendingIds.current!==null)');
+    expect(src).toContain('if(pendingIds.current!==null)continue');
+    expect(src).toContain('EXISTING_INVENTORY_NATIVE_READY_EVENT');
+  });
+
   it('uploads-only completed zero is NOT confirmed empty even when backend marks complete',()=>{
     expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:true,videos:[]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
     expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:false,videos:[editable('s','private','2026-12-12T10:00:00Z')]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
-    expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:true,videos:[editable('s','private','2026-12-12T10:00:00Z')]},Date.parse('2026-11-18T05:00:00Z'))).toBe(true);
+    expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:true,videos:[editable('s','private','2026-12-12T10:00:00Z')]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
+    const completedLegacy={syncComplete:true,scheduleComplete:true,searchUsed:true,searchExhausted:true,searchError:null,supplementalMissingCount:0,knownScheduledIdsTruncated:false,historyOnlyScheduledOutsideSearchCount:0,videos:[editable('s','private','2026-12-12T10:00:00Z')]};
+    expect(scheduledCoverageEstablished(completedLegacy,Date.parse('2026-11-18T05:00:00Z'))).toBe(true);
+    expect(scheduledCoverageEstablished({...completedLegacy,searchLimitReached:true})).toBe(false);
+    expect(scheduledCoverageEstablished({...completedLegacy,supplementalMissingCount:1})).toBe(false);
+    expect(scheduledCoverageEstablished({...completedLegacy,knownScheduledIdsTruncated:true})).toBe(false);
+    expect(scheduledCoverageEstablished({...completedLegacy,historyOnlyScheduledOutsideSearchCount:1})).toBe(false);
+    expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:true,scheduledCoverageVerified:true,videos:[editable('s','private','2026-12-12T10:00:00Z')]},Date.parse('2026-11-18T05:00:00Z'))).toBe(true);
+  });
+
+
+  it('never promotes a 20-to-7 drop when historical future Video IDs are absent from the owner response',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-21T12:00:00Z'));
+    try{
+      const oldVideos=[
+        editable('PREVID00001','private','2026-12-12T10:00:00Z'),
+        editable('PREVID00002','private','2026-12-15T10:00:00Z')
+      ];
+      await replaceExistingCacheFromSync('lumiere',oldVideos,{
+        channelId:'UC-LUMIERE',syncComplete:true,scheduleComplete:true
+      });
+      fixture.responses.set(profile.id,{
+        ...response(),videos:[oldVideos[0]],scheduledCoverageVerified:true
+      });
+      const result=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
+      expect(result.rows[0].status).toBe('PARTIAL_DATA');
+      expect(result.rows[0].diagnosticReasons).toContain('PREVIOUS_SCHEDULED_IDS_NOT_RECONCILED');
+      expect((api.youtubeListExisting as any).mock.calls[0][4]).toContain('PREVID00002');
+      expect((await loadExistingCache('lumiere'))?.baseline['PREVID00002']).toBeDefined();
+      expect(loadChannelRunwayStore().channels.lumiere.dataState).not.toBe('CONFIRMED_SCHEDULE');
+    }finally{vi.useRealTimers()}
+  });
+
+  it('accepts a real decrease only after the former Scheduled ID is returned with a changed owner status',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-21T12:00:00Z'));
+    try{
+      const oldVideos=[
+        editable('PREVID00001','private','2026-12-12T10:00:00Z'),
+        editable('PREVID00002','private','2026-12-15T10:00:00Z')
+      ];
+      await replaceExistingCacheFromSync('lumiere',oldVideos,{
+        channelId:'UC-LUMIERE',syncComplete:true,scheduleComplete:true
+      });
+      fixture.responses.set(profile.id,{
+        ...response(),videos:[
+          oldVideos[0],
+          editable('PREVID00002','public',undefined,'2026-11-21T10:00:00Z')
+        ],scheduledCoverageVerified:true
+      });
+      const result=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
+      expect(result.rows[0].status).toBe('UPDATED');
+      expect(loadChannelRunwayStore().channels.lumiere.scheduledVideoCount).toBe(1);
+    }finally{vi.useRealTimers()}
   });
 
   it('owner search discovers private Scheduled absent uploads without corrupting last verified inventory',async()=>{
     vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-18T05:00:00Z'));
     try{
+      const isolatedChannel=channel('owner-search-supplement');
       const firstFuture=editable('first','private','2026-12-05T10:00:00Z');
       fixture.responses.set(profile.id,{...response(),videos:[firstFuture],scheduledCount:1,uniqueVideoIds:1,videosHydrated:1});
-      expect((await refreshOwnerInventoriesAuthoritative([channel()],true,[profile])).rows[0].status).toBe('UPDATED');
-      const saved=structuredClone(fixture.inventoryFiles.get('lumiere'));
+      expect((await refreshOwnerInventoriesAuthoritative([isolatedChannel],true,[profile])).rows[0].status).toBe('UPDATED');
+      const saved=structuredClone(fixture.inventoryFiles.get(isolatedChannel.id));
       fixture.responses.set(profile.id,{...response(),videos:[editable('not-in-uploads','private','2026-12-12T10:00:00Z')],
         scheduledCount:1,uniqueVideoIds:0,videosHydrated:0,searchUsed:true,searchSupplementCount:1,
         syncComplete:true,scheduleComplete:false,incompleteReasons:['UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH']});
-      const second=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
+      const second=await refreshOwnerInventoriesAuthoritative([isolatedChannel],true,[profile]);
       expect(second.rows[0].status).toBe('PARTIAL_DATA');
       expect(second.rows[0].observedScheduled).toBe(1);
       expect(second.rows[0].observedThrough).toBe('2026-12-12T10:00:00Z');
       expect(second.rows[0].diagnosticReasons).toContain('UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH');
-      expect(fixture.inventoryFiles.get('lumiere')).toEqual(saved);
-      const r=loadChannelRunwayStore().channels.lumiere;
+      expect(fixture.inventoryFiles.get(isolatedChannel.id)).toEqual(saved);
+      const r=loadChannelRunwayStore().channels[isolatedChannel.id];
       expect(r.dataState).toBe('PARTIAL_DATA');
       expect(r.status).toBe('no-data');
       expect(r.runwayDays).toBeUndefined();
       expect(r.scheduledUntil).toBe('2026-12-12');
-      const afterReload=recalculateChannelRunway([channel()],new Date(),false,storage as any).channels.lumiere;
+      const afterReload=recalculateChannelRunway([isolatedChannel],new Date(),false,storage as any).channels[isolatedChannel.id];
       expect(afterReload.dataState).toBe('PARTIAL_DATA');
       expect(afterReload.runwayDays).toBeUndefined();
       expect(afterReload.scheduledUntil).toBe('2026-12-12');

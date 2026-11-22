@@ -1,0 +1,80 @@
+name: VYRON owner-inventory root-cause gates (no live API, no install)
+
+on:
+  push:
+    branches:
+      - fix/vyron-owner-inventory-error-evidence-20261119
+    paths:
+      - .github/workflows/vyron-owner-inventory-rca-gates.yml
+      - src-tauri/src/youtube.rs
+      - src/youtubeOwnerInventory.ts
+      - src/fullChannelRefresh.ts
+      - src/ChannelRunway.tsx
+      - src/App.tsx
+      - src/api.ts
+      - src/v610ChannelRunwayFleetRefresh.test.ts
+      - src/channelRunwayCore.ts
+      - src/channelRunwayStore.ts
+      - src/ChannelRunwayScheduler.tsx
+      - src/ExistingInventoryMigrationBridge.tsx
+      - src/channelSchedule.ts
+      - src/channelRunway.test.ts
+      - src/v2115ScheduleSyncHotfix.test.ts
+      - src/v400OwnerInventory.test.ts
+      - src/youtubeInventoryRc4.test.ts
+      - src/vyron620FleetRunwayVisualSafety.test.ts
+      - src/v611ChannelRunwayInventoryHotfix.test.ts
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-owner-inventory-rca-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Unit regressions, full Vitest, TypeScript and production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npx vitest run src/v610ChannelRunwayFleetRefresh.test.ts src/vyron620FleetRunwayVisualSafety.test.ts src/v611ChannelRunwayInventoryHotfix.test.ts
+      - run: npx vitest run
+      - run: npm run build
+      - name: Verify no new API writes or updater modifications
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git diff --name-only 08bef81a3683b788de5ff734612a9e9f6d94f920...HEAD | sort
+          node - <<'NODE'
+          const {execFileSync}=require('node:child_process');
+          const files=execFileSync('git',['diff','--name-only','08bef81a3683b788de5ff734612a9e9f6d94f920...HEAD'],{encoding:'utf8'}).trim().split('\n').filter(Boolean);
+          const allowed=new Set(['src-tauri/src/youtube.rs','src/youtubeOwnerInventory.ts','src/ChannelRunway.tsx','src/App.tsx','src/fullChannelRefresh.ts','src/api.ts','src/v610ChannelRunwayFleetRefresh.test.ts','src/channelRunwayCore.ts','src/channelRunwayStore.ts','src/ChannelRunwayScheduler.tsx','src/ExistingInventoryMigrationBridge.tsx','src/channelSchedule.ts','src/channelRunway.test.ts','src/v2115ScheduleSyncHotfix.test.ts','src/v400OwnerInventory.test.ts','src/youtubeInventoryRc4.test.ts','src/vyron620FleetRunwayVisualSafety.test.ts','src/v611ChannelRunwayInventoryHotfix.test.ts','.github/workflows/vyron-owner-inventory-rca-gates.yml']);
+          for(const f of files)if(!allowed.has(f))throw Error('UNEXPECTED_CHANGED_FILE: '+f);
+          console.log('VYRON_OWNER_RCA_CHANGE_SCOPE=PASS');
+          NODE
+  rust:
+    name: Native Rust owner HTTP error classification and privacy
+    runs-on: macos-15
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib false_zero_owner_search_regression_tests
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib

@@ -1,6 +1,6 @@
 import {useApp} from './store';
 import {scanAllInventories,useLiveInventory} from './renderInventoryRuntime';
-import {refreshOwnerInventoriesAuthoritative,type OwnerInventoryFleetProgress,type OwnerInventoryRefreshSummary} from './youtubeOwnerInventory';
+import {knownOwnerVideoIdsFromUploadHistory,refreshOwnerInventoriesAuthoritative,type OwnerInventoryFleetProgress,type OwnerInventoryRefreshSummary} from './youtubeOwnerInventory';
 import {refreshYoutubeChannelStatisticsSelection,type ChannelStatisticsRefreshSummary} from './youtubeChannelStatsRuntime';
 import {youtubeQuotaUsage} from './youtubeQuota';
 import {recalculateChannelRunway} from './channelRunwayStore';
@@ -59,19 +59,13 @@ export async function refreshAllChannelData(channelIds:string[],onProgress?:(pro
   try{
     // Owner inventory is the authoritative source for future publishAt / Scheduled.
     // It intentionally runs after the stats batch to avoid overlapping YouTube API traffic.
-    const now=Date.now(),history=useApp.getState().uploadHistory;
-    // The full-fleet button must supply the same verified YouTube IDs that
-    // per-channel manual refresh supplies. These are hydrated by native
-    // videos.list against the exact authenticated owner Channel ID.
+    const history=useApp.getState().uploadHistory;
+    // Known video IDs include owner-upload history even if YouTube silently
+    // omits those Scheduled videos from its uploads playlist. Native videos.list
+    // must independently reverify each exact Channel ID and status.publishAt.
     const knownByChannel:Record<string,string[]>={};
     for(const channel of requested){
-      knownByChannel[channel.id]=[...new Set(history.filter(v=>
-        v.channelId===channel.id&&v.status==='UPLOADED'&&
-        (!v.youtubeChannelId||v.youtubeChannelId===channel.youtubeChannelId)&&
-        (!v.profileId||v.profileId===channel.youtubeProfileId)&&
-        Boolean(v.publishAt)&&Date.parse(v.publishAt!)>now)
-        .sort((a,b)=>Date.parse(b.publishAt!)-Date.parse(a.publishAt!))
-        .map(v=>v.youtubeVideoId).filter(id=>/^[A-Za-z0-9_-]{11}$/.test(id)))].slice(0,50);
+      knownByChannel[channel.id]=knownOwnerVideoIdsFromUploadHistory(history,channel);
     }
     owner=await refreshOwnerInventoriesAuthoritative(requested,true,undefined,knownByChannel,onProgress);
   }catch(error){

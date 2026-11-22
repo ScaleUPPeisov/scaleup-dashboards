@@ -22,6 +22,8 @@ import { ProductionOS } from './ProductionOS';
 import { HistoryPage } from './HistoryPage';
 import { YouTubeCenter } from './YouTubeCenter';
 import { ChannelRunwayScheduler } from './ChannelRunwayScheduler';
+import {loadChannelRunwayStore,subscribeChannelRunway} from './channelRunwayStore';
+import {runwayDisplayEvidence} from './channelRunwayCore';
 import { ProductionStatusBridge } from './ProductionStatusBridge';
 import { SettingsOS } from './SettingsOS';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
@@ -61,6 +63,7 @@ import {SafeArtwork} from './SafeArtwork';
 import {OwnerProfile} from './OwnerProfile';
 import {beginStartupQuotaProbe} from './startupQuotaProbe';
 import {ExistingInventoryMigrationBridge} from './ExistingInventoryMigrationBridge';
+import {runP0OwnerKnownIdsReadOnly} from './youtubeOwnerInventory';
 
 async function notifyUpdateAvailable(version:string){
   const notifiedKey='vyron:update-notified-version';
@@ -137,6 +140,29 @@ function PublishLedgerHydrator(){
   useEffect(()=>{if(booted)restorePublishLedgerFromUploadHistory(uploadHistory)},[booted,uploadHistory]);
   return null;
 }
+
+function P0OwnerVerificationBridge(){
+  const booted=useApp(s=>s.booted);
+  useEffect(()=>{
+    if(!booted)return;
+    let disposed=false;
+    // Allow startup inventory migrations and owner schedulers to settle
+    // before a single, strict-budget known-ID refresh. No Search is attempted.
+    const timer=window.setTimeout(()=>{
+      if(disposed)return;
+      void api.youtubeProfiles().then(profiles=>{
+        if(disposed)return;
+        const current=useApp.getState();
+        return runP0OwnerKnownIdsReadOnly(
+          current.channels,profiles,current.uploadHistory,()=>disposed
+        );
+      }).catch(()=>{});
+    },30000);
+    return()=>{disposed=true;window.clearTimeout(timer)};
+  },[booted]);
+  return null;
+}
+
 const STARTUP_DEADLINE_MS=20_000;
 function withStartupDeadline<T>(work:Promise<T>,label:string):Promise<T>{
   return new Promise((resolve,reject)=>{
@@ -281,7 +307,7 @@ export function App(){
   </div>;
   if(!booted||!license)return <Boot/>;
   if(!license.valid)return <Activation onActivated={setLicense}/>;
-  return <div className="appShell"><ExistingInventoryMigrationBridge/><LiveInventoryBridge/><ChannelRunwayScheduler/><ProductionStatusBridge/><ChannelStatisticsScheduler/><OwnerInventoryScheduler/><UploadProcessingMonitor/><RecoveryGate/><Sidebar/><main className="main"><Topbar/><PageRouter license={license}/></main><GlobalTaskIndicator/><GlobalUploadIndicator/><UploadCenterGlobal/><GlobalTaskCenter/><CommandPalette/><MetadataQueueAssignmentBridge/><PublishLedgerHydrator/><M1PerformanceProbe/>{fpsMonitor&&<FpsMonitor/>}<UpdateExperience/><MajorUpdateCelebration/><NotificationCenter/><div className="bgGlow a"/><div className="bgGlow b"/></div>
+  return <div className="appShell"><ExistingInventoryMigrationBridge/><LiveInventoryBridge/><ChannelRunwayScheduler/><ProductionStatusBridge/><ChannelStatisticsScheduler/><OwnerInventoryScheduler/><P0OwnerVerificationBridge/><UploadProcessingMonitor/><RecoveryGate/><Sidebar/><main className="main"><Topbar/><PageRouter license={license}/></main><GlobalTaskIndicator/><GlobalUploadIndicator/><UploadCenterGlobal/><GlobalTaskCenter/><CommandPalette/><MetadataQueueAssignmentBridge/><PublishLedgerHydrator/><M1PerformanceProbe/>{fpsMonitor&&<FpsMonitor/>}<UpdateExperience/><MajorUpdateCelebration/><NotificationCenter/><div className="bgGlow a"/><div className="bgGlow b"/></div>
 }
 const CachedDashboardRoute=React.memo(({mode}:{mode:'dashboard'|'autopilot'})=><><DashboardUploadSummary/><DashboardOS pageOverride={mode}/></>);
 const CachedChannelsRoute=React.memo(ChannelsOS);
@@ -334,8 +360,22 @@ function Topbar(){
  useEffect(()=>{const open=()=>setErrorsOpen(true);window.addEventListener('vyron:open-error-center',open);return()=>window.removeEventListener('vyron:open-error-center',open)},[]);
  useEffect(()=>{if(!errorsOpen)setHistoryExpanded(false)},[errorsOpen]);
  useEffect(()=>{let live=true;const refresh=()=>void api.youtubeProfiles().then(profiles=>{if(live)setConnectedCount(countConnectedYoutubeBindings(channels,profiles))}).catch(()=>{if(live)setConnectedCount(0)});refresh();const onFocus=()=>refresh();const onOauth=()=>refresh();window.addEventListener('focus',onFocus);window.addEventListener(YOUTUBE_OAUTH_STATE_CHANGED_EVENT,onOauth);return()=>{live=false;window.removeEventListener('focus',onFocus);window.removeEventListener(YOUTUBE_OAUTH_STATE_CHANGED_EVENT,onOauth)}},[channels.map(c=>`${c.id}:${c.youtubeProfileId||''}:${c.youtubeChannelId||''}`).join('|')]);
+ const [runwayRevision,setRunwayRevision]=useState(0);
+ useEffect(()=>subscribeChannelRunway(()=>setRunwayRevision(n=>n+1)),[]);
+ const scheduleSummary=useMemo(()=>{
+   const active=channels.filter(c=>c.enabled!==false),store=loadChannelRunwayStore().channels;
+   let confirmed=0,partial=0,apiFailed=0,unknown=0;
+   for(const channel of active){
+     const record=store[channel.id],e=runwayDisplayEvidence(record);
+     if(e.kind==='CURRENT')confirmed++;
+     else if(record?.dataState==='API_FAILED')apiFailed++;
+     else if(record?.dataState==='PARTIAL_DATA')partial++;
+     else unknown++;
+   }
+   return{total:active.length,confirmed,partial,apiFailed,unknown};
+ },[channels,runwayRevision]);
  const jobErrors=useMemo(()=>activeJobErrors(jobs),[jobs]),errorCount=useMemo(()=>activeErrorCount(jobs),[jobs]),remaining=Math.max(0,quota.limit-quota.used);
- return <><header className="topbar vyronMasterTopbar"><div className="topbarIdentity"><span className="crumb">VYRON YT PEISOV {version||'…'}</span><b>{new Intl.DateTimeFormat('ru-RU',{weekday:'long',day:'2-digit',month:'long',year:'numeric'}).format(new Date())}</b></div><div className="topbarQuota"><span><small>YouTube API • использовано</small><b>{quota.used.toLocaleString('ru-RU')} / {quota.limit.toLocaleString('ru-RU')}</b></span><span><small>API осталось</small><b>{remaining.toLocaleString('ru-RU')}</b></span><span><small>Загрузки VYRON</small><b>{globalUploads.used} / {globalUploads.limit}</b></span><span><small>Осталось загрузок</small><b>{globalUploads.remaining}</b></span><span><small>Сброс</small><b>{clock.localTime}</b></span><span className="quotaCountdown"><small>До сброса</small><b>{clock.countdown}</b></span></div><div className="topStatus"><span><i className={auto?'ok':'idle'}/> {auto?'автопилот':'ручной режим'}</span><span><i className={connectedCount?'ok':'idle'}/> Подключено {connectedCount} / {channels.length}</span><button className={`topErrorButton ${errorCount?'warn':''}`} onClick={()=>setErrorsOpen(true)}>{errorCount?`⚠ ${errorCount} ошибок`:'✓ ошибок нет'}</button></div></header>{errorsOpen&&<ModalPortal onClose={()=>setErrorsOpen(false)} autoFocusOnOpen={false}><section className="confirmModal errorCenterModal" onMouseDown={e=>e.stopPropagation()}><div className="panelHead"><div><small>ERROR CENTER</small><h2>Ошибки VYRON</h2><p>Сверху считаются только активные ошибки. История сохранена ниже отдельно.</p></div><button onClick={()=>setErrorsOpen(false)}>×</button></div><div className="errorCenterRows">{jobErrors.map(j=><article key={`job:${j.id}`}><small>Текущая задача • VIDEO_{String(j.number).padStart(3,'0')}</small><b>{j.error}</b><details><summary>Технические детали</summary><pre>{j.error}</pre></details><button onClick={()=>patchJob(j.id,clearActiveJobErrorPatch(j))}>Убрать ошибку</button></article>)}{history.length>0&&<details onToggle={e=>setHistoryExpanded(e.currentTarget.open)}><summary>История ошибок ({history.length})</summary>{historyExpanded&&history.map(x=><article key={x.id}><small>{new Date(x.createdAt).toLocaleString('ru-RU')}</small><b>{x.title}</b>{x.message&&<p>{x.message}</p>}{(x.stage||x.currentVersion||x.targetVersion)&&<p className="errorMeta">{x.stage||'updater'}{x.currentVersion||x.targetVersion?` • ${x.currentVersion||'—'} → ${x.targetVersion||'—'}`:''}{x.errorCode?` • ${x.errorCode}`:''}</p>}{x.technicalDetail&&<details><summary>Технические детали</summary><pre>{x.technicalDetail}</pre></details>}<button onClick={()=>{removeErrorHistory(x.id);setHistory(readErrorHistory())}}>Убрать из истории</button></article>)}</details>}{!errorCount&&<div className="successBox">Активных ошибок нет.</div>}</div><footer><button onClick={()=>{jobErrors.forEach(j=>patchJob(j.id,clearActiveJobErrorPatch(j)))}} disabled={!errorCount}>Очистить активные</button><button onClick={()=>{clearErrorHistory();setHistory([])}} disabled={!history.length}>Очистить историю</button><button className="primary" onClick={()=>setErrorsOpen(false)}>Закрыть</button></footer></section></ModalPortal>}</>
+ return <><header className="topbar vyronMasterTopbar"><div className="topbarIdentity"><span className="crumb">VYRON YT PEISOV {version||'…'}</span><b>{new Intl.DateTimeFormat('ru-RU',{weekday:'long',day:'2-digit',month:'long',year:'numeric'}).format(new Date())}</b></div><div className="topbarQuota"><span><small>YouTube API • использовано</small><b>{quota.used.toLocaleString('ru-RU')} / {quota.limit.toLocaleString('ru-RU')}</b></span><span><small>API осталось</small><b>{remaining.toLocaleString('ru-RU')}</b></span><span><small>Загрузки VYRON</small><b>{globalUploads.used} / {globalUploads.limit}</b></span><span><small>Осталось загрузок</small><b>{globalUploads.remaining}</b></span><span><small>Сброс</small><b>{clock.localTime}</b></span><span className="quotaCountdown"><small>До сброса</small><b>{clock.countdown}</b></span></div><div className="topStatus"><span><i className={auto?'ok':'idle'}/> {auto?'автопилот':'ручной режим'}</span><span><i className={connectedCount?'ok':'idle'}/> Подключено {connectedCount} / {channels.length}</span><span title='Расписание YouTube: подтверждено / частично или устарело / ошибка API. OAuth — отдельный статус'>📺 {scheduleSummary.confirmed}/{scheduleSummary.total} • ◐ {scheduleSummary.partial+scheduleSummary.unknown} • ⚠ {scheduleSummary.apiFailed}</span><button className={`topErrorButton ${errorCount?'warn':''}`} onClick={()=>setErrorsOpen(true)}>{errorCount?`⚠ ${errorCount} ошибок` :'✓ ошибок очереди нет'}</button></div></header>{errorsOpen&&<ModalPortal onClose={()=>setErrorsOpen(false)} autoFocusOnOpen={false}><section className="confirmModal errorCenterModal" onMouseDown={e=>e.stopPropagation()}><div className="panelHead"><div><small>ERROR CENTER</small><h2>Ошибки VYRON</h2><p>Здесь учитываются ошибки очереди задач. Ошибки расписания показываются отдельно на экране «Запас видео». История ниже.</p></div><button onClick={()=>setErrorsOpen(false)}>×</button></div><div className="errorCenterRows">{jobErrors.map(j=><article key={`job:${j.id}`}><small>Текущая задача • VIDEO_{String(j.number).padStart(3,'0')}</small><b>{j.error}</b><details><summary>Технические детали</summary><pre>{j.error}</pre></details><button onClick={()=>patchJob(j.id,clearActiveJobErrorPatch(j))}>Убрать ошибку</button></article>)}{history.length>0&&<details onToggle={e=>setHistoryExpanded(e.currentTarget.open)}><summary>История ошибок ({history.length})</summary>{historyExpanded&&history.map(x=><article key={x.id}><small>{new Date(x.createdAt).toLocaleString('ru-RU')}</small><b>{x.title}</b>{x.message&&<p>{x.message}</p>}{(x.stage||x.currentVersion||x.targetVersion)&&<p className="errorMeta">{x.stage||'updater'}{x.currentVersion||x.targetVersion?` • ${x.currentVersion||'—'} → ${x.targetVersion||'—'}`:''}{x.errorCode?` • ${x.errorCode}`:''}</p>}{x.technicalDetail&&<details><summary>Технические детали</summary><pre>{x.technicalDetail}</pre></details>}<button onClick={()=>{removeErrorHistory(x.id);setHistory(readErrorHistory())}}>Убрать из истории</button></article>)}</details>}{!errorCount&&<div className="successBox">Активных ошибок очереди нет. Статус расписания проверяется отдельно.</div>}</div><footer><button onClick={()=>{jobErrors.forEach(j=>patchJob(j.id,clearActiveJobErrorPatch(j)))}} disabled={!errorCount}>Очистить активные</button><button onClick={()=>{clearErrorHistory();setHistory([])}} disabled={!history.length}>Очистить историю</button><button className="primary" onClick={()=>setErrorsOpen(false)}>Закрыть</button></footer></section></ModalPortal>}</>
 }
 function PageHeader({eyebrow,title,text,actions}:{eyebrow:string;title:string;text:string;actions?:React.ReactNode}){return <div className="pageHeader"><div><small>{eyebrow}</small><h1>{title}</h1><p>{text}</p></div>{actions&&<div className="headerActions">{actions}</div>}</div>}
 function Metric({label,value,note,tone='cyan'}:{label:string;value:string|number;note:string;tone?:string}){return <div className={`metric ${tone}`}><small>{label}</small><strong>{value}</strong><span>{note}</span></div>}

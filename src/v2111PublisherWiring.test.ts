@@ -14,5 +14,29 @@ describe('PublisherOS storage/upload wiring',()=>{
  it('YouTube accepted videoId is persisted even when post-upload verification is uncertain',()=>{const branch=queueRuntime.indexOf('if(uploaded.verified===false)');const tail=queueRuntime.slice(branch,branch+4200);expect(branch).toBeGreaterThanOrEqual(0);expect(tail).toContain('recordVerifiedUpload');expect(tail).toContain("processingState:'PROCESSING_UNKNOWN'");expect(tail).toContain('youtubeVideoId:uploaded.videoId')});
  it('verification uncertainty blocks duplicate retry without pretending the upload failed before acceptance',()=>{const i=pub.indexOf('if(uploaded.verified===false)');const tail=pub.slice(i,i+2500);expect(tail).toContain("storageLifecycle:'UPLOADED'");expect(tail).toContain('youtubeVideoId:uploaded.videoId');expect(tail).toContain('Повторная загрузка заблокирована')});
  it('quota plan includes real videos.list verification',()=>expect(pub).toContain("method:'videos.list'"));
+ it('incomplete owner inventory falls back to explicit manual dates instead of blocking all publishing',()=>{
+  expect(pub).toContain("if(draft.scheduleMode!=='file')setScheduleStartMode('manual')");
+  expect(pub).toContain("scheduleStartMode==='manual'&&<label");
+  expect(pub).toContain("scheduleStartMode==='continue'&&scheduleSync.state!=='ready'");
+  expect(pub).toContain("scheduleSync.state==='ready'?scheduleSync.futureCount:'неизвестно'");
+  expect(pub).toContain("Найденные ранее Scheduled не считаются нулём");
+ });
+ it('safe mode is not falsely represented as disabling actual video uploads',()=>{
+  expect(pub).toContain('Защитные проверки метаданных включены • реальная загрузка доступна');
+  expect(pub).not.toContain('Тестовый режим — реальная загрузка отключена');
+  expect(pub).toContain('safeMode:settings.youtubePublishSafeMode');
+ });
+ it('PublisherOS verifies owner Scheduled with quota guard and awaits native persisted evidence, not uploads-only',()=>{
+  expect(pub).toContain('await refreshOwnerInventoriesAuthoritative([targetChannel],true');
+  expect(pub).toContain('knownOwnerVideoIdsFromUploadHistory(useApp.getState().uploadHistory,targetChannel)');
+  expect(pub).toContain('await loadAuthoritativeExistingSnapshot(targetId)');
+  expect(pub).toContain("scheduleSyncTruthFromInfo(snapshot.syncInfo)!=='complete'");
+  expect(pub).toContain("if(row?.status!=='UPDATED')");
+  expect(pub).not.toContain('const r=await api.youtubeListExisting(profileId,1000)');
+ });
+ it('does not falsely show dates ready when 15 selected videos still lack publishAt',()=>{
+  expect(pub).toContain('Нет полного расписания — выберите начальную дату');
+  expect(pub).toContain('сформировано ${scheduleResolution.dates.length} из ${selected.length}');
+ });
  it('frontend invokes existing youtube upload command',()=>expect(api).toContain("youtube_upload_video"));
 });

@@ -19,7 +19,7 @@ describe('VYRON 4.0.0 owner-visible YouTube inventory',()=>{
      video('public','public',{publishedAt:'2026-09-28T06:00:00Z'}),
      video('unlisted','unlisted')
    ];
-   const x=ownerInventoryFromVideos('c1',rows,'2026-09-28T07:00:00Z',{scheduleComplete:true},now);
+   const x=ownerInventoryFromVideos('c1',rows,'2026-09-28T07:00:00Z',{scheduleComplete:true,scheduledCoverageVerified:true},now);
    expect(x.total).toBe(4);expect(x.private).toBe(1);expect(x.scheduled).toBe(1);expect(x.public).toBe(1);expect(x.unlisted).toBe(1);
    expect(x.published).toBe(2);expect(x.complete).toBe(true);expect(x.nextScheduledAt).toBe('2026-09-29T07:00:00Z')
  });

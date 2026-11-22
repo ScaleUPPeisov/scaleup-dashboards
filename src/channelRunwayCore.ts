@@ -19,6 +19,9 @@ export type ChannelRunwayRecord={
   // v2 means this record came from a source whose schedule coverage was checked.
   // Legacy zeroes without this proof cannot claim CONFIRMED_EMPTY.
   inventoryEvidenceVersion?:2;
+  // v4: explicit exhaustive schedule coverage attestation. Version 3 trusted
+  // exhausted search.list and is intentionally migrated back to partial.
+  independentScheduleEvidenceVersion?:4;
   lastRefreshAttemptAt?:string;
   lastRefreshError?:string;
   // Authenticated videos.list findings from the most recent incomplete read.
@@ -162,6 +165,73 @@ export function recalculateRunwayRecord(record:ChannelRunwayRecord,now=new Date(
     priority:runwayPriority(status),
     status
   };
+}
+
+
+/**
+ * A preserved owner-verified date is useful planning evidence even if the
+ * newest attempt failed. Never treat it as live or as proof of full coverage.
+ * Use the same evidence decision for table, sorting and production priority.
+ */
+export type RunwayDisplayEvidence={
+  kind:'CURRENT'|'OBSERVED_PARTIAL'|'HISTORICAL'|'UNKNOWN';
+  scheduledUntil?:string;
+  scheduledCount?:number;
+  daysRemaining?:number;
+  lastVerifiedAt?:string;
+  lastObservedAt?:string;
+};
+export function runwayDisplayEvidence(record:ChannelRunwayRecord|undefined,now=new Date()):RunwayDisplayEvidence{
+  if(!record)return{kind:'UNKNOWN'};
+  const today=krasnoyarskClock(now).dateKey;
+  const age=Date.parse(record.lastScheduleSync||'');
+  const current=confirmedRunway(record.dataState)&&record.status!=='no-data'&&
+    Number.isFinite(age)&&now.getTime()>=age&&now.getTime()-age<RUNWAY_EVIDENCE_TTL_MS;
+  if(current){
+    const days=record.scheduledUntil?calendarDaysBetween(today,record.scheduledUntil):0;
+    return{
+      kind:'CURRENT',scheduledUntil:record.scheduledUntil,
+      scheduledCount:record.scheduledVideoCount,daysRemaining:Math.max(0,days??0),
+      lastVerifiedAt:record.lastScheduleSync
+    };
+  }
+  const observedDate=record.lastObservedScheduledUntil;
+  const observedDays=observedDate?calendarDaysBetween(today,observedDate):undefined;
+  const observedAt=Date.parse(record.lastObservedAt||'');
+  const freshPartial=record.dataState==='PARTIAL_DATA'&&
+    Number(record.lastObservedScheduledCount)>0&&observedDays!==undefined&&
+    Number.isFinite(observedAt)&&now.getTime()>=observedAt&&
+    now.getTime()-observedAt<RUNWAY_EVIDENCE_TTL_MS;
+  if(freshPartial){
+    return{
+      kind:'OBSERVED_PARTIAL',scheduledUntil:observedDate,
+      scheduledCount:record.lastObservedScheduledCount,daysRemaining:Math.max(0,observedDays!),
+      lastVerifiedAt:record.lastScheduleSync,lastObservedAt:record.lastObservedAt
+    };
+  }
+  // A legacy unverified zero is never restored. Historical *positive* owner
+  // evidence needs a last verified timestamp or a v2 authoritative source.
+  const historicalDays=record.scheduledUntil?calendarDaysBetween(today,record.scheduledUntil):undefined;
+  const trustedBaseline=Number(record.scheduledVideoCount)>0&&
+    (Boolean(record.lastScheduleSync)||record.inventoryEvidenceVersion===2);
+  if(trustedBaseline&&historicalDays!==undefined){
+    return{
+      kind:'HISTORICAL',scheduledUntil:record.scheduledUntil,
+      scheduledCount:record.scheduledVideoCount,daysRemaining:Math.max(0,historicalDays),
+      lastVerifiedAt:record.lastScheduleSync,lastObservedAt:record.lastObservedAt
+    };
+  }
+  // Owner-verified positive partial observations can survive a subsequent API
+  // failure even without a complete inventory baseline.
+  if(Number(record.lastObservedScheduledCount)>0&&observedDays!==undefined&&
+    Boolean(record.lastObservedAt)){
+    return{
+      kind:'HISTORICAL',scheduledUntil:observedDate,
+      scheduledCount:record.lastObservedScheduledCount,daysRemaining:Math.max(0,observedDays),
+      lastVerifiedAt:record.lastScheduleSync,lastObservedAt:record.lastObservedAt
+    };
+  }
+  return{kind:'UNKNOWN',lastVerifiedAt:record.lastScheduleSync,lastObservedAt:record.lastObservedAt};
 }
 
 export type YoutubeOnlyRunwayPriority={channelName:string;remoteScheduledDays:number;scheduledUntil?:string;known:boolean;historicalScheduledDays?:number};

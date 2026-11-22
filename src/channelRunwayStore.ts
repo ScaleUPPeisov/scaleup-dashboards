@@ -1,5 +1,5 @@
 import type {Channel,YoutubeExistingVideo} from './types';
-import {readAuthoritativeExistingSnapshot,scheduleSyncTruthFromInfo} from './channelSchedule';
+import {readAuthoritativeExistingSnapshot,readExistingCache,scheduleSyncTruthFromInfo} from './channelSchedule';
 import {
   CHANNEL_RUNWAY_STORAGE_KEY,
   deriveRunwayRecord,
@@ -39,17 +39,23 @@ function normalizeStoredRecord(id:string,value:unknown):ChannelRunwayRecord|unde
   const averagePublishIntervalDays=Number.isFinite(raw.averagePublishIntervalDays)?Number(raw.averagePublishIntervalDays):undefined;
   const status=VALID_STATUS.has(String(raw.status))?raw.status as ChannelRunwayRecord['status']:'no-data';
   const priority=VALID_PRIORITY.has(String(raw.priority))?raw.priority as ChannelRunwayRecord['priority']:'unknown';
+  // v3 treated exhausted search.list as exhaustive coverage. That assumption
+  // is invalid, so both v2 and v3 confirmations fail closed until a v4 explicit
+  // schedule coverage attestation is loaded.
+  const unprovenPositive=raw.dataState==='CONFIRMED_SCHEDULE'&&raw.independentScheduleEvidenceVersion!==4;
+  const unprovenEmpty=raw.dataState==='CONFIRMED_EMPTY'&&raw.independentScheduleEvidenceVersion!==4;
   return{
     ...raw,
     channelId,
     channelName,
     scheduledVideoCount,
-    dataState:raw.dataState==='CONFIRMED_EMPTY'&&raw.inventoryEvidenceVersion!==2?'UNKNOWN':VALID_DATA_STATE.has(String(raw.dataState))?raw.dataState:(raw.scheduledUntil?'STALE_CACHE':'UNKNOWN'),
+    dataState:unprovenPositive?'PARTIAL_DATA':unprovenEmpty?'UNKNOWN':
+      VALID_DATA_STATE.has(String(raw.dataState))?raw.dataState:(raw.scheduledUntil?'STALE_CACHE':'UNKNOWN'),
     averagePublishIntervalDays,
-    runwayDays,
+    runwayDays:unprovenPositive||unprovenEmpty?undefined:runwayDays,
     lastLocalCalculation:typeof raw.lastLocalCalculation==='string'&&raw.lastLocalCalculation?raw.lastLocalCalculation:'1970-01-01T00:00:00.000Z',
-    status,
-    priority
+    status:unprovenPositive||unprovenEmpty?'no-data':status,
+    priority:unprovenPositive||unprovenEmpty?'unknown':priority
   } as ChannelRunwayRecord;
 }
 
@@ -121,10 +127,10 @@ const validTime=(raw?:string)=>{const n=Date.parse(raw||'');return Number.isFini
 // A complete uploads playlist is not sufficient to prove a *zero* Scheduled inventory.
 // Positive videos.list + publishAt evidence may be used; negative evidence must be
 // explicitly independently validated (never claimed by the 6.1.18 backend).
-function trustedScheduledSnapshot(videos:YoutubeExistingVideo[],info:unknown,now:Date){
-  if(scheduleSyncTruthFromInfo(info)!=='complete')return false;
-  if((info as {scheduledCoverageVerified?:boolean}|null)?.scheduledCoverageVerified===true)return true;
-  return videos.some(v=>v.privacyStatus==='private'&&Boolean(v.publishAt)&&Date.parse(v.publishAt!)>now.getTime());
+function trustedScheduledSnapshot(_videos:YoutubeExistingVideo[],info:unknown,_now:Date){
+  // A positive videos.list row proves only its own existence, not that
+  // all Scheduled videos were discovered. Require independent owner coverage.
+  return scheduleSyncTruthFromInfo(info)==='complete';
 }
 
 export function recalculateChannelRunway(
@@ -141,6 +147,7 @@ export function recalculateChannelRunway(
     // Prefer the newest *verified* inventory rather than pinning a stale previous
     // value just because it has lastScheduleSync. Never trust legacy zero evidence.
     const native=readAuthoritativeExistingSnapshot(channel.id);
+    const cachedNative=readExistingCache(channel.id);
     const cached=readExistingRunwayCache(channel.id,storage);
     const baseline=confirmedBaseline(cached);
     const candidates:Array<{videos:YoutubeExistingVideo[];updatedAt?:string}>=[];
@@ -154,9 +161,19 @@ export function recalculateChannelRunway(
       validTime(prior.lastRefreshAttemptAt):
       prior?.dataState==='CONFIRMED_EMPTY'&&prior.inventoryEvidenceVersion!==2?0:
       validTime(prior?.lastScheduleSync);
-    if(latest&&validTime(latest.updatedAt)>priorTime){
+    // Migration from a legacy false CONFIRMED_SCHEDULE may have a saved
+    // lastRefreshAttemptAt milliseconds later than the independent native
+    // snapshot. Re-promote only when the snapshot itself has v3 coverage proof,
+    // there is no later failed refresh, and the old record was v2/unproven.
+    // Otherwise, strict timestamp precedence still protects newer PARTIAL.
+    const canMigrateProvenNative=Boolean(latest&&prior&&
+      prior.dataState==='PARTIAL_DATA'&&
+      prior.inventoryEvidenceVersion===2&&
+      prior.independentScheduleEvidenceVersion!==4&&
+      !prior.lastRefreshError);
+    if(latest&&(validTime(latest.updatedAt)>priorTime||canMigrateProvenNative)){
       const verified=deriveRunwayRecord(channel,latest.videos,now,latest.updatedAt,true);
-      next.channels[channel.id]=recalculateRunwayRecord({...verified,inventoryEvidenceVersion:2},now);
+      next.channels[channel.id]=recalculateRunwayRecord({...verified,inventoryEvidenceVersion:2,independentScheduleEvidenceVersion:4},now);
       continue;
     }
     if(prior){
@@ -188,18 +205,61 @@ export function recalculateChannelRunway(
           continue;
         }
       }
+      // Recover known positive Scheduled IDs as HISTORICAL/partial evidence,
+      // even if an older uploads-only cache has no independent coverage proof.
+      // This is never a source of CONFIRMED_SCHEDULE or CONFIRMED_EMPTY.
+      if(retained.dataState==='PARTIAL_DATA'&&!latest&&cachedNative){
+        const baseline=Object.values(cachedNative.baseline||{});
+        const known=baseline.length?baseline:cachedNative.videos||[];
+        const observed=deriveRunwayRecord(channel,known,now,undefined,false);
+        if(observed.scheduledVideoCount>0){
+          const until=[retained.scheduledUntil,observed.scheduledUntil]
+            .filter((x):x is string=>Boolean(x)).sort().at(-1);
+          next.channels[channel.id]=recalculateRunwayRecord({
+            ...retained,
+            scheduledVideoCount:Math.max(retained.scheduledVideoCount,observed.scheduledVideoCount),
+            scheduledUntil:until,
+            lastObservedAt:retained.lastObservedAt||cachedNative.updatedAt,
+            lastObservedScheduledCount:Math.max(retained.lastObservedScheduledCount||0,observed.scheduledVideoCount),
+            lastObservedScheduledUntil:[retained.lastObservedScheduledUntil,observed.scheduledUntil]
+              .filter((x):x is string=>Boolean(x)).sort().at(-1),
+            dataState:'PARTIAL_DATA',
+            runwayDays:undefined,status:'no-data',priority:'unknown'
+          },now);
+          continue;
+        }
+      }
       next.channels[channel.id]=retained;
       continue;
     }
     if(latest){
       const verified=deriveRunwayRecord(channel,latest.videos,now,latest.updatedAt,true);
-      next.channels[channel.id]=recalculateRunwayRecord({...verified,inventoryEvidenceVersion:2},now);
+      next.channels[channel.id]=recalculateRunwayRecord({...verified,inventoryEvidenceVersion:2,independentScheduleEvidenceVersion:4},now);
       continue;
     }
-    next.channels[channel.id]=channelUnknown(channel,now);
+    // First-run/legacy storage has no Runway record but may retain positive
+    // Scheduled video IDs. Recover those as historical PARTIAL evidence only;
+    // an uploads-only cache can never create a new CONFIRMED schedule.
+    const legacyRows=confirmedBaseline(cached);
+    const nativeRows=cachedNative?Object.values(cachedNative.baseline||{}):[];
+    const historicalRows=legacyRows.length?legacyRows:nativeRows.length?nativeRows:(cachedNative?.videos||[]);
+    const historical=deriveRunwayRecord(channel,historicalRows,now,undefined,false);
+    if(historical.scheduledVideoCount>0){
+      next.channels[channel.id]=recalculateRunwayRecord({
+        ...historical,
+        dataState:'PARTIAL_DATA',
+        lastObservedAt:cachedNative?.updatedAt||cached?.updatedAt,
+        lastObservedScheduledCount:historical.scheduledVideoCount,
+        lastObservedScheduledUntil:historical.scheduledUntil,
+        runwayDays:undefined,status:'no-data',priority:'unknown'
+      },now);
+    }else{
+      next.channels[channel.id]=channelUnknown(channel,now);
+    }
   }
-  const validIds=new Set(channels.map(c=>c.id));
-  for(const id of Object.keys(next.channels))if(!validIds.has(id))delete next.channels[id];
+  // Recalculation may be scoped to one channel. Pruning all other records here
+  // erased the historical Scheduled evidence of the other 32 channels.
+  // Explicit channel deletion must be a separate intentional operation.
   if(markDaily)next.lastKrasnoyarskDate=krasnoyarskClock(now).dateKey;
   saveChannelRunwayStore(next,storage);
   return next;
@@ -212,7 +272,7 @@ export function upsertChannelRunwayFromYoutube(
   storage:StorageLike|undefined=browserStorage()
 ){
   const current=loadChannelRunwayStore(storage);
-  const record={...deriveRunwayRecord(channel,videos,now,now.toISOString(),true),inventoryEvidenceVersion:2 as const,lastRefreshAttemptAt:now.toISOString(),lastRefreshError:undefined};
+  const record={...deriveRunwayRecord(channel,videos,now,now.toISOString(),true),inventoryEvidenceVersion:2 as const,independentScheduleEvidenceVersion:4 as const,lastRefreshAttemptAt:now.toISOString(),lastRefreshError:undefined};
   const next:ChannelRunwayStore={
     ...current,
     version:1,

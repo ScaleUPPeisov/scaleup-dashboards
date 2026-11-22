@@ -24,13 +24,13 @@ describe('VYRON 2.1.15 RC2 schedule sync hotfix',()=>{
  beforeEach(()=>{mem.clear();native.files.clear();resetExistingInventoryMemoryForTests()});
  it('treats factual 203/203 snapshot as complete and keeps all rows',async()=>{
   const rows=full203();
-  const info={complete:true,syncComplete:true,scheduleComplete:true,youtubeFound:203,inventoryExpected:203,uniqueVideoIds:203,videosHydrated:203,missingHydrationCount:0,incompleteReasons:[]};
+  const info={complete:true,syncComplete:true,scheduleComplete:true,scheduledCoverageVerified:true,youtubeFound:203,inventoryExpected:203,uniqueVideoIds:203,videosHydrated:203,missingHydrationCount:0,incompleteReasons:[]};
   const result=await replaceExistingCacheFromSync('A',rows,info);expect(result.persisted).toBe(true);
   const cache=readExistingCache('A')!;expect(cache.videos).toHaveLength(203);expect(cache.baseline && Object.keys(cache.baseline)).toHaveLength(203);expect(cache.syncInfo.scheduleComplete).toBe(true);expect(cache.lastCompleteAt).toBeTruthy();
  });
  it('partial 202/203 refresh preserves prior 203 cached rows and exposes exact retry id',async()=>{
   const rows=full203();
-  expect((await replaceExistingCacheFromSync('A',rows,{complete:true,syncComplete:true,scheduleComplete:true,uniqueVideoIds:203,videosHydrated:203})).persisted).toBe(true);
+  expect((await replaceExistingCacheFromSync('A',rows,{complete:true,syncComplete:true,scheduleComplete:true,scheduledCoverageVerified:true,uniqueVideoIds:203,videosHydrated:203})).persisted).toBe(true);
   const partial=rows.slice(0,202);
   const info={complete:false,syncComplete:false,scheduleComplete:false,inventoryExpected:203,uniqueVideoIds:203,videosHydrated:202,missingHydrationCount:1,missingHydrationIds:['v202'],failedHydrationIds:['v202'],incompleteReasons:['MISSING_VIDEO_HYDRATION'],inventoryIncompleteReasons:['MISSING_VIDEO_HYDRATION']};
   expect((await replaceExistingCacheFromSync('A',partial,info)).persisted).toBe(true);

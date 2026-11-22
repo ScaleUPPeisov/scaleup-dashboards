@@ -5,6 +5,7 @@ import {
   compareYoutubeOnlyRunwayPriority,
   deriveRunwayRecord,
   krasnoyarskClock,
+  runwayDisplayEvidence,
   quotaRiskCount,
   recommendedProductionIntervalDays,
   subtractCalendarDays
@@ -43,6 +44,86 @@ describe('Channel Runway core',()=>{
     expect(record.runwayDays).toBe(90);
     expect(record.nextProductionDate).toBe('2026-10-17');
     expect(record.status).toBe('large');
+  });
+
+  it('retains Lumière historical date/count when confirmed cache expires',()=>{
+    const now=new Date('2026-11-21T03:00:00Z');
+    const record={
+      ...deriveRunwayRecord(channel({id:'lumiere',name:'Lumière de Minuit'}),
+        Array.from({length:15},()=>scheduled('2027-01-04T18:00:00+07:00')),
+        new Date('2026-11-20T16:39:16Z'),'2026-11-20T16:39:16Z',true),
+      dataState:'STALE_CACHE' as const,status:'no-data' as const,runwayDays:undefined
+    };
+    const evidence=runwayDisplayEvidence(record,now);
+    expect(evidence.kind).toBe('HISTORICAL');
+    expect(evidence.scheduledCount).toBe(15);
+    expect(evidence.scheduledUntil).toBe('2027-01-04');
+    expect(evidence.daysRemaining).toBe(44);
+    expect(evidence.lastVerifiedAt).toBe('2026-11-20T16:39:16Z');
+  });
+
+  it('keeps Afterglow historical 11 Scheduled after API failure; does not fabricate a live result',()=>{
+    const now=new Date('2026-11-21T03:00:00Z');
+    const record={
+      ...deriveRunwayRecord(channel({id:'afterglow',name:'Afterglow Highway'}),
+        Array.from({length:11},()=>scheduled('2026-12-16T18:00:00+07:00')),
+        new Date('2026-11-18T10:00:00Z'),'2026-11-18T10:00:00Z',true),
+      dataState:'API_FAILED' as const,status:'no-data' as const,runwayDays:undefined,
+      lastRefreshError:'OWNER_INVENTORY_CHANNELS_LIST_HTTP_403_INSUFFICIENT_PERMISSIONS'
+    };
+    const display=runwayDisplayEvidence(record,now);
+    expect(display.kind).toBe('HISTORICAL');
+    expect(display.scheduledCount).toBe(11);
+    expect(display.daysRemaining).toBeGreaterThan(0);
+  });
+
+  it('shows an owner-verified partial minimum without replacing the full historic baseline',()=>{
+    const now=new Date('2026-11-21T03:00:00Z');
+    const rec={
+      ...deriveRunwayRecord(channel(),[scheduled('2026-12-12T18:00:00+07:00')],
+        new Date('2026-11-18T00:00:00Z'),'2026-11-18T00:00:00Z',true),
+      scheduledVideoCount:23,dataState:'PARTIAL_DATA' as const,status:'no-data' as const,runwayDays:undefined,
+      lastObservedAt:'2026-11-21T02:00:00Z',lastObservedScheduledCount:22,
+      lastObservedScheduledUntil:'2026-12-12'
+    };
+    const shown=runwayDisplayEvidence(rec,now);
+    expect(shown.kind).toBe('OBSERVED_PARTIAL');
+    expect(shown.scheduledCount).toBe(22);
+    expect(rec.scheduledVideoCount).toBe(23);
+    expect(rec.lastScheduleSync).toBe('2026-11-18T00:00:00Z');
+  });
+
+  it('never promotes a legacy zero, missing proof, or an expired historical date to a live zero',()=>{
+    const now=new Date('2026-11-21T03:00:00Z');
+    const legacy={...deriveRunwayRecord(channel(),[],now,now.toISOString(),false),
+      dataState:'API_FAILED' as const,runwayDays:undefined,status:'no-data' as const};
+    expect(runwayDisplayEvidence(legacy,now).kind).toBe('UNKNOWN');
+    const expired={...legacy,scheduledVideoCount:5,scheduledUntil:'2026-11-01',
+      lastScheduleSync:'2026-10-18T10:00:00Z',dataState:'STALE_CACHE' as const};
+    const historical=runwayDisplayEvidence(expired,now);
+    expect(historical.kind).toBe('HISTORICAL');
+    expect(historical.daysRemaining).toBe(0);
+    expect(historical.scheduledCount).toBe(5);
+  });
+
+  it('keeps 33 independent channel evidence rows across mixed states and deterministic priority',()=>{
+    const now=new Date('2026-11-21T03:00:00Z');
+    const records=Array.from({length:33},(_,i)=>{
+      const name='channel-'+i;
+      const base=deriveRunwayRecord(channel({id:name,name}),[scheduled('2027-01-04T18:00:00+07:00')],
+        new Date('2026-11-21T02:00:00Z'),'2026-11-21T02:00:00Z',true);
+      if(i===1)return {...base,dataState:'API_FAILED' as const,status:'no-data' as const,runwayDays:undefined};
+      if(i===2)return {...base,dataState:'PARTIAL_DATA' as const,status:'no-data' as const,runwayDays:undefined,
+        lastObservedAt:'2026-11-21T02:00:00Z',lastObservedScheduledCount:1,lastObservedScheduledUntil:'2026-11-25'};
+      if(i===3)return {...base,dataState:'STALE_CACHE' as const,status:'no-data' as const,runwayDays:undefined};
+      return base;
+    });
+    const before=records.map(r=>r.scheduledUntil);
+    const evidence=records.map(r=>runwayDisplayEvidence(r,now));
+    expect(evidence).toHaveLength(33);
+    expect(evidence.map(x=>x.kind).slice(0,4)).toEqual(['CURRENT','HISTORICAL','OBSERVED_PARTIAL','HISTORICAL']);
+    expect(records.map(r=>r.scheduledUntil)).toEqual(before);
+    expect(evidence.every((v,i)=>v.kind!=='UNKNOWN'&&records[i].channelId==='channel-'+i)).toBe(true);
   });
 
   it('sorts by YouTube-only runway, ignores local reserve, and puts unconfirmed channels last',()=>{
@@ -111,6 +192,22 @@ describe('Channel Runway core',()=>{
 });
 
 describe('Channel Runway persistence and 06:00 KRAT scheduler',()=>{
+  it('targeted recalculation of one channel never deletes the other 32 owner snapshots',()=>{
+    const storage=new MemoryStorage(),now=new Date('2026-11-21T03:00:00Z');
+    const channels=Array.from({length:33},(_,i)=>channel({id:'channel-'+i,name:'Channel '+i}));
+    for(const c of channels)upsertChannelRunwayFromYoutube(c,[scheduled('2027-01-04T18:00:00+07:00')],now,storage as any);
+    const before=loadChannelRunwayStore(storage as any);
+    expect(Object.keys(before.channels)).toHaveLength(33);
+    const one=recalculateChannelRunway([channels[0]],new Date('2026-11-21T04:00:00Z'),false,storage as any);
+    expect(Object.keys(one.channels)).toHaveLength(33);
+    for(const c of channels.slice(1)){
+      expect(one.channels[c.id]).toEqual(before.channels[c.id]);
+      expect(one.channels[c.id].scheduledUntil).toBe('2027-01-04');
+      expect(one.channels[c.id].scheduledVideoCount).toBe(1);
+    }
+    expect(Object.keys(loadChannelRunwayStore(storage as any).channels)).toHaveLength(33);
+  });
+
   it('persists scheduledUntil across restart-like reload',()=>{
     const storage=new MemoryStorage();
     const now=new Date('2026-09-02T08:00:00Z');
@@ -142,7 +239,9 @@ describe('Channel Runway persistence and 06:00 KRAT scheduler',()=>{
     }));
     const result=recalculateChannelRunway([channel()],new Date('2026-09-02T08:00:00Z'),false,storage as any);
     expect(result.channels.neon.scheduledUntil).toBe('2026-10-01');
-    expect(result.channels.neon.runwayDays).toBe(29);
+    expect(result.channels.neon.scheduledVideoCount).toBe(1);
+    expect(result.channels.neon.dataState).toBe('PARTIAL_DATA');
+    expect(result.channels.neon.runwayDays).toBeUndefined(); // Legacy positive is historical until owner Search proves coverage
   });
 
   it('explicit Channel Runway YouTube sync stays authoritative over opaque Existing Videos cache',()=>{
