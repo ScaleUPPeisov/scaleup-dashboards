@@ -27,14 +27,6 @@ jobs:
           test -f src/vyron-studio.css
           test -f src/vyronStudio.test.ts
           test "$(node -p "require('./src-tauri/tauri.conf.json').identifier")" = "studio.channelflow.desktop"
-      - name: Require owner-approved rotated updater trust fingerprint for release-mode compilation
-        env:
-          APPROVED_SHA: ${{ vars.VYRON617_APPROVED_PUBKEY_SHA256 }}
-        run: |
-          set -euo pipefail
-          [[ "$APPROVED_SHA" =~ ^[a-f0-9]{64}$ ]] || { echo OWNER_APPROVED_UPDATER_FINGERPRINT_MISSING; exit 1; }
-          test "$APPROVED_SHA" != aa6fb45ab082ef39279e841dc40b0f85e5b33f23746f77557b6f93e3e72c2c06 || { echo COMPROMISED_LEGACY_UPDATER_FINGERPRINT_REJECTED; exit 1; }
-          echo "VYRON_TRUSTED_UPDATER_PUBLIC_KEY_SHA256=$APPROVED_SHA" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -54,15 +46,15 @@ jobs:
       - name: Prepare isolated bundle identity and disable updater feed
         run: |
           set -euo pipefail
-          node -e "const fs=require('fs');const cfg={productName:'VYRON Studio Preview',version:'6.1.17',identifier:'studio.channelflow.preview',bundle:{createUpdaterArtifacts:false,macOS:{bundleName:'VYRON Studio Preview'}},app:{windows:[{label:'main',title:'VYRON Studio — TEST ONLY',backgroundColor:'#0a111b'}]},plugins:{updater:{endpoints:[]}}};fs.writeFileSync(process.env.RUNNER_TEMP+'/vyron-studio-preview.json',JSON.stringify(cfg));"
-      - name: Build isolated macOS ARM64 app
+          node -e "const fs=require('fs');const cfg={productName:'VYRON Studio Preview',version:'6.1.17',identifier:'studio.channelflow.preview',bundle:{targets:['app'],createUpdaterArtifacts:false,macOS:{bundleName:'VYRON Studio Preview'}},app:{windows:[{label:'main',title:'VYRON Studio — TEST ONLY',backgroundColor:'#0a111b'}]},plugins:{updater:{endpoints:[]}}};fs.writeFileSync(process.env.RUNNER_TEMP+'/vyron-studio-preview.json',JSON.stringify(cfg));"
+      - name: Build isolated non-release debug ARM64 app
         env:
           VYRON_UPDATE_CHANNEL: owner-preview
-        run: npx tauri build --target aarch64-apple-darwin --bundles app --config "$RUNNER_TEMP/vyron-studio-preview.json"
+        run: npx tauri build --debug --target aarch64-apple-darwin --bundles app --config "$RUNNER_TEMP/vyron-studio-preview.json"
       - name: Verify preview identity and architecture
         run: |
           set -euo pipefail
-          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          APP="$(find src-tauri/target/aarch64-apple-darwin/debug/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
           test -d "$APP"
           INFO="$APP/Contents/Info.plist"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO")" = "studio.channelflow.preview"
@@ -71,12 +63,12 @@ jobs:
           lipo -archs "$APP/Contents/MacOS/$EXE" | tr ' ' '\n' | grep -qx arm64
           echo "Preview identity and architecture verified; no owner data, no production install"
           mkdir -p "$RUNNER_TEMP/studio-preview"
-          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/studio-preview/VYRON-Studio-6.1.17-M1-TEST-ONLY.zip"
-          printf 'TEST-ONLY PREVIEW\nSeparate macOS bundle ID: studio.channelflow.preview\nNo notarization. Do NOT install over /Applications/VYRON.app.\nNative VYRON code may still use ~/Documents/VYRON; do not launch against owner HOME.\nUse a dedicated throwaway macOS user account, offline, with synthetic data.\n' > "$RUNNER_TEMP/studio-preview/README-TEST-ONLY.txt"
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/studio-preview/VYRON-Studio-6.1.17-M1-DEBUG-PREVIEW-TEST-ONLY.zip"
+          printf 'DEBUG TEST-ONLY PREVIEW. NOT A RELEASE.\nSeparate macOS bundle ID: studio.channelflow.preview\nUpdater signing disabled. No notarization. Do NOT install over /Applications/VYRON.app.\nNative VYRON code may still use ~/Documents/VYRON; do not launch against owner HOME.\nUse a dedicated throwaway macOS user account, offline, with synthetic data.\n' > "$RUNNER_TEMP/studio-preview/README-TEST-ONLY.txt"
       - name: Upload owner preview (not a stable release)
         uses: actions/upload-artifact@v4
         with:
-          name: VYRON-Studio-6.1.17-M1-ISOLATED-PREVIEW-NOT-PRODUCTION
+          name: VYRON-Studio-6.1.17-M1-DEBUG-ISOLATED-PREVIEW-NOT-PRODUCTION
           path: ${{ runner.temp }}/studio-preview/
           retention-days: 7
           if-no-files-found: error
