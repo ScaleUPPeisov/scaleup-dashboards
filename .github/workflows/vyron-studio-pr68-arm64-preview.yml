@@ -1,0 +1,113 @@
+name: VYRON Studio isolated ARM64 UI preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - feature/vyron-macos-ultimate
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-preview:
+    if: ${{ github.event.pull_request.number == 68 && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'design/vyron-studio-ui-isolated-20261123' }}
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - name: Pin design branch commit, not production base merge
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Require isolation and no production installation
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          test -f src/vyron-studio.css
+          test -f src/vyronStudio.test.ts
+          test "$(node -p "require('./src-tauri/tauri.conf.json').identifier")" = "studio.channelflow.desktop"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+      - name: Install exact locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Studio UI contract tests
+        run: npm test -- src/vyronStudio.test.ts
+      - name: Full TypeScript and web bundle build
+        run: npm run build
+      - name: Prepare isolated bundle identity and disable updater feed
+        run: |
+          set -euo pipefail
+          node -e "const fs=require('fs');const cfg={productName:'VYRON Studio Preview',version:'6.1.17',identifier:'studio.channelflow.preview',bundle:{targets:['app'],createUpdaterArtifacts:false,macOS:{bundleName:'VYRON Studio Preview'}},app:{windows:[{label:'main',title:'VYRON Studio — TEST ONLY',backgroundColor:'#0a111b'}]},plugins:{updater:{endpoints:[]}}};fs.writeFileSync(process.env.RUNNER_TEMP+'/vyron-studio-preview.json',JSON.stringify(cfg));"
+      - name: Build isolated non-release debug ARM64 app
+        env:
+          VYRON_UPDATE_CHANNEL: owner-preview
+        run: npx tauri build --debug --target aarch64-apple-darwin --bundles app --config "$RUNNER_TEMP/vyron-studio-preview.json"
+      - name: Verify preview identity and architecture
+        run: |
+          set -euo pipefail
+          APP="$(find src-tauri/target/aarch64-apple-darwin/debug/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          test -d "$APP"
+          INFO="$APP/Contents/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO")" = "studio.channelflow.preview"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO")" = "6.1.17"
+          EXE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$INFO")"
+          lipo -archs "$APP/Contents/MacOS/$EXE" | tr ' ' '\n' | grep -qx arm64
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=4 "$APP" 2>&1 | grep -Fq 'Signature=adhoc'
+          echo "Preview identity, ARM64 and local ad-hoc signature verified; no production install"
+          mkdir -p "$RUNNER_TEMP/studio-preview"
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/studio-preview/VYRON-Studio-6.1.17-M1-DEBUG-PREVIEW-TEST-ONLY.zip"
+          printf 'DEBUG TEST-ONLY PREVIEW. NOT A RELEASE.\nSeparate macOS bundle ID: studio.channelflow.preview\nUpdater signing disabled. Local ad-hoc app signature only; NOT notarized. Do NOT install over /Applications/VYRON.app.\nNative VYRON code may still use ~/Documents/VYRON; do not launch against owner HOME.\nUse a dedicated throwaway macOS user account, offline, with synthetic data.\n' > "$RUNNER_TEMP/studio-preview/README-TEST-ONLY.txt"
+      - name: Synthetic Mac launch smoke — disposable runner only
+        id: smoke
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          APP="$(find src-tauri/target/aarch64-apple-darwin/debug/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          test -d "$APP"
+          INFO="$APP/Contents/Info.plist"
+          EXE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$INFO")"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO")" = studio.channelflow.preview
+          TEST_HOME="$RUNNER_TEMP/studio-disposable-home"
+          mkdir -p "$TEST_HOME/Documents/VYRON" "$TEST_HOME/Library/Application Support/studio.channelflow.preview"
+          echo 'keep-this-file' > "$TEST_HOME/Documents/VYRON/studio-runner-sentinel.txt"
+          HOME="$TEST_HOME" XDG_DATA_HOME="$TEST_HOME/Library/Application Support" "$APP/Contents/MacOS/$EXE" > "$RUNNER_TEMP/studio-preview-launch.log" 2>&1 &
+          PID=$!
+          sleep 7
+          if kill -0 "$PID" 2>/dev/null; then
+            echo 'APP_PROCESS_STILL_ALIVE_AFTER_7_SECONDS' > "$RUNNER_TEMP/studio-preview/SMOKE-RESULT.txt"
+            kill "$PID" 2>/dev/null || true
+            wait "$PID" 2>/dev/null || true
+          else
+            wait "$PID" || true
+            echo 'APP_PROCESS_EXITED_EARLY; GUI_RUNNER_ENVIRONMENT_OR_APP_FAILURE_UNRESOLVED' > "$RUNNER_TEMP/studio-preview/SMOKE-RESULT.txt"
+            exit 1
+          fi
+          test "$(cat "$TEST_HOME/Documents/VYRON/studio-runner-sentinel.txt")" = keep-this-file
+          echo 'DISPOSABLE_HOME_SENTINEL_PRESERVED' >> "$RUNNER_TEMP/studio-preview/SMOKE-RESULT.txt"
+          echo 'FULL_33_CHANNEL_YOUTUBE_OAUTH_UI_VERIFICATION_NOT_PERFORMED' >> "$RUNNER_TEMP/studio-preview/SMOKE-RESULT.txt"
+      - name: Preserve truthful smoke status for preview
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/studio-preview"
+          if [ ! -s "$RUNNER_TEMP/studio-preview/SMOKE-RESULT.txt" ]; then
+            echo 'SMOKE_NOT_RUN_OR_UNAVAILABLE; DO_NOT_ASSUME_LIVE_UI_VERIFIED' > "$RUNNER_TEMP/studio-preview/SMOKE-RESULT.txt"
+          fi
+          echo "SMOKE_WORKFLOW_OUTCOME=${{ steps.smoke.outcome }}" >> "$RUNNER_TEMP/studio-preview/SMOKE-RESULT.txt"
+      - name: Upload owner preview (not a stable release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-Studio-6.1.17-M1-DEBUG-ISOLATED-PREVIEW-NOT-PRODUCTION
+          path: ${{ runner.temp }}/studio-preview/
+          retention-days: 7
+          if-no-files-found: error

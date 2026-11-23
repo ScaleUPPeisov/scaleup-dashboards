@@ -1,0 +1,654 @@
+/*
+ * VYRON STUDIO / WORKSPACES — premium macOS information architecture.
+ * Design-only layer: no hidden tabs/actions, no altered functional statuses,
+ * no new requests, no new stateful data model and no native file mutations.
+ * Scope: .vyronStudio. Imported after vyron-studio.css for instant rollback.
+ */
+.vyronStudio {
+  --studio-bg:#0a111b;
+  --studio-surface:#121f2e;
+  --studio-raised:#162737;
+  --studio-hover:#1c3241;
+  --studio-border:#283b4c;
+  --studio-border-soft:#243647;
+  --studio-text:#eff7fa;
+  --studio-subtext:#afc1ce;
+  --studio-faint:#8ca4b4;
+  --studio-accent:#61ded1;
+  --studio-orange:#ffc47c;
+  --studio-red:#ff879b;
+  --studio-purple:#baadff;
+  --studio-radius:14px;
+  --studio-focus:0 0 0 2px rgba(97,222,209,.3);
+  font-synthesis:none;
+}
+
+/* Shared typography, metrics and card rhythm. Preserve all original content. */
+.vyronStudio .pageHeader,
+.vyronStudio .youtubeCenterHead {
+  margin-bottom:19px;
+}
+.vyronStudio .pageHeader>div:first-child,
+.vyronStudio .youtubeCenterHead>div:first-child {min-width:0;}
+.vyronStudio .pageHeader>div:first-child>small,
+.vyronStudio .youtubeCenterHead>div:first-child>small {
+  font-size:10px;
+  font-weight:700;
+  color:#7fcac3;
+  letter-spacing:.14em;
+  line-height:1.5;
+}
+.vyronStudio .pageHeader h1,
+.vyronStudio .youtubeCenterHead h1 {
+  margin:5px 0 7px;
+  line-height:1.14;
+  font-size:25px;
+  font-weight:720;
+}
+.vyronStudio .pageHeader p,
+.vyronStudio .youtubeCenterHead p {max-width:72ch;font-size:12.5px;color:var(--studio-subtext);}
+.vyronStudio .pageWrap :is(.opsCard,.panel,.settingsCard,.competitorCard,.channelFleetCard,.pmCard,.inventoryHero,.a360-kpi) {
+  box-sizing:border-box;
+  min-width:0;
+  border-radius:var(--studio-radius);
+}
+.vyronStudio .pageWrap :is(.opsCard,.competitorCard,.channelFleetCard,.pmCard) {
+  background:var(--studio-surface);
+  border:1px solid var(--studio-border);
+  box-shadow:0 8px 22px rgba(0,0,0,.08);
+}
+.vyronStudio .pageWrap :is(.opsCard,.panel,.settingsCard,.channelFleetCard,.competitorCard,.pmCard,.inventoryHero) :is(p,small,span,td,dd) {
+  overflow-wrap:anywhere;
+}
+.vyronStudio .pageWrap :is(.panel,.opsCard,.settingsCard,.a360-panel,.pmCard) > :is(h2,h3) {
+  color:var(--studio-text);
+  font-weight:690;
+  letter-spacing:-.012em;
+}
+.vyronStudio .pageWrap :is(.panelHead,.opsCardHead,.pmCardHead) {
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  flex-wrap:wrap;
+  gap:10px;
+  min-width:0;
+  margin-bottom:12px;
+}
+.vyronStudio .pageWrap :is(.panelHead,.opsCardHead,.pmCardHead)>div {min-width:0;}
+.vyronStudio .pageWrap :is(.panelHead,.opsCardHead,.pmCardHead) :is(h2,h3) {
+  font-size:14px;
+  line-height:1.4;
+  color:var(--studio-text);
+}
+.vyronStudio .pageWrap :is(.panelHead,.opsCardHead,.pmCardHead) p {
+  font-size:11px;
+  line-height:1.55;
+  color:var(--studio-subtext);
+}
+.vyronStudio .pageWrap :is(.panelHead,.opsCardHead,.pmCardHead) small {
+  color:var(--studio-faint);
+  font-size:10px;
+  line-height:1.4;
+}
+.vyronStudio .pageWrap :is(.empty,.opsEmpty,.compactEmpty,.a360-unavailable,.analyticsEmpty,.emptyManager) {
+  border:1px dashed #385062;
+  color:var(--studio-subtext);
+  background:#101d2b;
+  border-radius:12px;
+  padding:19px;
+  line-height:1.65;
+  font-size:12px;
+}
+.vyronStudio .pageWrap :is(.cacheNotice,.publisherNotice,.quotaPreflight,.publishCheck,.successBox,.errorBox) {
+  line-height:1.55;
+  border-radius:11px;
+}
+.vyronStudio .pageWrap :is(.cacheNotice,.publisherNotice,.successBox,.errorBox) :is(b,small,span,p) {
+  font-size:11px;
+  line-height:1.55;
+}
+.vyronStudio :is(.headerActions,.fleetActions,.publishActions,.jobActions,.pmActions,.accountActions) {
+  gap:7px;
+}
+.vyronStudio .pageWrap :is(.headerActions,.fleetActions,.publishActions,.jobActions,.pmActions,.accountActions) button {
+  min-height:33px;
+  padding:7px 11px;
+  border-radius:9px;
+  font-size:11px;
+  line-height:1.28;
+}
+.vyronStudio .pageWrap :is(input,select,textarea) {
+  accent-color:var(--studio-accent);
+}
+.vyronStudio .pageWrap :is(input,select) {min-height:34px;font-size:12px;}
+.vyronStudio .pageWrap textarea {font-size:12px;line-height:1.55;}
+.vyronStudio .pageWrap label {font-size:11px;line-height:1.6;color:#bed0db;}
+.vyronStudio .pageWrap :is(.settingsTabs,.youtubeTabs,.filterChips,.periodTabs,.a360-tabs) {
+  gap:5px;
+}
+.vyronStudio .pageWrap :is(.settingsTabs,.youtubeTabs,.filterChips,.periodTabs,.a360-tabs) button {
+  border-radius:8px!important;
+  min-height:33px;
+  padding:6px 11px;
+  line-height:1.3;
+  font-size:11px!important;
+}
+.vyronStudio .pageWrap :is(.settingsTabs,.youtubeTabs,.filterChips,.periodTabs,.a360-tabs) button.active {
+  color:#dffaf4!important;
+  background:#23423f!important;
+  border-color:#3d6764!important;
+}
+.vyronStudio .pageWrap :is(.settingsTabs,.youtubeTabs,.filterChips,.periodTabs,.a360-tabs) button:not(.active):hover {
+  background:#1c3040!important;
+  color:#e6f5f6!important;
+}
+.vyronStudio .pageWrap :is(.settingsInfoGrid,.quotaPreflightGrid,.channelMetricsGrid,.analyticsKpis) {
+  gap:9px;
+}
+.vyronStudio .pageWrap :is(.settingsInfoGrid,.quotaPreflightGrid,.channelMetricsGrid,.analyticsKpis)>* {
+  min-width:0;
+}
+.vyronStudio .pageWrap :is(.settingsInfoGrid,.quotaPreflightGrid,.channelMetricsGrid,.analyticsKpis) small {
+  font-size:10px;
+  color:var(--studio-faint);
+}
+.vyronStudio .pageWrap :is(.settingsInfoGrid,.quotaPreflightGrid,.channelMetricsGrid,.analyticsKpis) b {
+  color:#ecf7fa;
+  font-size:12px;
+  font-weight:680;
+}
+.vyronStudio .pageWrap :is(.metric,.opsStats,.a360-kpi) strong,
+.vyronStudio .pageWrap :is(.metric,.opsStats,.a360-kpi) b {
+  font-variant-numeric:tabular-nums;
+}
+
+/* DASHBOARD — information density, no glowing boxes or fake status badges. */
+.vyronStudio .opsDashboardGrid,
+.vyronStudio .opsKpiGrid,
+.vyronStudio .networkStatsGrid {
+  gap:11px!important;
+  min-width:0;
+}
+.vyronStudio .opsKpiGrid {
+  grid-template-columns:repeat(auto-fit,minmax(155px,1fr))!important;
+  margin-bottom:15px;
+}
+.vyronStudio .opsDashboardGrid {
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  align-items:start;
+}
+.vyronStudio .opsCard {
+  padding:17px;
+  background:var(--studio-surface)!important;
+  border-color:var(--studio-border)!important;
+  box-shadow:none!important;
+}
+.vyronStudio .opsCardHead :is(h2,h3) {font-size:14px;line-height:1.4;}
+.vyronStudio .opsCardHead p {font-size:11px;}
+.vyronStudio .opsStats {
+  padding:10px 12px;
+  background:#172838;
+  border:1px solid #2a4051;
+  border-radius:10px;
+}
+.vyronStudio .opsStats :is(b,strong) {color:#eef8fa;font-size:18px;letter-spacing:-.03em;}
+.vyronStudio .opsStats small {color:var(--studio-faint);font-size:10px;}
+.vyronStudio .opsSourceNote {color:var(--studio-faint);font-size:10px;line-height:1.5;}
+.vyronStudio .networkStatsGrid {
+  grid-template-columns:repeat(auto-fit,minmax(130px,1fr));
+}
+.vyronStudio .opsAttentionRows>*,.vyronStudio .channelProgressRows>* {
+  border-radius:9px;
+  border-color:#2b4151;
+  background:#142435;
+}
+.vyronStudio .opsAttentionRows :is(b,small,p),
+.vyronStudio .channelProgressRows :is(b,small,p) {line-height:1.5;}
+
+/* CHANNELS — operational cards, compact filters, status truth untouched. */
+.vyronStudio .channelsFleetPage,
+.vyronStudio .liveInventoryPage {min-width:0;}
+.vyronStudio .fleetToolbar {
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+  margin:0 0 11px;
+  border:1px solid var(--studio-border);
+  border-radius:12px;
+  background:#121f2d;
+  padding:11px;
+}
+.vyronStudio .fleetToolbar input {flex:1 1 220px;min-width:150px;}
+.vyronStudio .fleetToolbar select {flex:0 1 160px;max-width:100%;}
+.vyronStudio .channelsFleetPage .filterChips {margin:0 0 14px;}
+.vyronStudio .channelsFleetPage .filterChips button {
+  font-size:11px!important;
+  padding:6px 11px;
+}
+.vyronStudio .channelFleetGrid {
+  grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr))!important;
+  align-items:stretch;
+  gap:13px!important;
+}
+.vyronStudio .channelFleetCard {
+  padding:15px;
+  border:1px solid #2a3d4e!important;
+  background:#12202f!important;
+  box-shadow:none!important;
+  transition:border-color .15s ease,background .15s ease;
+}
+.vyronStudio .channelFleetCard:hover {
+  border-color:#3f6571!important;
+  background:#152736!important;
+}
+.vyronStudio .fleetIdentity {gap:11px;min-width:0;}
+.vyronStudio .fleetIdentity :is(h3,b,strong) {font-size:13px;color:var(--studio-text);}
+.vyronStudio .fleetIdentity small {font-size:10px;color:var(--studio-faint);}
+.vyronStudio .fleetMetrics {
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr))!important;
+  gap:7px!important;
+  margin:11px 0;
+}
+.vyronStudio .fleetMetrics>* {
+  padding:9px 8px;
+  border-radius:9px;
+  background:#192b3b;
+  border:1px solid #293f50;
+}
+.vyronStudio .fleetMetrics :is(b,strong) {font-size:15px;font-variant-numeric:tabular-nums;color:#eaf7fa;}
+.vyronStudio .fleetMetrics small {font-size:10px;color:var(--studio-subtext);}
+.vyronStudio .fleetFolderState {font-size:10px;line-height:1.5;}
+.vyronStudio .channelFleetCard .fleetActions {
+  width:100%;
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  margin-top:12px;
+}
+.vyronStudio .channelFleetCard .fleetActions button {width:100%;}
+
+/* PRODUCTION — toolbars, pipeline, file rows & job actions. */
+.vyronStudio .productionTabs,
+.vyronStudio .productionNavThree {
+  padding:4px 5px;
+  border:1px solid #2a3e50;
+  border-radius:12px;
+  width:fit-content!important;
+  max-width:100%;
+  background:#111f2d;
+  margin-bottom:15px;
+}
+.vyronStudio .productionPipeline,
+.vyronStudio .productionPipelinePanel {
+  gap:10px;
+  margin:14px 0;
+}
+.vyronStudio .pmStorageUnified {
+  display:grid;
+  gap:12px;
+  padding:14px;
+  border:1px solid #314858!important;
+  background:#142536!important;
+  border-radius:12px!important;
+}
+.vyronStudio .pmStorageUnifiedMain {min-width:0;gap:10px;}
+.vyronStudio .pmActions {gap:7px;align-items:center;}
+.vyronStudio .filterBar,
+.vyronStudio .materialToolbar,
+.vyronStudio .pmBulkBar {
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:9px;
+  padding:11px 12px;
+  margin:10px 0;
+  border-radius:11px;
+  border:1px solid #293e50;
+  background:#142333;
+}
+.vyronStudio .filterBar select {flex:0 1 180px;}
+.vyronStudio .jobs {
+  display:grid;
+  gap:9px!important;
+}
+.vyronStudio .productionJob {
+  min-height:0;
+  background:#142434!important;
+  border:1px solid #2b4153!important;
+  border-radius:11px!important;
+  padding:12px 13px!important;
+}
+.vyronStudio .productionJob .jobMain {min-width:0;}
+.vyronStudio .productionJob :is(b,strong) {font-size:12px;color:var(--studio-text);}
+.vyronStudio .productionJob :is(small,p) {font-size:10.5px;color:var(--studio-subtext);line-height:1.55;}
+.vyronStudio .productionJob .jobActions {margin-top:9px;}
+.vyronStudio .pmGrid,
+.vyronStudio .pmProjectRows,
+.vyronStudio .pmHistory,
+.vyronStudio .pmBatchRows {
+  gap:11px;
+}
+.vyronStudio .pmCard {padding:16px;background:#132233;border-color:#2b4153;}
+.vyronStudio .pmCardHead {margin-bottom:10px;}
+.vyronStudio .pmControls :is(button,input,select) {min-height:34px;}
+.vyronStudio .pmHint,
+.vyronStudio .pmPath {color:var(--studio-subtext);font-size:10.5px;line-height:1.55;}
+
+/* INVENTORY — high-contrast stock figures and readable rows. */
+.vyronStudio .inventoryHeroGrid {gap:9px!important;margin:12px 0 15px;}
+.vyronStudio .inventoryHero {
+  background:#142537!important;
+  border:1px solid #2b4052!important;
+  padding:14px;
+  min-width:0;
+  box-shadow:none!important;
+}
+.vyronStudio .inventoryHero.primaryMetric {background:#19373d!important;border-color:#30635e!important;}
+.vyronStudio .inventoryHero :is(strong,b) {font-size:21px;letter-spacing:-.028em;color:#eff8fb;}
+.vyronStudio .inventoryHero small {font-size:10px;letter-spacing:.03em;color:#aac2d0;}
+.vyronStudio .inventoryLiveLine {
+  font-size:11px;
+  padding:8px 10px;
+  border-radius:9px;
+  background:#132735;
+  color:#b4cbd5;
+  margin-bottom:11px;
+}
+.vyronStudio .liveInventoryTablePanel {overflow:hidden;}
+.vyronStudio .liveInventoryTable {
+  width:100%;
+  overflow-x:auto;
+  scrollbar-width:thin;
+  scrollbar-color:#335166 transparent;
+}
+.vyronStudio .liveInventoryRow {
+  align-items:center;
+  gap:9px;
+  padding:12px 10px;
+  border-bottom:1px solid #2a3c4d;
+  background:transparent;
+}
+.vyronStudio .liveInventoryRow:not(.head):hover {background:#1a2b3a;}
+.vyronStudio .liveInventoryRow.head {
+  font-size:10px;
+  font-weight:750;
+  color:#8eaabb;
+  letter-spacing:.05em;
+  background:#172737;
+}
+.vyronStudio .liveInventoryRow :is(b,strong,span) {font-size:11px;line-height:1.4;}
+.vyronStudio .liveInventoryRow small {font-size:10px;color:#9fb4c4;}
+.vyronStudio .inventoryBottomGrid {gap:12px;margin-top:14px;}
+.vyronStudio .inventoryRules,.vyronStudio .inventoryAudit {min-width:0;}
+
+/* ANALYTICS — charts retain their meaning; visual framing only. */
+.vyronStudio :is(.a360,.analyticsPageV31) {min-width:0;}
+.vyronStudio .a360-head,
+.vyronStudio .analyticsToolbar {
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:12px;
+  margin:0 0 14px;
+}
+.vyronStudio .a360-toolbar,
+.vyronStudio .a360-periods,
+.vyronStudio .analyticsPeriods {
+  display:flex;
+  flex-wrap:wrap;
+  gap:7px;
+  align-items:center;
+}
+.vyronStudio .a360-grid,
+.vyronStudio .analyticsCharts,
+.vyronStudio .analyticsBreakdownGrid,
+.vyronStudio .analyticsInsights {
+  gap:12px!important;
+}
+.vyronStudio .a360-kpi {
+  padding:13px;
+  border:1px solid #2a4152!important;
+  background:#152738!important;
+  box-shadow:none!important;
+}
+.vyronStudio .a360-kpi strong {color:#edf7fa;letter-spacing:-.03em;font-size:20px;}
+.vyronStudio .a360-kpi small {color:#a7bdca;font-size:10px;}
+.vyronStudio .a360-panel,
+.vyronStudio .a360-subpanel {
+  border-radius:13px!important;
+  border-color:#2a3f51!important;
+  background:#122131!important;
+  padding:14px;
+  box-shadow:none!important;
+}
+.vyronStudio .a360-panel :is(h3,h4,b) {color:#eaf4f8;}
+.vyronStudio .a360-panel small {color:#9fb8c8;font-size:10px;}
+.vyronStudio .a360-chart {
+  min-width:0;
+  border-radius:11px;
+  border:1px solid #2d4355;
+  background:#122337;
+}
+.vyronStudio .a360-table-wrap,
+.vyronStudio .topVideoTable,
+.vyronStudio .competitorCompareTable {
+  width:100%;
+  overflow-x:auto;
+  scrollbar-width:thin;
+  scrollbar-color:#375768 transparent;
+}
+.vyronStudio :is(.a360-table-wrap,.topVideoTable,.competitorCompareTable) :is(th,td) {
+  font-size:11px;
+  line-height:1.5;
+  padding:10px 12px;
+}
+.vyronStudio :is(.a360-table-wrap,.topVideoTable,.competitorCompareTable) th {
+  color:#9fb8c8;font-weight:710;background:#16283b;
+}
+.vyronStudio .analyticsBreakdown,
+.vyronStudio .analyticsChart,
+.vyronStudio .analyticsTopVideos {border-radius:12px;}
+.vyronStudio .a360-note,.vyronStudio .a360-footnote {color:var(--studio-subtext);font-size:10.5px;line-height:1.55;}
+
+/* COMPETITORS — comparative analysis instead of flashing cards. */
+.vyronStudio .competitorAdd,
+.vyronStudio .competitorCompare {margin-bottom:14px;}
+.vyronStudio .competitorGrid,
+.vyronStudio .competitorMetrics,
+.vyronStudio .competitorVideos {gap:11px!important;}
+.vyronStudio .competitorGrid {
+  grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr))!important;
+}
+.vyronStudio .competitorCard {
+  border-color:#2e4354!important;
+  background:#142535!important;
+  box-shadow:none!important;
+  padding:16px;
+}
+.vyronStudio .competitorCard :is(h3,b,strong) {font-size:13px;color:#eaf6fa;}
+.vyronStudio .competitorCard :is(p,small,span) {font-size:10.5px;line-height:1.5;color:#a9becb;}
+.vyronStudio .competitorCard:hover {border-color:#3b6b72!important;}
+.vyronStudio .compareRow {
+  padding:10px 12px;
+  border-bottom:1px solid #2a4051;
+  background:transparent;
+}
+.vyronStudio .compareRow.own {background:#163337;}
+.vyronStudio .termChips {display:flex;flex-wrap:wrap;gap:5px;}
+
+/* SETTINGS — one consistent hierarchy, no functionality hidden. */
+.vyronStudio .settingsMasterHead {margin-bottom:16px;}
+.vyronStudio .masterSettingsTabs {
+  width:100%!important;
+  justify-content:flex-start;
+  padding:4px;
+  border:1px solid #2b3f50;
+  background:#132334;
+  border-radius:11px;
+}
+.vyronStudio .settingsStack {
+  display:grid;
+  gap:13px!important;
+  width:100%;
+}
+.vyronStudio .settingsCard {
+  padding:17px!important;
+  background:#132335!important;
+  border:1px solid #2b4153!important;
+}
+.vyronStudio .settingsCard .panelHead {margin-bottom:12px;}
+.vyronStudio .settingsCard .panelHead h3 {font-size:14px;}
+.vyronStudio .settingsCard :is(label,small,p) {color:var(--studio-subtext);}
+.vyronStudio .settingsCard .pathLine {
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:8px;
+  margin:8px 0;
+}
+.vyronStudio .settingsCard .pathLine :is(input,select) {flex:1 1 220px;}
+.vyronStudio .settingsCard .toggleRows,
+.vyronStudio .settingsCard .settingsInfoGrid {gap:10px;}
+.vyronStudio .settingsCard .toggleRow {
+  background:#172a3a;
+  border:1px solid #2b4255;
+  border-radius:10px;
+  padding:9px 11px;
+}
+.vyronStudio .advancedPanel,
+.vyronStudio details {
+  border-radius:10px;
+}
+.vyronStudio .advancedPanel>summary,
+.vyronStudio details>summary {
+  font-size:11px;
+  line-height:1.5;
+  color:#bbd2dc;
+}
+.vyronStudio .settingsCard pre,
+.vyronStudio .settingsCard .logs,
+.vyronStudio .pageWrap pre {
+  max-width:100%;
+  overflow:auto;
+  border-radius:10px;
+  border:1px solid #2c4051;
+  background:#0c1926;
+  color:#b7d0dc;
+  font-size:10.5px;
+  line-height:1.6;
+}
+
+/* YOUTUBE subpages & history: common controls and transparent status sources. */
+.vyronStudio .youtubeChannelBar,
+.vyronStudio .youtubeChannelContext,
+.vyronStudio .publisherSelectedCount {min-width:0;}
+.vyronStudio .youtubeMasterTabs {
+  background:#122334;
+  border:1px solid #2b4151;
+  margin-bottom:16px;
+  width:fit-content!important;
+  padding:5px;
+}
+.vyronStudio .publisherPermanentControlDock {background:#132637;}
+.vyronStudio .publisherPermanentControlGrid {gap:9px;}
+.vyronStudio .scheduleCalendarPanel,
+.vyronStudio .scheduleBulkPanel {margin:11px 0 15px;}
+.vyronStudio .scheduleCalendarGroups,
+.vyronStudio .scheduleCalendarRows {gap:8px;}
+.vyronStudio .scheduleCalendarRows>* {
+  min-width:0;
+  border:1px solid #2c4354;
+  border-radius:10px;
+  background:#152736;
+  padding:10px;
+}
+.vyronStudio .activityHistoryPage,
+.vyronStudio .syncAudit,
+.vyronStudio .accountList {min-width:0;}
+.vyronStudio .accountList {display:grid;gap:10px;}
+.vyronStudio .accountRow {
+  min-width:0;
+  border:1px solid #2e4353!important;
+  background:#142638!important;
+  border-radius:12px!important;
+  padding:13px;
+}
+.vyronStudio .accountRowStats {gap:10px;}
+.vyronStudio .accountRow :is(.accountMain,.accountMeta) {min-width:0;}
+.vyronStudio .accountRow :is(b,strong) {color:#edf6fa;}
+.vyronStudio .accountRow small {color:#a8bfcf;font-size:10.5px;}
+.vyronStudio .activityHistoryPage .metrics {
+  gap:10px;
+  grid-template-columns:repeat(auto-fit,minmax(145px,1fr))!important;
+}
+.vyronStudio .activityHistoryPage .metric,
+.vyronStudio .metrics.six .metric {
+  background:#152738;
+  border:1px solid #2b4052;
+  border-radius:11px;
+  padding:12px;
+}
+.vyronStudio .metrics .metric strong {color:#eef8fb;font-size:19px;}
+.vyronStudio .metrics .metric small {color:#b0c4d1;font-size:10px;}
+.vyronStudio .errorCenterRows article {
+  border:1px solid #3a4a57;
+  background:#172637;
+  border-radius:10px;
+  padding:12px;
+}
+
+/* Modal hierarchy: do not affect portal root, focus trap, validation or actions. */
+.vyronStudio .confirmModal,
+.vyronStudio .ownerProfileModal {
+  background:#132233;
+  border:1px solid #354b5d;
+  box-shadow:0 22px 65px rgba(0,0,0,.5);
+  border-radius:15px;
+}
+.vyronStudio .confirmModal footer {
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  justify-content:flex-end;
+}
+.vyronStudio .confirmModal footer button {min-height:35px;padding:7px 12px;border-radius:9px;}
+
+/* Practical MacBook window sizes; prevent vertical columns going offscreen. */
+@media (max-width:1500px) {
+  .vyronStudio .opsDashboardGrid {grid-template-columns:repeat(2,minmax(0,1fr))!important;}
+  .vyronStudio .channelFleetGrid {grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr))!important;}
+}
+@media (max-width:1180px) {
+  .vyronStudio .opsDashboardGrid {grid-template-columns:minmax(0,1fr)!important;}
+  .vyronStudio .a360-grid.four {grid-template-columns:repeat(2,minmax(0,1fr))!important;}
+  .vyronStudio .channelFleetGrid {grid-template-columns:minmax(0,1fr)!important;}
+  .vyronStudio .settingsStack {gap:10px!important;}
+}
+@media (max-width:950px) {
+  .vyronStudio .pageWrap :is(.opsCard,.panel,.settingsCard,.pmCard,.competitorCard) {padding:12px!important;}
+  .vyronStudio .fleetMetrics {grid-template-columns:repeat(2,minmax(0,1fr))!important;}
+  .vyronStudio .inventoryHeroGrid,
+  .vyronStudio .networkStatsGrid {grid-template-columns:repeat(2,minmax(0,1fr))!important;}
+  .vyronStudio .a360-grid.four,
+  .vyronStudio .a360-grid.two {grid-template-columns:minmax(0,1fr)!important;}
+  .vyronStudio .pageHeader h1,.vyronStudio .youtubeCenterHead h1 {font-size:22px;}
+}
+@media (max-width:700px) {
+  .vyronStudio .pageWrap :is(.opsKpiGrid,.inventoryHeroGrid,.networkStatsGrid,.competitorGrid) {
+    grid-template-columns:minmax(0,1fr)!important;
+  }
+  .vyronStudio .channelFleetCard .fleetActions {grid-template-columns:minmax(0,1fr)!important;}
+  .vyronStudio .pageWrap :is(.headerActions,.publishActions,.jobActions) button {flex:1 1 160px;}
+  .vyronStudio .liveInventoryTable,.vyronStudio .a360-table-wrap {overflow-x:auto;}
+  .vyronStudio .pageWrap :is(.panel,.settingsCard) {border-radius:11px!important;}
+}
+@media (max-height:760px) {
+  .vyronStudio .pageWrap {padding-bottom:55px!important;}
+  .vyronStudio .youtubeMasterTabs,
+  .vyronStudio .productionTabs {position:static;}
+}
+@media (prefers-reduced-motion:reduce) {
+  .vyronStudio .pageWrap :is(.channelFleetCard,.competitorCard,.opsCard,.settingsCard),
+  .vyronStudio .pageWrap button {transition:none!important;animation:none!important;}
+}

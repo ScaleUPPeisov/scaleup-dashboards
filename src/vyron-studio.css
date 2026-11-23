@@ -1,0 +1,352 @@
+/*
+ * VYRON Studio — isolated presentation layer.
+ * No business logic, API requests, OAuth, publisher state or storage changes.
+ * Scoped to .vyronStudio; imported after legacy styles so rollback is one import.
+ */
+.vyronStudio {
+  --bg:#0a111b;
+  --panel:#111c2a;
+  --panel2:#172434;
+  --line:#26384a;
+  --muted:#9aafbf;
+  --text:#eaf3f8;
+  --cyan:#61ded1;
+  --green:#61ded1;
+  --blue:#80abff;
+  --purple:#b29bff;
+  --orange:#ffc279;
+  --red:#ff8194;
+  --os-bg:#0a111b;
+  --os-panel:#111c2a;
+  --os-border:#26384a;
+  --os-muted:#9aafbf;
+  color:var(--text);
+  background:#0a111b;
+}
+.vyronStudio .main {
+  background:radial-gradient(ellipse at 82% 0%,rgba(72,148,170,.045),transparent 55%),#0a111b;
+}
+.vyronStudio .bgGlow {opacity:.045;}
+
+/* Sidebar: predictable dimensions; collapse is an actual user control. */
+.vyronStudio .sidebar {
+  width:208px!important;
+  min-width:208px!important;
+  max-width:208px!important;
+  flex:0 0 208px!important;
+  padding:18px 10px 12px;
+  border-right:1px solid #223243;
+  background:#0d1723;
+  transition:width .18s ease,flex-basis .18s ease,min-width .18s ease;
+}
+.vyronStudio .sidebar .brand {
+  display:flex;
+  align-items:center;
+  gap:9px;
+  padding:3px 5px 20px;
+  min-width:0;
+}
+.vyronStudio .sidebar .brand>div {min-width:0;}
+.vyronStudio .sidebar .brand b {font-size:11px;letter-spacing:.11em;}
+.vyronStudio .sidebar .brand small {font-size:9px;color:#879cab;letter-spacing:.1em;}
+.vyronStudio .studioSidebarToggle {
+  margin-left:auto;
+  width:29px;
+  height:29px;
+  min-width:29px!important;
+  flex:0 0 29px;
+  display:grid;
+  place-items:center;
+  color:#9cb2c1;
+  border:1px solid #293b4c;
+  background:#162333;
+  border-radius:9px;
+  padding:5px;
+}
+.vyronStudio .studioSidebarToggle svg {width:16px;height:16px;display:block;}
+.vyronStudio .studioSidebarToggle:hover {color:#eaf7f6;background:#203447;border-color:#4b8993;}
+.vyronStudio .sidebar nav .sidebarNavItem {
+  height:40px;min-height:40px;max-height:40px;
+  color:#a0b2c1;font-size:12px;
+  border-radius:10px;transition:background .13s ease,color .13s ease;
+}
+.vyronStudio .sidebar nav .sidebarNavItem.active {
+  background:#1b3240;
+  border-color:#274c53;
+  color:#e7f9f6;
+}
+.vyronStudio .sidebar nav .sidebarNavItem.active::before {
+  background:#61ded1;
+  box-shadow:none;
+}
+.vyronStudio .sidebarIconSlot svg {width:18px;height:18px;}
+.vyronStudio.studioSidebarCollapsed .sidebar {
+  width:74px!important;
+  min-width:74px!important;
+  max-width:74px!important;
+  flex:0 0 74px!important;
+  padding:15px 8px 12px;
+}
+.vyronStudio.studioSidebarCollapsed .sidebar .brand {
+  flex-direction:column;
+  padding:4px 0 16px;
+}
+.vyronStudio.studioSidebarCollapsed .sidebar .brand>div {display:none;}
+.vyronStudio.studioSidebarCollapsed .studioSidebarToggle {margin:0;order:2;}
+.vyronStudio.studioSidebarCollapsed .sidebarNav {padding:4px 0;}
+.vyronStudio.studioSidebarCollapsed .sidebar nav .sidebarNavItem {
+  display:flex;
+  width:100%;
+  justify-content:center;
+  padding:0;
+  height:43px;
+  min-height:43px;
+  max-height:43px;
+}
+.vyronStudio.studioSidebarCollapsed .sidebar nav .sidebarNavItem .sidebarLabel,
+.vyronStudio.studioSidebarCollapsed .sidebar nav .sidebarNavItem .sidebarCount,
+.vyronStudio.studioSidebarCollapsed .sidebarFooter .ownerProfileCompact>span:last-child,
+.vyronStudio.studioSidebarCollapsed .sidebarFooter .sideFoot>div {display:none;}
+.vyronStudio.studioSidebarCollapsed .sidebarFooter {padding:7px 0;}
+.vyronStudio.studioSidebarCollapsed .sidebarFooter .ownerProfileCompact {
+  display:grid;grid-template-columns:1fr;
+  justify-items:center;min-height:46px;
+  padding:7px 2px;
+}
+.vyronStudio.studioSidebarCollapsed .sidebarFooter .sideFoot {
+  min-height:36px;padding:8px;
+  display:flex;justify-content:center;
+}
+.vyronStudio.studioSidebarCollapsed .sidebarFooter .sideFoot>i {margin:0;}
+
+/* Header: clearer hierarchy, quieter quota information. */
+.vyronStudio .topbar.vyronMasterTopbar {
+  padding:10px 19px!important;
+  grid-template-columns:minmax(190px,.85fr) minmax(440px,1.5fr) auto!important;
+  min-height:67px;
+  gap:10px 18px!important;
+  border-bottom:1px solid #233548;
+  background:rgba(13,22,34,.97);
+}
+.vyronStudio .topbarIdentity .crumb {
+  color:#7e96a9;
+  font-size:10px;
+  letter-spacing:.09em;
+}
+.vyronStudio .topbarIdentity>b {
+  color:#eaf3f8;
+  font-size:12px;
+  font-weight:650;
+}
+.vyronStudio .topbarQuota {gap:5px!important;justify-content:flex-start;}
+.vyronStudio .topbarQuota>span {
+  border:1px solid #27394a;
+  background:#152334;
+  border-radius:9px;
+  min-height:40px;
+  padding:6px 9px!important;
+  display:grid;
+  align-content:center;
+  gap:3px;
+}
+.vyronStudio .topbarQuota small {font-size:9px;color:#91a8b9;line-height:1.2;}
+.vyronStudio .topbarQuota b {font-size:12px;letter-spacing:.01em;color:#edf6fa;white-space:nowrap;}
+.vyronStudio .vyronMasterTopbar .topStatus {gap:6px!important;}
+.vyronStudio .vyronMasterTopbar .topStatus>span,
+.vyronStudio .vyronMasterTopbar .topStatus>button {
+  min-height:32px;
+  border-radius:9px;
+  font-size:10px;
+  color:#b6c9d6;
+}
+.vyronStudio .vyronMasterTopbar .topStatus>button:focus-visible,
+.vyronStudio .studioSidebarToggle:focus-visible,
+.vyronStudio .sidebarNavItem:focus-visible {
+  outline:2px solid #61ded1;outline-offset:2px;
+}
+
+/* Global content: airy layout without invisible or removed actions. */
+.vyronStudio .pageWrap {
+  padding:23px 24px 48px!important;
+  scrollbar-color:#334e60 transparent;
+}
+.vyronStudio .youtubeCenterHead {margin-bottom:15px;gap:16px;}
+.vyronStudio .pageHeader h1,
+.vyronStudio .youtubeCenterHead h1 {
+  color:#f1f8fb;
+  font-size:25px;
+  font-weight:700;
+  letter-spacing:-.028em;
+}
+.vyronStudio .pageHeader p,
+.vyronStudio .youtubeCenterHead p {
+  color:#97adbe;
+  font-size:12px;
+  line-height:1.55;
+}
+.vyronStudio .panel,
+.vyronStudio .settingsCard {
+  border:1px solid #27394b!important;
+  background:#121f2e!important;
+  border-radius:15px!important;
+  box-shadow:0 6px 20px rgba(0,0,0,.09)!important;
+}
+.vyronStudio .panelHead h3,
+.vyronStudio .settingsCard h3 {
+  font-size:14px;
+  letter-spacing:-.01em;
+  color:#eff6fa;
+}
+.vyronStudio .panelHead small {font-size:10px;color:#8da6b8;letter-spacing:.06em;}
+.vyronStudio .panelHead p {color:#a1b6c5;font-size:11px;line-height:1.45;}
+.vyronStudio .youtubeMasterTabs {
+  width:fit-content!important;
+  max-width:100%;
+  gap:3px;
+  padding:4px;
+  border:1px solid #27394b;
+  background:#101d2b;
+  border-radius:11px;
+  margin:0 0 17px;
+}
+.vyronStudio .youtubeMasterTabs button {
+  font-size:11px!important;
+  min-height:32px;
+  border-radius:8px!important;
+}
+.vyronStudio .youtubeMasterTabs button.active {
+  background:#22413f!important;
+  color:#b9f8ec!important;
+}
+.vyronStudio button:not(:disabled) {transition:background .14s ease,border-color .14s ease,color .14s ease,box-shadow .14s ease;}
+.vyronStudio button:focus-visible,
+.vyronStudio input:focus-visible,
+.vyronStudio select:focus-visible,
+.vyronStudio textarea:focus-visible {
+  outline:2px solid rgba(97,222,209,.85);
+  outline-offset:2px;
+}
+.vyronStudio .primary {
+  background:#61ded1!important;
+  border:1px solid #61ded1!important;
+  color:#082526!important;
+  box-shadow:none!important;
+  font-weight:750;
+  border-radius:9px;
+}
+.vyronStudio .primary:hover:not(:disabled) {background:#88ebdf!important;box-shadow:0 0 0 3px rgba(97,222,209,.10)!important;}
+.vyronStudio input,
+.vyronStudio select,
+.vyronStudio textarea {
+  background:#0f1b29;
+  border-color:#334759;
+  color:#edf6fa;
+  border-radius:9px;
+}
+
+/* Publisher: real full-width two-column workspace.
+   Child positions are stable in PublisherOS: video / metadata / thumbnails / schedule. */
+.vyronStudio .youtubeChannelContext {width:100%;max-width:none;}
+.vyronStudio .publishMasterHead {margin-bottom:12px;}
+.vyronStudio .publisherPermanentControlDock {
+  padding:11px 13px;
+  border-radius:13px;
+  border:1px solid #2a4050;
+  background:#142434;
+}
+.vyronStudio .publishStepGrid {
+  display:grid;
+  grid-template-columns:minmax(0,1.08fr) minmax(0,.92fr)!important;
+  gap:14px!important;
+  align-items:start;
+  width:100%;
+}
+.vyronStudio .publishStepGrid>.publishStep {width:100%;min-width:0;align-self:start;}
+.vyronStudio .publishStepGrid>.publishStep:nth-child(1) {grid-column:1;grid-row:1 / span 3;}
+.vyronStudio .publishStepGrid>.publishStep:nth-child(2) {grid-column:2;grid-row:1;}
+.vyronStudio .publishStepGrid>.publishStep:nth-child(3) {grid-column:2;grid-row:2;}
+.vyronStudio .publishStepGrid>.publishStep:nth-child(4) {grid-column:2;grid-row:3;}
+.vyronStudio .publishStep {
+  padding:16px!important;
+}
+.vyronStudio .publishStep>.panelHead {margin-bottom:12px;}
+.vyronStudio .publishToolbar {gap:6px;margin:7px 0;}
+.vyronStudio .publishToolbar button,
+.vyronStudio .publishActions button {font-size:11px;min-height:32px;border-radius:8px;}
+.vyronStudio .publishVideoRows {
+  max-height:540px;
+  scrollbar-width:thin;
+  scrollbar-color:#365463 transparent;
+}
+.vyronStudio .publishVideoRows label {
+  border-radius:10px;
+  padding:11px;
+  background:#142536;
+}
+.vyronStudio .publishVideoRows label.selected {
+  border-color:#3a8d86;
+  background:#183a3f;
+}
+.vyronStudio .publishVideoRows label small {font-size:10px;color:#a4b9c8;}
+.vyronStudio .publishCheck {
+  padding:12px 13px;
+  border-radius:10px;
+  background:#152637;
+  border:1px solid #2d4554;
+  color:#d7e9ef;
+}
+.vyronStudio .publishCheck b {font-size:12px;color:#eaf4f8;}
+.vyronStudio .publishCheck span {font-size:11px;color:#a9bdc9;line-height:1.5;}
+.vyronStudio .publishCheck.good {
+  background:#142b2e;
+  border-color:#295b55;
+}
+.vyronStudio .publishCheck.good b {color:#9cf0d9;}
+.vyronStudio .publishCheck.warn {
+  background:#30251e;
+  border-color:#6c4d37;
+}
+.vyronStudio .publishCheck.warn b {color:#ffd19a;}
+.vyronStudio .scheduleBatchPreview {
+  border-radius:11px;
+  border-color:#344d5d;
+  background:#142838;
+  padding:12px;
+}
+.vyronStudio .scheduleBatchPreview>b {font-size:12px;}
+.vyronStudio .scheduleBatchPreview>small {font-size:10px;color:#a2b9c7;}
+.vyronStudio .scheduleBatchPreview>div {grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+.vyronStudio .scheduleBatchPreview span {font-size:10px;line-height:1.4;color:#c5d6e0;}
+.vyronStudio details>summary {cursor:pointer;color:#aec5d3;}
+.vyronStudio .channelFolderBindings {margin-bottom:14px;}
+.vyronStudio .channelFolderGrid>div {border-color:#294355;border-radius:10px;background:#142638;}
+.vyronStudio .publisherCleanupPanel {margin-top:14px;}
+
+/* Avoid forcing squeezed two columns on MacBook's narrower windows. */
+@media(max-width:1410px) {
+  .vyronStudio .topbar.vyronMasterTopbar {grid-template-columns:minmax(190px,1fr) minmax(0,2fr)!important;}
+  .vyronStudio .vyronMasterTopbar .topStatus {grid-column:1/-1;justify-content:flex-end;}
+}
+@media(max-width:1180px) {
+  .vyronStudio .publishStepGrid {grid-template-columns:minmax(0,1fr)!important;}
+  .vyronStudio .publishStepGrid>.publishStep:nth-child(n) {grid-column:auto;grid-row:auto;}
+  .vyronStudio .publishStep {padding:14px!important;}
+}
+@media(max-width:950px) {
+  .vyronStudio .topbar.vyronMasterTopbar {grid-template-columns:minmax(0,1fr)!important;}
+  .vyronStudio .vyronMasterTopbar .topStatus {grid-column:auto;justify-content:flex-start;}
+  .vyronStudio .pageWrap {padding:16px 14px 40px!important;}
+  .vyronStudio .sidebar:not(.unused) {transition:none;}
+}
+@media(max-width:700px) {
+  .vyronStudio .sidebar {width:74px!important;min-width:74px!important;max-width:74px!important;flex-basis:74px!important;}
+  .vyronStudio .sidebar .sidebarLabel,
+  .vyronStudio .sidebar .brand>div,
+  .vyronStudio .sidebar .sidebarCount {display:none;}
+  .vyronStudio .scheduleBatchPreview>div {grid-template-columns:minmax(0,1fr);}
+}
+@media(prefers-reduced-motion:reduce) {
+  .vyronStudio .sidebar,
+  .vyronStudio button,
+  .vyronStudio .pageWrap {transition:none!important;animation:none!important;}
+}
