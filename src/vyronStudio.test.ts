@@ -54,7 +54,6 @@ describe('VYRON Studio isolated design contract',()=>{
   });
   it('keeps all nine application areas present with matching workspace visual contracts',()=>{
     for(const [area,filepath] of Object.entries(displayRoutes)){
-      expect(fs.existsSync(filepath),area).toBe(true);
       expect(fs.readFileSync(filepath,'utf8').length,area).toBeGreaterThan(500);
     }
     for(const selector of [
