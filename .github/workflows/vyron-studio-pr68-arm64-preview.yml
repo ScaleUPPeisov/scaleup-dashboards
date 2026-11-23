@@ -61,10 +61,13 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO")" = "6.1.17"
           EXE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$INFO")"
           lipo -archs "$APP/Contents/MacOS/$EXE" | tr ' ' '\n' | grep -qx arm64
-          echo "Preview identity and architecture verified; no owner data, no production install"
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=4 "$APP" 2>&1 | grep -Fq 'Signature=adhoc'
+          echo "Preview identity, ARM64 and local ad-hoc signature verified; no production install"
           mkdir -p "$RUNNER_TEMP/studio-preview"
           ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/studio-preview/VYRON-Studio-6.1.17-M1-DEBUG-PREVIEW-TEST-ONLY.zip"
-          printf 'DEBUG TEST-ONLY PREVIEW. NOT A RELEASE.\nSeparate macOS bundle ID: studio.channelflow.preview\nUpdater signing disabled. No notarization. Do NOT install over /Applications/VYRON.app.\nNative VYRON code may still use ~/Documents/VYRON; do not launch against owner HOME.\nUse a dedicated throwaway macOS user account, offline, with synthetic data.\n' > "$RUNNER_TEMP/studio-preview/README-TEST-ONLY.txt"
+          printf 'DEBUG TEST-ONLY PREVIEW. NOT A RELEASE.\nSeparate macOS bundle ID: studio.channelflow.preview\nUpdater signing disabled. Local ad-hoc app signature only; NOT notarized. Do NOT install over /Applications/VYRON.app.\nNative VYRON code may still use ~/Documents/VYRON; do not launch against owner HOME.\nUse a dedicated throwaway macOS user account, offline, with synthetic data.\n' > "$RUNNER_TEMP/studio-preview/README-TEST-ONLY.txt"
       - name: Synthetic Mac launch smoke — disposable runner only
         id: smoke
         continue-on-error: true
