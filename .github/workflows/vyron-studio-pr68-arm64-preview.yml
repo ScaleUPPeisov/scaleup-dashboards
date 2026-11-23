@@ -65,6 +65,42 @@ jobs:
           mkdir -p "$RUNNER_TEMP/studio-preview"
           ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/studio-preview/VYRON-Studio-6.1.17-M1-DEBUG-PREVIEW-TEST-ONLY.zip"
           printf 'DEBUG TEST-ONLY PREVIEW. NOT A RELEASE.\nSeparate macOS bundle ID: studio.channelflow.preview\nUpdater signing disabled. No notarization. Do NOT install over /Applications/VYRON.app.\nNative VYRON code may still use ~/Documents/VYRON; do not launch against owner HOME.\nUse a dedicated throwaway macOS user account, offline, with synthetic data.\n' > "$RUNNER_TEMP/studio-preview/README-TEST-ONLY.txt"
+      - name: Synthetic Mac launch smoke — disposable runner only
+        id: smoke
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          APP="$(find src-tauri/target/aarch64-apple-darwin/debug/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          test -d "$APP"
+          INFO="$APP/Contents/Info.plist"
+          EXE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$INFO")"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO")" = studio.channelflow.preview
+          TEST_HOME="$RUNNER_TEMP/studio-disposable-home"
+          mkdir -p "$TEST_HOME/Documents/VYRON" "$TEST_HOME/Library/Application Support/studio.channelflow.preview"
+          printf 'keep-this-file\\n' > "$TEST_HOME/Documents/VYRON/studio-runner-sentinel.txt"
+          HOME="$TEST_HOME" XDG_DATA_HOME="$TEST_HOME/Library/Application Support" "$APP/Contents/MacOS/$EXE" > "$RUNNER_TEMP/studio-preview-launch.log" 2>&1 &
+          PID=$!
+          sleep 7
+          if kill -0 "$PID" 2>/dev/null; then
+            echo 'APP_PROCESS_STILL_ALIVE_AFTER_7_SECONDS' > "$RUNNER_TEMP/studio-preview/SMOKE-RESULT.txt"
+            kill "$PID" 2>/dev/null || true
+            wait "$PID" 2>/dev/null || true
+          else
+            wait "$PID" || true
+            echo 'APP_PROCESS_EXITED_EARLY; GUI_RUNNER_ENVIRONMENT_OR_APP_FAILURE_UNRESOLVED' > "$RUNNER_TEMP/studio-preview/SMOKE-RESULT.txt"
+            exit 1
+          fi
+          test "$(cat "$TEST_HOME/Documents/VYRON/studio-runner-sentinel.txt")" = keep-this-file
+          echo 'DISPOSABLE_HOME_SENTINEL_PRESERVED' >> "$RUNNER_TEMP/studio-preview/SMOKE-RESULT.txt"
+          echo 'FULL_33_CHANNEL_YOUTUBE_OAUTH_UI_VERIFICATION_NOT_PERFORMED' >> "$RUNNER_TEMP/studio-preview/SMOKE-RESULT.txt"
+      - name: Preserve truthful smoke status for preview
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/studio-preview"
+          if [ ! -s "$RUNNER_TEMP/studio-preview/SMOKE-RESULT.txt" ]; then
+            echo 'SMOKE_NOT_RUN_OR_UNAVAILABLE; DO_NOT_ASSUME_LIVE_UI_VERIFIED' > "$RUNNER_TEMP/studio-preview/SMOKE-RESULT.txt"
+          fi
+          echo "SMOKE_WORKFLOW_OUTCOME=${{ steps.smoke.outcome }}" >> "$RUNNER_TEMP/studio-preview/SMOKE-RESULT.txt"
       - name: Upload owner preview (not a stable release)
         uses: actions/upload-artifact@v4
         with:
