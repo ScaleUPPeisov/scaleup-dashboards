@@ -11,7 +11,6 @@ permissions:
 
 jobs:
   isolated-preview:
-    environment: vyron-rotated-key-rc
     if: ${{ github.event.pull_request.number == 68 && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'design/vyron-studio-ui-isolated-20261123' }}
     runs-on: macos-15
     timeout-minutes: 90
@@ -28,6 +27,14 @@ jobs:
           test -f src/vyron-studio.css
           test -f src/vyronStudio.test.ts
           test "$(node -p "require('./src-tauri/tauri.conf.json').identifier")" = "studio.channelflow.desktop"
+      - name: Require owner-approved rotated updater trust fingerprint for release-mode compilation
+        env:
+          APPROVED_SHA: ${{ vars.VYRON617_APPROVED_PUBKEY_SHA256 }}
+        run: |
+          set -euo pipefail
+          [[ "$APPROVED_SHA" =~ ^[a-f0-9]{64}$ ]] || { echo OWNER_APPROVED_UPDATER_FINGERPRINT_MISSING; exit 1; }
+          test "$APPROVED_SHA" != aa6fb45ab082ef39279e841dc40b0f85e5b33f23746f77557b6f93e3e72c2c06 || { echo COMPROMISED_LEGACY_UPDATER_FINGERPRINT_REJECTED; exit 1; }
+          echo "VYRON_TRUSTED_UPDATER_PUBLIC_KEY_SHA256=$APPROVED_SHA" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -48,14 +55,6 @@ jobs:
         run: |
           set -euo pipefail
           node -e "const fs=require('fs');const cfg={productName:'VYRON Studio Preview',version:'6.1.17',identifier:'studio.channelflow.preview',bundle:{createUpdaterArtifacts:false,macOS:{bundleName:'VYRON Studio Preview'}},app:{windows:[{label:'main',title:'VYRON Studio — TEST ONLY',backgroundColor:'#0a111b'}]},plugins:{updater:{endpoints:[]}}};fs.writeFileSync(process.env.RUNNER_TEMP+'/vyron-studio-preview.json',JSON.stringify(cfg));"
-      - name: Require owner-approved rotated updater trust fingerprint for release-mode compilation
-        env:
-          APPROVED_SHA: ${{ vars.VYRON617_APPROVED_PUBKEY_SHA256 }}
-        run: |
-          set -euo pipefail
-          [[ "$APPROVED_SHA" =~ ^[a-f0-9]{64}$ ]] || { echo OWNER_APPROVED_UPDATER_FINGERPRINT_MISSING; exit 1; }
-          test "$APPROVED_SHA" != aa6fb45ab082ef39279e841dc40b0f85e5b33f23746f77557b6f93e3e72c2c06 || { echo COMPROMISED_LEGACY_UPDATER_FINGERPRINT_REJECTED; exit 1; }
-          echo "VYRON_TRUSTED_UPDATER_PUBLIC_KEY_SHA256=$APPROVED_SHA" >> "$GITHUB_ENV"
       - name: Build isolated macOS ARM64 app
         env:
           VYRON_UPDATE_CHANNEL: owner-preview
