@@ -1387,6 +1387,18 @@ fn next_batch_id(parent: &Path, channel_name: &str) -> String {
     }
     format!("{}{:03}", prefix, max + 1)
 }
+// `even` only needs the best `count` candidates. Use the original position
+// as the final key so equal weights/hashes keep the previous stable ordering.
+fn select_even_candidates(mut candidates: Vec<(u64, u64, usize)>, count: usize) -> Vec<usize> {
+    if count == 0 { return Vec::new(); }
+    if count < candidates.len() {
+        candidates.select_nth_unstable_by_key(count, |x| (x.0, x.1, x.2));
+        candidates.truncate(count);
+    }
+    candidates.sort_unstable_by_key(|x| (x.0, x.1, x.2));
+    candidates.into_iter().map(|x| x.2).collect()
+}
+
 fn choose_sequence(
     mode: &str,
     tracks: &[TrackIndex],
@@ -1411,7 +1423,7 @@ fn choose_sequence(
         let mut picked = Vec::new();
         match mode {
             "even" => {
-                let mut s = (0..tracks.len())
+                let s = (0..tracks.len())
                     .map(|i| {
                         let id = &tracks[i].track_id;
                         let used = history.tracks.get(id).map(|x| x.times_used).unwrap_or(0)
@@ -1419,8 +1431,7 @@ fn choose_sequence(
                         (used, seed64(&format!("{salt}:{id}")), i)
                     })
                     .collect::<Vec<_>>();
-                s.sort_by_key(|x| (x.0, x.1));
-                picked = s.into_iter().take(count).map(|x| x.2).collect();
+                picked = select_even_candidates(s, count);
             }
             "alphabetical" => {
                 let mut local = HashSet::new();
@@ -1802,17 +1813,21 @@ fn plan_build_with_images(req: &BuildRequest, resolved_images: Vec<ResolvedProdu
     )?;
     Ok(plan)
 }
+fn nonempty_regular_file(path: &Path) -> bool {
+    fs::metadata(path).map(|metadata| metadata.is_file() && metadata.len() > 0).unwrap_or(false)
+}
+
 fn project_ready(plan: &PlanProject, folder: &Path) -> bool {
     if !folder.is_dir() {
         return false;
     }
     let image = folder.join(&plan.image_name);
-    if !image.is_file() || fs::metadata(&image).map(|m| m.len() == 0).unwrap_or(true) {
+    if !nonempty_regular_file(&image) {
         return false;
     }
     plan.tracks.iter().all(|t| {
         let p = folder.join(&t.dest_name);
-        p.is_file() && fs::metadata(p).map(|m| m.len() > 0).unwrap_or(false)
+        nonempty_regular_file(&p)
     })
 }
 // A completed file count alone is not a committed batch. Confirm the final
@@ -1978,8 +1993,9 @@ fn execute_plan(app: Option<&AppHandle>, plan: &BuildPlan) -> Result<BatchSummar
         let mut h: MusicHistory = read_json(&hp);
         h.schema_version = SCHEMA_VERSION;
         let mut batch_uses=HashMap::<String,(String,u64)>::new();
+        let mut known_sequences=h.sequence_fingerprints.iter().cloned().collect::<HashSet<_>>();
         for p in &plan.projects {
-            if !h.sequence_fingerprints.contains(&p.sequence_fingerprint){h.sequence_fingerprints.push(p.sequence_fingerprint.clone());}
+            if known_sequences.insert(p.sequence_fingerprint.clone()) { h.sequence_fingerprints.push(p.sequence_fingerprint.clone()); }
             for t in &p.tracks{
                 let row=batch_uses.entry(t.track_id.clone()).or_insert((t.source.clone(),0));
                 row.1+=1;

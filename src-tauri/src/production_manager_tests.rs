@@ -995,3 +995,38 @@ fn manual_music_worker_preserves_scan_order_and_errors() {
     assert_eq!(tauri::async_runtime::block_on(scan_manual_production_music(missing)).unwrap_err(), "Выбранная музыкальная папка недоступна");
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn even_candidate_selection_matches_full_stable_sort_with_ties() {
+    // Repeatable ties exercise the same original-order tie break as stable sort.
+    for size in [0usize, 1, 2, 13, 100, 1000] {
+        let rows: Vec<(u64, u64, usize)> = (0..size)
+            .map(|i| (((i * 17 + 3) % 11) as u64, ((i * 7 + 2) % 5) as u64, i))
+            .collect();
+        for count in [0, 1, 5, 10, 100, size, size + 1] {
+            let mut expected = rows.clone();
+            expected.sort_by_key(|x| (x.0, x.1));
+            let expected: Vec<usize> = expected.into_iter().take(count).map(|x| x.2).collect();
+            assert_eq!(select_even_candidates(rows.clone(), count), expected, "size={size}, count={count}");
+        }
+    }
+}
+
+#[test]
+fn project_ready_file_check_accepts_only_nonempty_regular_files() {
+    let root = std::env::temp_dir().join(format!("vyron-ready-file-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let file = root.join("image.jpg");
+    assert!(!nonempty_regular_file(&file));
+    fs::write(&file, b"").unwrap();
+    assert!(!nonempty_regular_file(&file));
+    fs::write(&file, b"fixture").unwrap();
+    assert!(nonempty_regular_file(&file));
+    assert!(!nonempty_regular_file(&root));
+    #[cfg(unix)] {
+        let link = root.join("image-link.jpg");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        assert!(nonempty_regular_file(&link));
+    }
+    fs::remove_dir_all(root).unwrap();
+}

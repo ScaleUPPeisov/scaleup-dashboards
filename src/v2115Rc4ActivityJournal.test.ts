@@ -80,6 +80,23 @@ describe('VYRON 2.1.15 RC4 persistent activity journal',()=>{
   expect(cleanupEligibleUpload(remoteMissing)).toBe(false);
  });
 
+ it('keeps the first matching job when legacy state contains duplicate IDs',()=>{
+  const valid=upload(),wrong={...job,finalPath:'/tmp/OTHER.mp4'};
+  const firstValid=cleanupPreclassification([valid],[job,wrong]);
+  const firstWrong=cleanupPreclassification([valid],[wrong,job]);
+  expect(firstValid.eligible.map(row=>row.id)).toEqual(['h1']);
+  expect(firstWrong.eligible).toEqual([]);
+  expect(firstWrong.verification.map(row=>row.id)).toEqual(['h1']);
+ });
+
+ it('classifies a large history without rescanning all jobs for every record',()=>{
+  let idReads=0;
+  const jobs=Array.from({length:2000},(_,index)=>({...job,get id(){idReads++;return `job-${index}`}}));
+  const rows=Array.from({length:500},(_,index)=>upload({id:`history-${index}`,jobId:'job-1999'}));
+  expect(cleanupPreclassification(rows,jobs).eligible).toHaveLength(rows.length);
+  expect(idReads).toBeLessThanOrEqual(jobs.length*2);
+ });
+
  it('Trash is recorded only after successful lifecycle transition and survives normalization',()=>{
   const at='2026-09-20T12:00:00Z',rows=markHistoryTrashed([upload()],'j1',at,'trash-b1');
   expect(rows[0].sourceLifecycle).toBe('TRASHED_BY_VYRON');

@@ -2,13 +2,14 @@ import React,{useEffect,useMemo,useState} from 'react';
 import {useApp} from './store';
 import {api} from './api';
 import {cleanupEligibleUpload,markHistoryTrashed} from './storageLifecycle';
-import {cleanupPreclassification,effectiveSourceLifecycle} from './activityJournalCore';
+import {cleanupPreclassification,effectiveSourceLifecycle,firstJobById} from './activityJournalCore';
 import {journal} from './activityJournalRuntime';
 import {notifyError,notifySuccess,notifyWarning} from './notificationCenter';
 import {removeQueuedUpload,resumePausedUpload,subscribeUploadQueue,uploadQueueSnapshot} from './uploadQueueRuntime';
 import {formatDuration,formatUploadBytes,formatUploadSpeed,subscribeUploadTelemetry,uploadTelemetrySnapshot,type UploadTelemetryRecord} from './uploadTelemetry';
 import {closeUploadCenter,openUploadCenter,subscribeUploadCenterUi,uploadCenterOpen} from './uploadCenterUi';
 import type {ImmutableUploadJob,UploadQueueSnapshot} from './uploadQueue';
+import {startVisibleTicker} from './visibleTicker';
 
 function useUploadRuntime(){
  const[queue,setQueue]=useState<UploadQueueSnapshot>(()=>uploadQueueSnapshot()),[telemetry,setTelemetry]=useState(()=>uploadTelemetrySnapshot());
@@ -28,14 +29,20 @@ export function UploadCenterGlobal(){
 function UploadCenterModal(){
  const{queue,telemetry}=useUploadRuntime(),channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),history=useApp(s=>s.uploadHistory),settings=useApp(s=>s.settings),fingerprints=useApp(s=>s.fingerprintCache),replaceUploadHistory=useApp(s=>s.replaceUploadHistory);
  const[clock,setClock]=useState(Date.now()),[cleanupOpen,setCleanupOpen]=useState(false),[cleanupBusy,setCleanupBusy]=useState(false),[sourceScanBusy,setSourceScanBusy]=useState(false);
- useEffect(()=>{const id=window.setInterval(()=>setClock(Date.now()),1000);return()=>window.clearInterval(id)},[]);
  const queueIds=new Set([...queue.running,...queue.queued,...queue.paused].map(x=>x.spec.jobId));
  const orphanActive=telemetry.active.filter(x=>!queueIds.has(x.jobId));
  const activeCount=queue.running.length+orphanActive.length;
+ const hasActiveUploads=activeCount>0;
+ useEffect(()=>{
+  if(!hasActiveUploads)return;
+  return startVisibleTicker(document,window,()=>setClock(Date.now()),1000);
+ },[hasActiveUploads]);
  const succeeded=queue.recent.filter(x=>x.state==='SUCCEEDED'),failed=queue.recent.filter(x=>x.state==='FAILED');
  const batchTotal=queue.paused.length+queue.queued.length+queue.running.length+queue.recent.length;
  const batchDone=succeeded.length+failed.length;
- const cleanup=cleanupPreclassification(history,jobs),cleanupCandidates=cleanup.eligible.filter(x=>cleanupEligibleUpload(x,jobs.find(j=>j.id===x.jobId)));
+ const jobIndex=useMemo(()=>firstJobById(jobs),[jobs]);
+ const cleanup=useMemo(()=>cleanupPreclassification(history,jobs,jobIndex),[history,jobs,jobIndex]);
+ const cleanupCandidates=useMemo(()=>cleanup.eligible.filter(x=>cleanupEligibleUpload(x,jobIndex.get(x.jobId))),[cleanup,jobIndex]);
  const processingKept=cleanup.processing.length;
  const failedSources=jobs.filter(x=>x.status==='ERROR'&&x.finalPath&&x.storageLifecycle!=='TRASHED').length;
  const persisted=history.slice().reverse().slice(0,12);

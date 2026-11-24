@@ -135,10 +135,16 @@ export function effectiveSourceLifecycle(row:UploadHistoryRecord):SourceClassifi
  if(row.sourceLifecycle==='MISSING_EXTERNAL'||row.sourceLifecycle==='MISSING_LEGACY_UNKNOWN')return'MISSING_LEGACY_UNKNOWN';
  return'UNKNOWN';
 }
-export function cleanupPreclassification(history:UploadHistoryRecord[],jobs:VideoJob[]){
+/** Preserve Array.find semantics even if legacy state contains duplicate IDs. */
+export function firstJobById(jobs:VideoJob[]){
+ const result=new Map<string,VideoJob>();
+ for(const job of jobs)if(!result.has(job.id))result.set(job.id,job);
+ return result;
+}
+export function cleanupPreclassification(history:UploadHistoryRecord[],jobs:VideoJob[],index:ReadonlyMap<string,VideoJob>=firstJobById(jobs)){
  const result={eligible:[] as UploadHistoryRecord[],alreadyMissing:[] as UploadHistoryRecord[],processing:[] as UploadHistoryRecord[],changed:[] as UploadHistoryRecord[],verification:[] as UploadHistoryRecord[],trashed:[] as UploadHistoryRecord[]};
  for(const row of history){
-  const source=effectiveSourceLifecycle(row),job=jobs.find(j=>j.id===row.jobId);
+  const source=effectiveSourceLifecycle(row),job=index.get(row.jobId);
   if(source==='TRASHED_BY_VYRON'){result.trashed.push(row);continue}
   if(source==='MISSING_LEGACY_UNKNOWN'){result.alreadyMissing.push(row);continue}
   if(source==='SOURCE_CHANGED'){result.changed.push(row);continue}
