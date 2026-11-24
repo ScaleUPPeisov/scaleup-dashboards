@@ -24,30 +24,29 @@ export type PublisherShellProps={
 export const PublisherShell=React.memo(function PublisherShell(p:PublisherShellProps){
  const activeName=p.channels.find(c=>c.id===p.channelId)?.name||'Канал не выбран';
  const controls=[
-  {key:'folders',label:p.folderReady?'Папки ✓':'Папки ⚠',hint:'Видео и проекты',onClick:p.onFolders},
-  {key:'recovery',label:'Recovery'+(p.recoveryCount?' '+p.recoveryCount:''),hint:'Незавершённые загрузки',onClick:p.onRecovery},
+  {key:'folders',label:p.folderReady?'Папки настроены':'Проверьте папки',hint:'Видео и проекты',onClick:p.onFolders},
+  {key:'recovery',label:'Восстановление'+(p.recoveryCount?' '+p.recoveryCount:''),hint:'Незавершённые загрузки',onClick:p.onRecovery},
   {key:'metadata',label:'Метаданные',hint:'Название, описание, теги',onClick:p.onMetadata},
-  {key:'thumbs',label:'Обложки',hint:'Thumbnail mapping',onClick:p.onThumbs},
+  {key:'thumbs',label:'Обложки',hint:'Связь обложек с видео',onClick:p.onThumbs},
   {key:'schedule',label:'Расписание',hint:'Дата и время публикации',onClick:p.onSchedule},
   {key:'cleanup',label:'Очистка',hint:'Только подтверждённые файлы',onClick:p.onCleanup},
  ];
- return <>
+ return <section className="apexPublisherShell" aria-label="Управление публикацией">
   <div className="pageHeader publishMasterHead">
    <div>
-    <small>YOUTUBE • ПУБЛИКАЦИЯ</small>
     <h2>Публикация на YouTube</h2>
     <p>{p.newCount} новых · {p.uploadedCount} на YouTube · {p.processingCount} обрабатываются · {p.errorCount} ошибок</p>
    </div>
    <div className="headerActions">
     <span className="publisherActiveChannel" title="Канал меняется в верхней панели">{activeName}</span>
-    <button onClick={p.onClear}>Очистить черновик</button>
+    <button type="button" onClick={p.onClear}>Очистить черновик</button>
    </div>
   </div>
   <div className="publishToolbar publishDemandActions publisherPermanentControlDock" data-publisher-controls="always-visible">
    <span className="publisherSelectedCount"><b>{p.selectedCount}</b> выбрано</span>
    <div className="publisherPermanentControlGrid">
-    {controls.map(control=><button key={control.key} data-publisher-control={control.key} onClick={control.onClick}><b>{control.label}</b><small>{control.hint}</small></button>)}
+    {controls.map(control=><button type="button" key={control.key} data-publisher-control={control.key} onClick={control.onClick}><b>{control.label}</b><small>{control.hint}</small></button>)}
    </div>
   </div>
- </>;
+ </section>;
 });

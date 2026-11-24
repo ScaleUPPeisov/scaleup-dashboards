@@ -77,7 +77,7 @@ describe('VYRON 6.1.8 Publisher integrity',()=>{
   const shell=readFileSync(decodeURIComponent(new URL('./PublisherShell.tsx',import.meta.url).pathname),'utf8');
   const publisher=readFileSync(decodeURIComponent(new URL('./PublisherOS.tsx',import.meta.url).pathname),'utf8');
   expect(shell).toContain('data-publisher-controls="always-visible"');
-  for(const label of ['Папки','Recovery','Метаданные','Обложки','Расписание','Очистка','Очистить черновик'])expect(shell).toContain(label);
+  for(const label of ['Папки','Восстановление','Метаданные','Обложки','Расписание','Очистка','Очистить черновик'])expect(shell).toContain(label);
   expect(publisher).toContain('function PublisherOSAdvanced');
   expect(publisher).toContain('<PublisherShell');
   expect(publisher).toContain('return <PublisherOSAdvanced activityRef={activityRef}/>');
