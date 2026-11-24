@@ -18,7 +18,7 @@ export function LiveInventoryBridge(){
   useEffect(()=>{
     if(!booted)return;
     let disposed=false,unlisten:(()=>void)|undefined,periodic:number|undefined,focusTimer:number|undefined,lastFullScanAt=0;
-    const offUploads=subscribeUploadTelemetry(()=>refreshInventoryUploadCounts());
+    const offUploads=subscribeUploadTelemetry(snapshot=>refreshInventoryUploadCounts(snapshot));
 
     const configuredRoots=()=>useApp.getState().channels
       .filter(c=>c.enabled!==false&&Boolean(String(c.renderFolderPath||'').trim()))

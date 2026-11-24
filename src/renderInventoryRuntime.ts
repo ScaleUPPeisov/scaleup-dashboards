@@ -11,7 +11,7 @@ import {
   type RenderScanRow,
   type RenderScanSummary
 } from './renderScanClassifier';
-import {uploadTelemetrySnapshot} from './uploadTelemetry';
+import {uploadTelemetrySnapshot,type UploadTelemetrySnapshot} from './uploadTelemetry';
 import {currentPhysicalUploadEligible,reconcilePublisherInventory} from './publisherInventoryReconcile';
 
 export type InventoryFolderState='ONLINE'|'OFFLINE'|'SCANNING'|'ERROR';
@@ -113,8 +113,7 @@ function activeReadyJob(job:VideoJob|undefined){
   // ERROR/FAILED alone is recoverable; real upload/trash/queue evidence is not.
   return currentPhysicalUploadEligible(job);
 }
-export function readyRows(rows:RenderScanRow[],jobs:VideoJob[]){
-  const byId=new Map(jobs.map(j=>[j.id,j]));
+function readyRowsWithIndex(rows:RenderScanRow[],byId:ReadonlyMap<string,VideoJob>){
   return rows.filter(row=>{
     const matched=row.matchedJobId?byId.get(row.matchedJobId):undefined;
     if(matched?.status==='UPLOADING')return false;
@@ -122,6 +121,9 @@ export function readyRows(rows:RenderScanRow[],jobs:VideoJob[]){
     if(row.classification!=='KNOWN_EXACT')return false;
     return activeReadyJob(matched)
   });
+}
+export function readyRows(rows:RenderScanRow[],jobs:VideoJob[]){
+  return readyRowsWithIndex(rows,new Map(jobs.map(j=>[j.id,j])))
 }
 function uploadingForChannel(channelId:string,_jobs:VideoJob[]){
   return uploadTelemetrySnapshot().active.filter(x=>x.channelId===channelId).length
@@ -308,20 +310,36 @@ export function scanAllInventories(reason:InventoryScanReason='manual-all'):Prom
 }
 
 export function markInventoryAfterCleanup(channelId:string){return scanInventoryChannel(channelId,'cleanup')}
-export function refreshInventoryUploadCounts(){
-  const store=useLiveInventory.getState(),state=useApp.getState(),telemetry=uploadTelemetrySnapshot().active,next={...store.snapshots};let changed=false;
+let lastUploadRefresh:{snapshots:LiveInventoryState['snapshots'];jobs:VideoJob[];channels:Channel[];identities:string}|undefined;
+// Do not retain a superseded large jobs array or inventory snapshot after an
+// unrelated store change when uploads have stopped producing telemetry.
+useApp.subscribe((next,previous)=>{if(next.jobs!==previous.jobs||next.channels!==previous.channels)lastUploadRefresh=undefined});
+useLiveInventory.subscribe((next,previous)=>{if(next.snapshots!==previous.snapshots)lastUploadRefresh=undefined});
+export function refreshInventoryUploadCounts(facts?:UploadTelemetrySnapshot){
+  const store=useLiveInventory.getState(),state=useApp.getState(),telemetry=(facts||uploadTelemetrySnapshot()).active;
+  // Progress bytes and ETA do not change inventory eligibility. Avoid a full
+  // scan of jobs and rows for every high-frequency upload progress event.
+  const identities=JSON.stringify(telemetry.map(x=>[x.jobId,x.channelId,x.filePath]));
+  if(lastUploadRefresh?.snapshots===store.snapshots&&lastUploadRefresh.jobs===state.jobs&&lastUploadRefresh.channels===state.channels&&lastUploadRefresh.identities===identities)return;
+  const next={...store.snapshots},byId=new Map(state.jobs.map(job=>[job.id,job]));
+  const unavailableByChannel=new Map<string,Set<string>>(),activeByChannel=new Map<string,number>();
+  const unavailableFor=(channelId:string)=>{let paths=unavailableByChannel.get(channelId);if(!paths){paths=new Set();unavailableByChannel.set(channelId,paths)}return paths};
+  for(const x of telemetry){
+    activeByChannel.set(x.channelId,(activeByChannel.get(x.channelId)||0)+1);
+    if(x.filePath)unavailableFor(x.channelId).add(normalizeRenderPath(x.filePath));
+  }
+  for(const job of state.jobs){
+    const unavailable=job.status==='UPLOADING'||Boolean(job.youtubeVideoId)||Boolean(job.uploadedAt)||Boolean(job.removedFromPublishList)||['UPLOADED','TRASHED','TRASHED_BY_VYRON'].includes(String(job.storageLifecycle||''));
+    if(unavailable&&job.finalPath)unavailableFor(job.channelId).add(normalizeRenderPath(job.finalPath));
+  }
+  let changed=false;
   for(const channel of state.channels){
     const current=next[channel.id];if(!current)continue;
-    const active=telemetry.filter(x=>x.channelId===channel.id),uploading=active.length;
+    const uploading=activeByChannel.get(channel.id)||0;
     let readyVideos=current.readyVideos,runwayDays=current.runwayDays,level=current.level;
     if(current.folderState==='ONLINE'&&current.rows){
-      const unavailablePaths=new Set<string>();
-      for(const x of active)if(x.filePath)unavailablePaths.add(normalizeRenderPath(x.filePath));
-      for(const job of state.jobs.filter(j=>j.channelId===channel.id)){
-        const unavailable=job.status==='UPLOADING'||Boolean(job.youtubeVideoId)||Boolean(job.uploadedAt)||Boolean(job.removedFromPublishList)||['UPLOADED','TRASHED','TRASHED_BY_VYRON'].includes(String(job.storageLifecycle||''));
-        if(unavailable&&job.finalPath)unavailablePaths.add(normalizeRenderPath(job.finalPath))
-      }
-      readyVideos=readyRows(current.rows,state.jobs).filter(row=>!unavailablePaths.has(normalizeRenderPath(row.file.path))).length;
+      const unavailablePaths=unavailableByChannel.get(channel.id);
+      readyVideos=readyRowsWithIndex(current.rows,byId).filter(row=>!unavailablePaths?.has(normalizeRenderPath(row.file.path))).length;
       runwayDays=inventoryRunwayDays(channel,readyVideos);
       level=inventoryLevel(readyVideos,runwayDays)
     }
@@ -329,7 +347,8 @@ export function refreshInventoryUploadCounts(){
       next[channel.id]={...current,uploadingVideos:uploading,readyVideos,runwayDays,level};changed=true
     }
   }
-  if(changed)useLiveInventory.setState({snapshots:next})
+  if(changed)useLiveInventory.setState({snapshots:next});
+  lastUploadRefresh={snapshots:changed?next:store.snapshots,jobs:state.jobs,channels:state.channels,identities}
 }
 export function inventorySnapshot(channelId:string){return useLiveInventory.getState().snapshots[channelId]}
-export function resetLiveInventoryForTests(){useLiveInventory.setState({snapshots:{},audit:[],globalScanning:false})}
+export function resetLiveInventoryForTests(){lastUploadRefresh=undefined;useLiveInventory.setState({snapshots:{},audit:[],globalScanning:false})}

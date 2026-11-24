@@ -33,26 +33,12 @@ export function trustedSha256(value?:string){return /^[a-f0-9]{64}$/i.test(Strin
 function currentFingerprint(file:RenderFolderVideoFile){const fp=String(file.fingerprint||'').trim().toLowerCase();return trustedSha256(fp)?fp:undefined}
 function successfulHistory(history:UploadHistoryRecord[],channelId:string){return history.filter(x=>x.channelId===channelId&&x.status==='UPLOADED'&&Boolean(x.youtubeVideoId)&&!x.staleLinkClearedAt)}
 function trustedHistory(x:UploadHistoryRecord){return trustedUploadFingerprintProof(x)}
-function historyMatchesFile(x:UploadHistoryRecord,file:RenderFolderVideoFile){const fp=currentFingerprint(file);return Boolean(fp&&trustedHistory(x)&&x.sha256.trim().toLowerCase()===fp&&x.fileSize===file.size)}
 function historyForJob(history:UploadHistoryRecord[],channelId:string,jobId?:string){if(!jobId)return;return successfulHistory(history,channelId).slice().reverse().find(x=>x.jobId===jobId)}
-function latestHistoryAtPath(history:UploadHistoryRecord[],channelId:string,path:string){const p=normalizeRenderPath(path);return successfulHistory(history,channelId).slice().reverse().find(x=>normalizeRenderPath(x.localFilePath)===p)}
-function verifiedHistoryForFile(history:UploadHistoryRecord[],channelId:string,file:RenderFolderVideoFile){return successfulHistory(history,channelId).slice().reverse().find(x=>historyMatchesFile(x,file))}
 function rowEvidence(base:RenderScanRow,h?:UploadHistoryRecord):RenderScanRow{return h?{...base,matchedHistoryId:h.id,historyJobId:h.jobId,youtubeVideoId:h.youtubeVideoId,historyFingerprint:h.sha256||undefined,historyFileSize:h.fileSize,historyUploadedAt:h.uploadedAt,historyProofSource:h.fingerprintProofSource}:base}
 function isHistoricalGeneration(job:VideoJob){return Boolean(job.youtubeVideoId||job.storageLifecycle==='UPLOADED'||job.status==='SCHEDULED'||job.uploadedAt)}
 export function canRefreshCurrentGenerationEvidence(job:VideoJob){return !isHistoricalGeneration(job)}
 function currentGenerationFingerprint(job:VideoJob){const fp=String(job.currentSourceFingerprint||'').trim().toLowerCase();return trustedSha256(fp)?fp:undefined}
 function sourceMatchesCurrentJob(job:VideoJob,file:RenderFolderVideoFile){const fp=currentFingerprint(file),jobFp=currentGenerationFingerprint(job);return Boolean(fp&&jobFp&&fp===jobFp&&job.currentSourceFileSize===file.size)}
-function currentGenerationLeaf(candidates:VideoJob[],scoped:VideoJob[],file:RenderFolderVideoFile){
- const active=candidates.filter(j=>!isHistoricalGeneration(j));
- if(!active.length)return;
- // Any descendant generation, including an uploaded/trashed historical leaf,
- // supersedes its predecessor. Never fall back to a referenced predecessor.
- const superseded=new Set(scoped.filter(j=>j.sourcePreviousJobId).map(j=>j.sourcePreviousJobId!));
- const leaves=active.filter(j=>!superseded.has(j.id));
- if(!leaves.length)return;
- return leaves.find(j=>sourceMatchesCurrentJob(j,file))
-   ||leaves.slice().sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt))[0];
-}
 function currentGenerationRecoveryBlocked(job:VideoJob){
  return Boolean(
   job.youtubeVideoId||job.uploadedAt
@@ -61,7 +47,6 @@ function currentGenerationRecoveryBlocked(job:VideoJob){
  );
 }
 function historicalEvidenceForJob(job:VideoJob,history:UploadHistoryRecord[],channelId:string){return historyForJob(history,channelId,job.id)||successfulHistory(history,channelId).slice().reverse().find(x=>normalizeRenderPath(x.localFilePath)===normalizeRenderPath(job.finalPath||''))}
-function staleWrongRootScanJob(job:VideoJob,history:UploadHistoryRecord[],channelId:string,exactRoot:string){if(!job.finalPath||renderPathInsideRoot(job.finalPath,exactRoot))return false;if(historicalEvidenceForJob(job,history,channelId))return false;return job.sourceOrigin==='render-scan'||job.scanRecoveryState==='CROSS_CHANNEL_SCAN_RECOVERY_REQUIRED'}
 
 export function renderFileNeedsFingerprint(file:RenderFolderVideoFile,jobs:VideoJob[],history:UploadHistoryRecord[],channelId:string,exactRoot:string){
  const path=normalizeRenderPath(file.path),sequence=renderSequence(file.name);
@@ -93,17 +78,64 @@ export function createRenderFingerprintMatcher(jobs:VideoJob[],history:UploadHis
 
 export function classifyChannelRenderFiles(files:RenderFolderVideoFile[],jobs:VideoJob[],history:UploadHistoryRecord[],channelId:string,exactRoot:string):RenderScanRow[]{
  const scoped=jobs.filter(j=>j.channelId===channelId),seen=new Set<string>(),historyRows=successfulHistory(history,channelId);
+ // Build the same ordered lookups once per channel instead of filtering the
+ // entire job and upload history again for every physical file. A later
+ // history record must still win, while the first matching job must still win.
+ const historyByPath=new Map<string,UploadHistoryRecord>(),historyByJob=new Map<string,UploadHistoryRecord>();
+ const trustedByHash=new Map<string,Map<number,UploadHistoryRecord>>();
+ for(const item of historyRows){
+  historyByPath.set(normalizeRenderPath(item.localFilePath),item);
+  if(item.jobId)historyByJob.set(item.jobId,item);
+  if(trustedHistory(item)){
+   const hash=item.sha256.trim().toLowerCase();let sizes=trustedByHash.get(hash);
+   if(!sizes){sizes=new Map();trustedByHash.set(hash,sizes)}
+   sizes.set(item.fileSize,item);
+  }
+ }
+ const proofForJob=(job:VideoJob)=>historyByJob.get(job.id)||historyByPath.get(normalizeRenderPath(job.finalPath||''));
+ const staleWrongRoot=(job:VideoJob)=>Boolean(job.finalPath&&!renderPathInsideRoot(job.finalPath,exactRoot)&&!proofForJob(job)&&(job.sourceOrigin==='render-scan'||job.scanRecoveryState==='CROSS_CHANNEL_SCAN_RECOVERY_REQUIRED'));
+ const superseded=new Set(scoped.filter(j=>j.sourcePreviousJobId).map(j=>j.sourcePreviousJobId!));
+ type JobGroup={historical?:VideoJob;latestActive?:VideoJob;matching:Map<string,Map<number|undefined,VideoJob>>};
+ const buildGroup=(candidates:VideoJob[]):JobGroup=>{
+  const active=candidates.filter(j=>!isHistoricalGeneration(j)&&!superseded.has(j.id));
+  const matching=new Map<string,Map<number|undefined,VideoJob>>();
+  for(const job of active){
+   const hash=currentGenerationFingerprint(job);if(!hash||Number.isNaN(job.currentSourceFileSize))continue;
+   let sizes=matching.get(hash);if(!sizes){sizes=new Map();matching.set(hash,sizes)}
+   if(!sizes.has(job.currentSourceFileSize))sizes.set(job.currentSourceFileSize,job);
+  }
+  return{historical:candidates.find(isHistoricalGeneration),latestActive:active.slice().sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt))[0],matching};
+ };
+ const paths=new Map<string,VideoJob[]>(),numbers=new Map<number,VideoJob[]>();
+ const currentByHash=new Map<string,Map<number|undefined,VideoJob>>();
+ for(const job of scoped){
+  const path=normalizeRenderPath(job.finalPath||''),byPath=paths.get(path)||[];byPath.push(job);paths.set(path,byPath);
+  if(!staleWrongRoot(job)){const byNumber=numbers.get(job.number)||[];byNumber.push(job);numbers.set(job.number,byNumber)}
+  if(!isHistoricalGeneration(job)){
+   const hash=currentGenerationFingerprint(job);
+   if(hash&&!Number.isNaN(job.currentSourceFileSize)){
+    let sizes=currentByHash.get(hash);if(!sizes){sizes=new Map();currentByHash.set(hash,sizes)}
+    if(!sizes.has(job.currentSourceFileSize))sizes.set(job.currentSourceFileSize,job);
+   }
+  }
+ }
+ const pathGroups=new Map([...paths].map(([key,rows])=>[key,buildGroup(rows)]));
+ const numberGroups=new Map([...numbers].map(([key,rows])=>[key,buildGroup(rows)]));
+ const matchGroup=(group:JobGroup|undefined,fp:string|undefined,size:number)=>{
+  if(!group)return;
+  return (fp&&!Number.isNaN(size)?group.matching.get(fp)?.get(size):undefined)||group.latestActive;
+ };
  return files.map(file=>{
   const path=normalizeRenderPath(file.path),sequence=renderSequence(file.name),fp=currentFingerprint(file);
   const base=(classification:RenderScanPrimaryClass,reason:string,matchedJobId?:string):RenderScanRow=>({file,sequence,matchedJobId,classification,reason,currentFingerprint:fp,currentFileSize:file.size});
   if(!renderPathInsideRoot(path,exactRoot))return base('INVALID','OUTSIDE_EXACT_CHANNEL_ROOT');
   if(seen.has(path))return base('DUPLICATE_LOCAL','DUPLICATE_CANONICAL_PATH');seen.add(path);
 
-  const verified=verifiedHistoryForFile(historyRows,channelId,file);
+  const verified=fp&&!Number.isNaN(file.size)?trustedByHash.get(fp)?.get(file.size):undefined;
   if(verified)return rowEvidence(base('UPLOADED_LOCAL_COPY',normalizeRenderPath(verified.localFilePath)===path?'FINGERPRINT_VERIFIED_EXACT_PATH_UPLOAD':'FINGERPRINT_VERIFIED_SAME_CHANNEL_UPLOAD',verified.jobId),verified);
 
-  const exactJobs=scoped.filter(j=>normalizeRenderPath(j.finalPath||'')===path);
-  const activeExact=currentGenerationLeaf(exactJobs,scoped,file);
+  const exactGroup=pathGroups.get(path);
+  const activeExact=matchGroup(exactGroup,fp,file.size);
   if(activeExact){
    if(currentGenerationRecoveryBlocked(activeExact))return base('VERIFY_REQUIRED','CURRENT_LEAF_RECOVERY_BLOCKED',activeExact.id);
    if(fp&&sourceMatchesCurrentJob(activeExact,file))return base('KNOWN_EXACT','CURRENT_GENERATION_FINGERPRINT_MATCH',activeExact.id);
@@ -111,10 +143,10 @@ export function classifyChannelRenderFiles(files:RenderFolderVideoFile[],jobs:Vi
    return base('VERIFY_REQUIRED','CURRENT_FINGERPRINT_REQUIRED_FOR_ACTIVE_PATH',activeExact.id);
   }
 
-  const historicalExact=exactJobs.find(j=>isHistoricalGeneration(j));
-  const pathHistory=latestHistoryAtPath(historyRows,channelId,path);
+  const historicalExact=exactGroup?.historical;
+  const pathHistory=historyByPath.get(path);
   if(historicalExact||pathHistory){
-   const proof=historicalExact?historicalEvidenceForJob(historicalExact,historyRows,channelId):pathHistory;
+   const proof=historicalExact?proofForJob(historicalExact):pathHistory;
    if(!fp)return rowEvidence(base('VERIFY_REQUIRED','CURRENT_FINGERPRINT_REQUIRED_FOR_HISTORICAL_PATH',historicalExact?.id||proof?.jobId),proof);
    // A historical job's own current-generation fingerprint is enough to prove that
    // the same bytes are still sitting on disk. Do not manufacture a NEW generation
@@ -128,14 +160,14 @@ export function classifyChannelRenderFiles(files:RenderFolderVideoFile[],jobs:Vi
   }
 
   if(fp){
-   const currentJob=scoped.find(j=>!isHistoricalGeneration(j)&&currentGenerationFingerprint(j)===fp&&j.currentSourceFileSize===file.size);
+   const currentJob=!Number.isNaN(file.size)?currentByHash.get(fp)?.get(file.size):undefined;
    if(currentJob)return base('KNOWN_EXACT','CURRENT_GENERATION_FINGERPRINT_MATCH',currentJob.id);
   }
 
   if(!sequence)return base('INVALID','SEQUENCE_NOT_FOUND');
 
-  const sameNumber=scoped.filter(j=>j.number===sequence&&!staleWrongRootScanJob(j,historyRows,channelId,exactRoot));
-  const activeSame=currentGenerationLeaf(sameNumber,scoped,file);
+  const sameNumber=numberGroups.get(sequence);
+  const activeSame=matchGroup(sameNumber,fp,file.size);
   if(activeSame){
    if(currentGenerationRecoveryBlocked(activeSame))return base('VERIFY_REQUIRED','CURRENT_LEAF_RECOVERY_BLOCKED',activeSame.id);
    if(fp&&sourceMatchesCurrentJob(activeSame,file))return base('KNOWN_EXACT','SAME_ACTIVE_GENERATION_FINGERPRINT_MATCH',activeSame.id);
@@ -143,9 +175,9 @@ export function classifyChannelRenderFiles(files:RenderFolderVideoFile[],jobs:Vi
    return base('VERIFY_REQUIRED','CURRENT_FINGERPRINT_REQUIRED_FOR_REUSED_SEQUENCE',activeSame.id);
   }
 
-  const historicalSame=sameNumber.find(j=>isHistoricalGeneration(j));
+  const historicalSame=sameNumber?.historical;
   if(historicalSame){
-   const proof=historicalEvidenceForJob(historicalSame,historyRows,channelId);
+   const proof=proofForJob(historicalSame);
    if(!fp)return rowEvidence(base('VERIFY_REQUIRED','CURRENT_FINGERPRINT_REQUIRED_FOR_REUSED_SEQUENCE',historicalSame.id),proof);
    if(proof&&trustedHistory(proof))return rowEvidence(base('NEW_GENERATION','HISTORICAL_SEQUENCE_REUSED_WITH_NEW_FINGERPRINT',historicalSame.id),proof);
    return rowEvidence(base('NEW_GENERATION','LEGACY_SEQUENCE_WITHOUT_FINGERPRINT_CURRENT_BYTES_UNSEEN',historicalSame.id),proof);
