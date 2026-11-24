@@ -13,7 +13,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use uuid::Uuid;
 
 use crate::{metadata_queue, oauth_vault, security, storage};
@@ -615,7 +615,7 @@ fn merge_states(local: &Value, imported: &Value) -> (Value, MergeSummary, Vec<Re
 
 
 fn app_data_json(app:&AppHandle,name:&str)->Result<Value,String>{
- let path=app.path().app_data_dir().map_err(|e|format!("MIGRATION_APP_DATA_PATH_FAILED: {e}"))?.join(name);
+ let path=crate::apex_paths::data_dir(app).map_err(|e|format!("MIGRATION_APP_DATA_PATH_FAILED: {e}"))?.join(name);
  if !path.exists(){return Ok(json!({}))}
  let bytes=fs::read(&path).map_err(|e|format!("MIGRATION_METADATA_READ_FAILED: {name}: {e}"))?;
  serde_json::from_slice(&bytes).map_err(|e|format!("MIGRATION_METADATA_PARSE_FAILED: {name}: {e}"))
@@ -677,9 +677,10 @@ fn merge_google_config(local:&Value,imported:&Value)->Value{
  Value::Object(out)
 }
 fn metadata_paths(app:&AppHandle)->Result<(PathBuf,PathBuf),String>{
- let root=app.path().app_data_dir().map_err(|e|format!("MIGRATION_APP_DATA_PATH_FAILED: {e}"))?;
- Ok((root.join("youtube-oauth.json"),root.join("google-config.json")))
+ let root=crate::apex_paths::data_dir(app).map_err(|e|format!("MIGRATION_APP_DATA_PATH_FAILED: {e}"))?;
+ Ok(metadata_paths_in_root(&root))
 }
+fn metadata_paths_in_root(root:&Path)->(PathBuf,PathBuf){(root.join("youtube-oauth.json"),root.join("google-config.json"))}
 fn write_json_private(path:&Path,value:&Value)->Result<(),String>{
  let bytes=serde_json::to_vec_pretty(value).map_err(|e|format!("MIGRATION_METADATA_SERIALIZE_FAILED: {e}"))?;
  write_atomic(path,&bytes)?;
@@ -753,22 +754,17 @@ fn cleanup_integration_accounts(accounts:&[String])->Result<(),String>{
 }
 
 fn backup_root(app: &AppHandle) -> Result<PathBuf, String> {
-    let root = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("MIGRATION_BACKUP_PATH_FAILED: {e}"))?
-        .join("migration-backups");
-    fs::create_dir_all(&root).map_err(|e| format!("MIGRATION_BACKUP_MKDIR_FAILED: {e}"))?;
-    Ok(root)
+    let root=crate::apex_paths::data_dir(app).map_err(|e|format!("MIGRATION_BACKUP_PATH_FAILED: {e}"))?;
+    backup_root_in_root(&root)
+}
+fn backup_root_in_root(root:&Path)->Result<PathBuf,String>{
+    crate::apex_paths_fs::private_child_dir(root,"migration-backups").map_err(|e|format!("MIGRATION_BACKUP_MKDIR_FAILED: {e}"))
 }
 
 fn state_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("state.json"))
+    Ok(state_path_in_root(&crate::apex_paths::data_dir(app)?))
 }
+fn state_path_in_root(root:&Path)->PathBuf{root.join("state.json")}
 
 fn rotate_backups(root: &Path) {
     let Ok(mut rows) = fs::read_dir(root).map(|r| {
@@ -873,8 +869,10 @@ where F:FnOnce()->Result<T,String>,R:FnOnce()->Result<(),String>{
 
 
 fn transaction_marker_path(app:&AppHandle)->Result<PathBuf,String>{
-    Ok(app.path().app_data_dir().map_err(|e|format!("MIGRATION_TXN_PATH_FAILED: {e}"))?.join("migration-transaction.json"))
+    let root=crate::apex_paths::data_dir(app).map_err(|e|format!("MIGRATION_TXN_PATH_FAILED: {e}"))?;
+    Ok(transaction_marker_path_in_root(&root))
 }
+fn transaction_marker_path_in_root(root:&Path)->PathBuf{root.join("migration-transaction.json")}
 fn valid_backup_id(id:&str)->bool{
     !id.is_empty() && !id.contains('/') && !id.contains('\\') && id!="." && id!=".."
 }
@@ -1122,6 +1120,23 @@ pub fn migration_restore_latest(app: AppHandle) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn migration_paths_stay_in_private_apex_root(){
+        let base=std::env::temp_dir().join(format!("vyron-migration-apex-{}",Uuid::new_v4()));
+        fs::create_dir(&base).unwrap();
+        let stable=base.join("studio.channelflow.desktop");fs::create_dir(&stable).unwrap();
+        let sentinel=stable.join("state.json");fs::write(&sentinel,b"stable fixture").unwrap();
+        let root=crate::apex_paths_fs::private_data_dir(&base).unwrap();
+        let (youtube,google)=metadata_paths_in_root(&root);
+        assert_eq!(youtube,root.join("youtube-oauth.json"));
+        assert_eq!(google,root.join("google-config.json"));
+        assert_eq!(state_path_in_root(&root),root.join("state.json"));
+        assert_eq!(transaction_marker_path_in_root(&root),root.join("migration-transaction.json"));
+        assert_eq!(backup_root_in_root(&root).unwrap(),root.join("migration-backups"));
+        assert_eq!(fs::read(sentinel).unwrap(),b"stable fixture");
+        fs::remove_dir_all(base).unwrap();
+    }
 
     fn sample_payload() -> PortablePayload {
         let state = json!({"channels":[]});

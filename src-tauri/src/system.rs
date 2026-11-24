@@ -4,7 +4,7 @@ use tauri::{AppHandle, Manager};
 
 #[tauri::command]
 pub fn diagnostics(app: AppHandle, workspace: String) -> Value {
-    let data = app.path().app_data_dir().map(|p| p.display().to_string()).unwrap_or_default();
+    let data = crate::apex_paths::data_dir(&app).map(|p| p.display().to_string()).unwrap_or_default();
     let version = app.package_info().version.to_string();
     let p = PathBuf::from(&workspace);
     let exists = !workspace.trim().is_empty() && p.exists();

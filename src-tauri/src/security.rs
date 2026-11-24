@@ -71,9 +71,11 @@ fn record_runtime(account:&str,operation:&str,cache:&str,osstatus:Option<i32>,mi
 }
 
 
-const SERVICE:&str="com.scaleup.vyron.security";
+// APEX must never address the installed 6.1.17 Keychain namespace. Importing
+// existing authorizations requires a separate explicit, verified workflow.
+const SERVICE:&str="com.scaleup.vyron.apex.security";
 pub const LEGACY_SERVICE:&str=SERVICE;
-pub const CANONICAL_SERVICE:&str="com.scaleup.vyron.security.v2";
+pub const CANONICAL_SERVICE:&str="com.scaleup.vyron.apex.security.v2";
 pub const CANONICAL_ACCESSIBILITY_POLICY:&str="kSecAttrAccessibleWhenUnlocked(default)";
 
 #[cfg(target_os="windows")]
@@ -565,7 +567,17 @@ pub fn canonical_verify_secret(account:&str,expected:&str)->Result<bool,String>{
 pub fn legacy_get_secret_once(account:&str)->Result<Option<String>,String>{get_secret(account)}
 pub fn canonical_service()->&'static str{CANONICAL_SERVICE}
 
-pub const OAUTH_VAULT_SERVICE:&str="com.scaleup.vyron.oauth-vault";
+pub const OAUTH_VAULT_SERVICE:&str="com.scaleup.vyron.apex.oauth-vault";
+#[cfg(test)]
+#[test]
+fn apex_keychain_services_are_distinct_from_installed_vyron() {
+ assert_ne!(SERVICE, "com.scaleup.vyron.security");
+ assert_ne!(CANONICAL_SERVICE, "com.scaleup.vyron.security.v2");
+ assert_ne!(OAUTH_VAULT_SERVICE, "com.scaleup.vyron.oauth-vault");
+ assert!(SERVICE.starts_with("com.scaleup.vyron.apex."));
+ assert!(CANONICAL_SERVICE.starts_with("com.scaleup.vyron.apex."));
+ assert!(OAUTH_VAULT_SERVICE.starts_with("com.scaleup.vyron.apex."));
+}
 pub const OAUTH_VAULT_MASTER_ACCOUNT:&str="master-key";
 #[cfg(target_os="macos")]
 pub fn oauth_vault_master_key_get(interactive:bool)->Result<Option<String>,String>{
@@ -1097,7 +1109,7 @@ pub fn security_oauth_inventory(app:tauri::AppHandle)->Result<serde_json::Value,
  use tauri::Manager;
  let service=CANONICAL_SERVICE.to_string();
  let legacy_service=SERVICE.to_string();
- let data_dir=app.path().app_data_dir().map_err(|e|format!("APP_DATA_DIR_FAILED: {e}"))?;
+ let data_dir=crate::apex_paths::data_dir(&app)?;
  let json_path=data_dir.join("youtube-oauth.json");
  let mut json_status="NOT_FOUND".to_string();
  let mut json_profiles=0usize;

@@ -17,7 +17,7 @@ fn validate_channel_id(channel_id:&str)->Result<(),String>{
 }
 
 fn inventory_root(app:&AppHandle)->Result<PathBuf,String>{
-    let root=app.path().app_data_dir().map_err(|e|format!("INVENTORY_STORAGE_PATH_FAILED: {e}"))?.join("youtube-inventory");
+    let root=crate::apex_paths::data_dir(app)?.join("youtube-inventory");
     fs::create_dir_all(&root).map_err(|e|format!("INVENTORY_STORAGE_CREATE_FAILED: {e}"))?;
     Ok(root)
 }

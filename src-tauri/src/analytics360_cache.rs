@@ -736,7 +736,7 @@ pub async fn analytics360_fleet(app:AppHandle,channel_ids:Vec<String>)->Result<V
     }
     #[cfg(target_os="macos")]{
         if channel_ids.len()>200{return Err("Выберите не более 200 каналов".into())}
-        let root=app.path().app_data_dir().map_err(|e|e.to_string())?
+        let root=crate::apex_paths::data_dir(&app)?
             .join("AIAnalytics").join("cache");
         tauri::async_runtime::spawn_blocking(move||fleet_summaries(&root,&channel_ids))
             .await.map_err(|e|format!("ANALYTICS_FLEET_TASK_FAILED: {e}"))
@@ -754,7 +754,7 @@ pub async fn analytics360_read(
     }
     #[cfg(target_os="macos")] {
         if !valid_channel_id(&channel_id){return Err("Некорректный Channel ID".into())}
-        let cache=app.path().app_data_dir().map_err(|e|e.to_string())?
+        let cache=crate::apex_paths::data_dir(&app)?
             .join("AIAnalytics").join("cache").join(&channel_id);
         tauri::async_runtime::spawn_blocking(move||load_from_disk(&cache,&channel_id,page.unwrap_or(0),page_size.unwrap_or(40),
             period.as_deref().unwrap_or("28"),start_date.as_deref(),end_date.as_deref(),video_id.as_deref(),content_type.as_deref(),sort.as_deref()))

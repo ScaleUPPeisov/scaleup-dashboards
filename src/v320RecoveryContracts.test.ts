@@ -5,8 +5,9 @@ describe('VYRON 3.2 crash/power recovery contracts',()=>{
  it('uses durable app-data recovery journal with schema and no OAuth secret fields',()=>{
    const r=read('src-tauri/src/recovery.rs');
    expect(r).toContain('RECOVERY_SCHEMA_VERSION:u32=1');
-   expect(r).toContain('.app_data_dir()');
-   expect(r).toContain('.join("recovery")');
+   expect(r).toContain('crate::apex_paths::data_dir(app)');
+   expect(r).toContain('private_child_dir(root,"recovery")');
+   expect(r).toContain('session_file_in_dir');
    expect(r).toContain('sync_all()');
    expect(r).toContain('clean_shutdown');
    expect(r).toContain('volume_uuid');

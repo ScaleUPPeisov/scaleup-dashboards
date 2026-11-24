@@ -7,7 +7,7 @@ use std::{
     path::{Component, Path, PathBuf},
     process::Command,
 };
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use sha2::{Digest,Sha256};
 use uuid::Uuid;
 
@@ -129,16 +129,24 @@ struct RuntimeMarker{
 }
 
 fn recovery_dir(app:&AppHandle)->Result<PathBuf,String>{
-    let dir=app.path().app_data_dir().map_err(|e|e.to_string())?.join("recovery");
-    fs::create_dir_all(&dir).map_err(|e|format!("recovery mkdir: {e}"))?;
-    Ok(dir)
+    recovery_dir_in_root(&crate::apex_paths::data_dir(app)?)
+}
+fn recovery_dir_in_root(root:&Path)->Result<PathBuf,String>{
+    crate::apex_paths_fs::private_child_dir(root,"recovery").map_err(|e|format!("recovery mkdir: {e}"))
+}
+fn sessions_dir_in_root(root:&Path)->Result<PathBuf,String>{
+    crate::apex_paths_fs::private_child_dir(&recovery_dir_in_root(root)?,"sessions").map_err(|e|format!("recovery sessions mkdir: {e}"))
 }
 fn sessions_dir(app:&AppHandle)->Result<PathBuf,String>{
-    let dir=recovery_dir(app)?.join("sessions");
-    fs::create_dir_all(&dir).map_err(|e|format!("recovery sessions mkdir: {e}"))?;
-    Ok(dir)
+    sessions_dir_in_root(&crate::apex_paths::data_dir(app)?)
 }
-fn session_path(app:&AppHandle,id:&str)->Result<PathBuf,String>{Ok(sessions_dir(app)?.join(format!("{id}.json")))}
+fn session_file_in_dir(dir:&Path,id:&str)->Result<PathBuf,String>{
+    if id.is_empty()||id=="."||id==".."||id.contains('/')||id.contains('\\')||id.contains(':')||id.contains('\0'){
+        return Err("RECOVERY_SESSION_ID_INVALID".into());
+    }
+    Ok(dir.join(format!("{id}.json")))
+}
+fn session_path(app:&AppHandle,id:&str)->Result<PathBuf,String>{session_file_in_dir(&sessions_dir(app)?,id)}
 fn runtime_path(app:&AppHandle)->Result<PathBuf,String>{Ok(recovery_dir(app)?.join("runtime.json"))}
 fn boot_path(app:&AppHandle)->Result<PathBuf,String>{Ok(recovery_dir(app)?.join("boot.json"))}
 
@@ -499,6 +507,21 @@ pub fn set_recovering(app:&AppHandle,id:&str)->Result<(),String>{
 mod tests{
     use super::*;
     fn temp(name:&str)->PathBuf{std::env::temp_dir().join(format!("vyron-recovery-{name}-{}",Uuid::new_v4()))}
+    #[test]
+    fn recovery_uses_private_apex_root_and_rejects_escaping_session_ids(){
+        let base=temp("apex-root");fs::create_dir(&base).unwrap();
+        let stable=base.join("studio.channelflow.desktop");fs::create_dir(&stable).unwrap();
+        let sentinel=stable.join("state.json");fs::write(&sentinel,b"stable fixture").unwrap();
+        let root=crate::apex_paths_fs::private_data_dir(&base).unwrap();
+        let sessions=sessions_dir_in_root(&root).unwrap();
+        assert_eq!(sessions,root.join("recovery").join("sessions"));
+        assert_eq!(session_file_in_dir(&sessions,"fixture-01").unwrap(),sessions.join("fixture-01.json"));
+        for bad in ["",".","..","../outside","..\\outside","nested/name","nested\\name","C:outside","bad\0id"]{
+            assert_eq!(session_file_in_dir(&sessions,bad).unwrap_err(),"RECOVERY_SESSION_ID_INVALID");
+        }
+        assert_eq!(fs::read(sentinel).unwrap(),b"stable fixture");
+        fs::remove_dir_all(base).unwrap();
+    }
     #[test]
     fn durable_atomic_write_roundtrips(){
         let d=temp("atomic");fs::create_dir_all(&d).unwrap();let p=d.join("x.json");

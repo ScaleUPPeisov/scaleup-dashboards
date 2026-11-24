@@ -13,12 +13,12 @@ describe('VYRON 2.1.10 OAuth truth and update continuity contracts',()=>{
   expect(ui).not.toContain('security_oauth_inventory');
   expect(ui).not.toContain('refresh_token_account');
  });
- it('credential ABI is version-independent and stable',()=>{
+ it('keeps the credential ABI stable within the isolated APEX namespace',()=>{
   const y=read('src-tauri/src/youtube.rs');
   const sec=read('src-tauri/src/security.rs');
   const tauri=JSON.parse(read('src-tauri/tauri.conf.json'));
   expect(tauri.identifier).toBe('studio.channelflow.desktop');
-  expect(sec).toContain('pub const CANONICAL_SERVICE:&str="com.scaleup.vyron.security.v2"');
+  expect(sec).toContain('pub const CANONICAL_SERVICE:&str="com.scaleup.vyron.apex.security.v2"');
   expect(y).toContain('const CREDENTIAL_SCHEMA_VERSION:u32=2;');
   expect(y).toContain('format!("oauth.{id}.{kind}")');
   expect(y).not.toContain('com.scaleup.vyron.security.2.1.9');

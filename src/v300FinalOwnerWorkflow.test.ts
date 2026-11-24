@@ -76,7 +76,7 @@ describe('VYRON 3.0.0 final owner workflow contracts',()=>{
   expect(rust).toContain('StartupKeyPlan::LocalPersistent');
   expect(rust).toContain('"keychainRequiredForNormalStartup":false');
   expect(rust).toContain('read_legacy_with_keychain');
-  expect(security).toContain('com.scaleup.vyron.oauth-vault');
+  expect(security).toContain('com.scaleup.vyron.apex.oauth-vault');
   expect(security).toContain('master-key');
  });
  it('keeps candidate build/test only and requires explicit owner release confirmation',()=>{

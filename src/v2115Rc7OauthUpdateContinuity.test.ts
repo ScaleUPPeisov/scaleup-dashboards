@@ -7,7 +7,7 @@ describe('VYRON 2.1.15 RC7 OAuth update continuity',()=>{
     const conf=JSON.parse(read('src-tauri/tauri.conf.json'));
     const sec=read('src-tauri/src/security.rs');
     expect(conf.identifier).toBe('studio.channelflow.desktop');
-    expect(sec).toContain('com.scaleup.vyron.security.v2');
+    expect(sec).toContain('com.scaleup.vyron.apex.security.v2');
   });
   it('normal refresh resolves the active pointer then uses canonical-first targeted fallback',()=>{
     const y=read('src-tauri/src/youtube.rs');

@@ -6843,8 +6843,8 @@ mod v219_rc7_secitem_ui_skip_tests{
   assert!(state.profiles.is_empty());
   assert_eq!(state.global_client_secret,MIGRATION_NOT_STARTED);
   // Passive metadata/profile functions never hydrate legacy secrets; unavailable credentials require Google reconnect.
-  assert_eq!(security::canonical_service(),"com.scaleup.vyron.security.v2");
-  assert_eq!(security::LEGACY_SERVICE,"com.scaleup.vyron.security");
+  assert_eq!(security::canonical_service(),"com.scaleup.vyron.apex.security.v2");
+  assert_eq!(security::LEGACY_SERVICE,"com.scaleup.vyron.apex.security");
  }
  #[test]
  fn access_token_replacement_is_memory_only(){
@@ -6913,7 +6913,7 @@ mod v2110_oauth_continuity_tests{
  }
  #[test]fn persistent_credential_abi_is_version_independent(){
   assert_eq!(CREDENTIAL_SCHEMA_VERSION,2);
-  assert_eq!(security::canonical_service(),"com.scaleup.vyron.security.v2");
+  assert_eq!(security::canonical_service(),"com.scaleup.vyron.apex.security.v2");
   assert_eq!(oauth_key("abc-123","refresh_token"),"oauth.abc-123.refresh_token");
   let account=oauth_key("P1","refresh_token");
   for _app_version in ["2.1.9","2.1.10","2.1.11"]{assert_eq!(oauth_key("P1","refresh_token"),account);}
@@ -7015,7 +7015,7 @@ mod v2111_client_secret_continuity_tests{
   let account=oauth_key("P1","client_secret");
   for _version in ["2.1.11","2.1.12","2.1.13"]{assert_eq!(oauth_key("P1","client_secret"),account);}
   assert_eq!(account,"oauth.P1.client_secret");
-  assert_eq!(security::canonical_service(),"com.scaleup.vyron.security.v2");
+  assert_eq!(security::canonical_service(),"com.scaleup.vyron.apex.security.v2");
  }
 }
 

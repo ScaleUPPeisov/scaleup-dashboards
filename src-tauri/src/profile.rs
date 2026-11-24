@@ -11,7 +11,7 @@ pub struct ProfileAvatarPayload{
 }
 
 fn profile_dir(app:&AppHandle)->Result<PathBuf,String>{
-    let dir=app.path().app_data_dir().map_err(|e|format!("PROFILE_DATA_DIR: {e}"))?.join("profile");
+    let dir=crate::apex_paths::data_dir(app)?.join("profile");
     fs::create_dir_all(&dir).map_err(|e|format!("PROFILE_MKDIR: {e}"))?;
     Ok(dir)
 }
