@@ -32,7 +32,40 @@ export type TaskSnapshot={version:1;tasks:PersistentTask[]};
 const STORAGE_KEY='vyron:task-engine:v1';
 const EVENT='vyron:task-engine';
 const MAX_TASKS=500;
+const UPLOAD_PROGRESS_FLUSH_MS=250;
 let memory:TaskSnapshot|undefined;
+let progressTimer:ReturnType<typeof setTimeout>|undefined;
+let progressPending=false;
+
+function onProgressVisibilityChange(){
+ if(typeof document!=='undefined'&&document.visibilityState==='hidden')flushPendingTaskProgress();
+}
+function removeProgressFlushListeners(){
+ if(typeof window!=='undefined'){
+  window.removeEventListener('pagehide',flushPendingTaskProgress);
+  window.removeEventListener('beforeunload',flushPendingTaskProgress);
+ }
+ if(typeof document!=='undefined')document.removeEventListener('visibilitychange',onProgressVisibilityChange);
+}
+function cancelPendingProgress(){
+ if(progressTimer!==undefined)clearTimeout(progressTimer);
+ progressTimer=undefined;progressPending=false;removeProgressFlushListeners();
+}
+/** Flush the latest buffered upload progress before the host listener unmounts. */
+export function flushPendingTaskProgress(){
+ if(!progressPending)return;
+ emit();
+}
+function scheduleProgressFlush(){
+ if(progressPending)return;
+ progressPending=true;
+ if(typeof window!=='undefined'){
+  window.addEventListener('pagehide',flushPendingTaskProgress);
+  window.addEventListener('beforeunload',flushPendingTaskProgress);
+ }
+ if(typeof document!=='undefined')document.addEventListener('visibilitychange',onProgressVisibilityChange);
+ progressTimer=setTimeout(flushPendingTaskProgress,UPLOAD_PROGRESS_FLUSH_MS);
+}
 
 const now=()=>new Date().toISOString();
 const clamp=(value:number|undefined)=>value==null||!Number.isFinite(value)?undefined:Math.max(0,Math.min(100,value));
@@ -51,13 +84,17 @@ function persist(){
  try{localStorage.setItem(STORAGE_KEY,JSON.stringify(memory))}catch{}
 }
 function emit(){
+ cancelPendingProgress();
  persist();
  try{window.dispatchEvent(new CustomEvent(EVENT,{detail:snapshotTasks()}))}catch{}
 }
-function replace(task:PersistentTask){
+function replace(task:PersistentTask,deferProgress=false){
  const state=readRaw(),i=state.tasks.findIndex(x=>x.taskId===task.taskId);
- const tasks=i>=0?state.tasks.map((x,n)=>n===i?task:x):[...state.tasks,task];
- memory={version:1,tasks:tasks.slice(-MAX_TASKS)};emit();return task;
+ const tasks=state.tasks.slice();
+ if(i>=0)tasks[i]=task;else tasks.push(task);
+ memory={version:1,tasks:tasks.length>MAX_TASKS?tasks.slice(-MAX_TASKS):tasks};
+ if(deferProgress)scheduleProgressFlush();else emit();
+ return task;
 }
 export function snapshotTasks():TaskSnapshot{
  const state=readRaw();
@@ -87,7 +124,10 @@ export function startTask(taskId:string,detail?:string){
 }
 export function updateTask(taskId:string,patch:Partial<Pick<PersistentTask,'progress'|'completed'|'total'|'bytesCompleted'|'bytesTotal'|'speedBps'|'etaSeconds'|'detail'|'label'|'channelName'|'recoveryStatus'>>){
  const existing=readRaw().tasks.find(x=>x.taskId===taskId);if(!existing)return;
- return replace({...existing,...patch,progress:clamp(patch.progress??existing.progress),updatedAt:now()});
+ // High-frequency upload progress remains immediately readable in memory.
+ // Lifecycle and identity changes retain synchronous persistence/notification.
+ const deferProgress=existing.type==='UPLOAD'&&existing.state==='RUNNING'&&patch.label===undefined&&patch.channelName===undefined&&patch.recoveryStatus===undefined;
+ return replace({...existing,...patch,progress:clamp(patch.progress??existing.progress),updatedAt:now()},deferProgress);
 }
 export function completeTask(taskId:string,detail?:string){
  const existing=readRaw().tasks.find(x=>x.taskId===taskId);if(!existing)return;
@@ -131,5 +171,5 @@ export function reconcileUploadTasks(activeUploadIds:Set<string>,queuedUploadIds
  });
  if(changed){memory={version:1,tasks};emit()}
 }
-export function resetTaskEngineForTests(){memory={version:1,tasks:[]};try{localStorage.removeItem(STORAGE_KEY)}catch{}}
-export function reloadTaskEngineFromStorageForTests(){memory=undefined;return snapshotTasks()}
+export function resetTaskEngineForTests(){cancelPendingProgress();memory={version:1,tasks:[]};try{localStorage.removeItem(STORAGE_KEY)}catch{}}
+export function reloadTaskEngineFromStorageForTests(){cancelPendingProgress();memory=undefined;return snapshotTasks()}

@@ -26,7 +26,7 @@ describe('VYRON 3.0.0 Publisher/UI contracts',()=>{
  it('normal Publisher auto-materializes unmatched current fingerprints without YouTube-ID gate',()=>{
   expect(p).toContain('reconcilePublisherInventory({channelId');
   expect(p).toContain('if(reconciliation.createRows.length)materializeRenderGenerationRows(reconciliation.createRows,false,scanPreview)');
-  expect(inventory).toContain('renderFileNeedsFingerprint');
+  expect(inventory).toContain('createRenderFingerprintMatcher');
   expect(inventory).toContain('youtubeFileFingerprint');
   expect(p).toContain("scanInventoryChannel(channelId,reason)");
   expect(p).toContain('successfulUploadForHash');

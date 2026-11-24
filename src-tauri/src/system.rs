@@ -1,28 +1,6 @@
 use serde_json::{json, Value};
-use std::{fs, path::{Path, PathBuf}};
+use std::{fs, path::PathBuf};
 use tauri::{AppHandle, Manager};
-
-fn migrate_legacy_workspace(base: &Path) -> Result<PathBuf, String> {
-    let legacy = base.join("ChannelFlow");
-    let target = base.join("VYRON");
-
-    if target.exists() {
-        return Ok(target);
-    }
-
-    if legacy.exists() {
-        match fs::rename(&legacy, &target) {
-            Ok(_) => return Ok(target),
-            Err(e) => {
-                eprintln!("VYRON workspace migration deferred: {e}");
-                return Ok(legacy);
-            }
-        }
-    }
-
-    fs::create_dir_all(&target).map_err(|e| format!("Не удалось создать Workspace VYRON: {e}"))?;
-    Ok(target)
-}
 
 #[tauri::command]
 pub fn diagnostics(app: AppHandle, workspace: String) -> Value {
@@ -63,9 +41,7 @@ pub fn diagnostics(app: AppHandle, workspace: String) -> Value {
 
 #[tauri::command]
 pub fn default_workspace(app: AppHandle) -> Result<String, String> {
-    let base = app.path().document_dir().or_else(|_| app.path().home_dir())
-        .map_err(|e| format!("Не удалось определить папку пользователя: {e}"))?;
-    let p = migrate_legacy_workspace(&base)?;
+    let p = crate::apex_paths_fs::private_child_dir(&crate::apex_paths::documents_root(&app)?,"Workspace")?;
     fs::create_dir_all(&p).map_err(|e| format!("Не удалось создать Workspace: {e}"))?;
     let probe = p.join(".vyron_write_test");
     fs::write(&probe, b"ok").map_err(|e| format!("Нет записи в Workspace: {e}"))?;

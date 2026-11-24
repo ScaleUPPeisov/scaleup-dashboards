@@ -49,7 +49,8 @@ describe('VYRON 2.1.15 RC4 activity history wiring',()=>{
  });
  it('local reconciliation is read-only and Trash remains the only destructive local source action',()=>{
   const local=read('src-tauri/src/local_delete.rs').split('#[cfg(test)]',1)[0],history=read('src/ActivityHistory.tsx');
-  expect(local).toContain('pub fn local_source_status');
+  expect(local).toContain('pub async fn local_source_status');
+  expect(local).toContain('run_source_status_task(move || local_source_status_impl(path)).await');
   expect(history).toContain('api.localSourceStatus');
   expect(local).toContain('trash::delete');
   expect(local).not.toContain('fs::remove_file');
@@ -83,10 +84,15 @@ describe('VYRON 2.1.15 RC4 activity history wiring',()=>{
   expect(errors).toContain("title:'Видео уже имеет YouTube ID'");
  });
  it('ENDLUME historical completion cannot downgrade YouTube lifecycle and startup hydration stays silent',()=>{
-  const bridge=read('src/ProductionStatusBridge.tsx'),lifecycle=read('src/storageLifecycle.ts');
+  const bridge=read('src/ProductionStatusBridge.tsx'),lifecycle=read('src/storageLifecycle.ts'),ledger=read('src/productionRenderTransitions.ts'),observer=read('src/runtimeRenderTransitions.ts');
   expect(lifecycle).toContain("job.status==='READY_RENDER'||job.status==='RENDERING'");
+  expect(bridge).toContain('isRenderReadyTransitionAllowed(job)');
   expect(bridge).toContain("eventType:genuinelyNew?'RENDER_COMPLETED':'RENDER_DISCOVERED_LEGACY'");
-  expect(bridge).toContain('if(genuinelyNew)notifySuccess');
+  expect(bridge).toContain('observeRuntimeRenderTransitions(evidence.rows,productionRenderLedger())');
+  expect(bridge).toContain('for(const item of rendered)');
+  expect(bridge).toContain('groupKey:`render-completed:${channelId}`');
+  expect(observer).toContain('ledger.observe(observations)');
+  expect(ledger).toContain("emittedRendered:x.phase!=='NOT_READY'");
   expect(bridge).not.toContain("job.status!=='READY_UPLOAD'");
  });
  it('render folder rescan is local-only and recovers candidates without upload',()=>{

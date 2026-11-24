@@ -3,15 +3,44 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock, Weak},
 };
 use uuid::Uuid;
 
 const SCHEMA_VERSION: u32 = 1;
 const IMAGE_EXT: &[&str] = &["jpg", "jpeg", "png", "webp"];
+
+// Each library has one read-modify-write lock, shared by background scans,
+// imports and project updates. Weak entries avoid keeping one lock per channel
+// forever. Resolving the actual directory also unifies symlinked workspaces.
+static IMAGE_LIBRARY_LOCKS: OnceLock<Mutex<HashMap<String, Weak<Mutex<()>>>>> = OnceLock::new();
+
+fn image_library_lock(workspace: &str, channel_id: &str) -> Result<Arc<Mutex<()>>, String> {
+    let root = image_root(workspace, channel_id)?;
+    let resolved = fs::canonicalize(&root).map_err(|e| format!("Materials Image Library: {e}"))?;
+    // Case-insensitive filesystems may accept different spelling for one path.
+    // Coalescing distinct case-sensitive paths is harmless; splitting one is not.
+    let fallback_key = resolved.to_string_lossy().to_lowercase();
+    #[cfg(unix)]
+    let key = {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = fs::metadata(&resolved).map_err(|e| format!("Materials Image Library: {e}"))?;
+        if metadata.ino() == 0 { fallback_key } else { format!("{}:{}", metadata.dev(), metadata.ino()) }
+    };
+    #[cfg(not(unix))]
+    let key = fallback_key;
+    let table = IMAGE_LIBRARY_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut locks = table.lock().map_err(|_| "Materials library lock registry poisoned".to_string())?;
+    if let Some(existing) = locks.get(&key).and_then(Weak::upgrade) { return Ok(existing); }
+    locks.retain(|_, value| value.strong_count() > 0);
+    let lock = Arc::new(Mutex::new(()));
+    locks.insert(key, Arc::downgrade(&lock));
+    Ok(lock)
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -219,6 +248,8 @@ fn save_library(workspace: &str, channel_id: &str, lib: &mut ImageLibrary) -> Re
 }
 
 pub fn available_images(workspace: &str, channel_id: &str) -> Result<Vec<ImageAsset>, String> {
+    let lock = image_library_lock(workspace, channel_id)?;
+    let _guard = lock.lock().map_err(|_| "Materials library lock poisoned".to_string())?;
     let lib = load_library(workspace, channel_id)?;
     Ok(lib
         .assets
@@ -228,6 +259,8 @@ pub fn available_images(workspace: &str, channel_id: &str) -> Result<Vec<ImageAs
 }
 
 pub fn image_summary(workspace: &str, channel_id: &str) -> Result<ImageSummary, String> {
+    let lock = image_library_lock(workspace, channel_id)?;
+    let _guard = lock.lock().map_err(|_| "Materials library lock poisoned".to_string())?;
     let lib = load_library(workspace, channel_id)?;
     let root = image_root(workspace, channel_id)?;
     let mut out = ImageSummary {
@@ -253,6 +286,8 @@ pub fn import_images(
     channel_name: &str,
     files: Vec<String>,
 ) -> Result<ImageImportResult, String> {
+    let lock = image_library_lock(workspace, channel_id)?;
+    let _guard = lock.lock().map_err(|_| "Materials library lock poisoned".to_string())?;
     let root = image_root(workspace, channel_id)?;
     let master = root.join("master");
     let mut lib = load_library(workspace, channel_id)?;
@@ -308,6 +343,8 @@ pub fn mark_assigned(
     assignments: &[ImageAssignment],
 ) -> Result<(), String> {
     if assignments.is_empty() { return Ok(()); }
+    let lock = image_library_lock(workspace, channel_id)?;
+    let _guard = lock.lock().map_err(|_| "Materials library lock poisoned".to_string())?;
     let mut lib = load_library(workspace, channel_id)?;
     let now = Utc::now().to_rfc3339();
     for row in assignments {
@@ -339,6 +376,8 @@ pub fn mark_rendered_used(
     rows: &[RenderedImageUse],
 ) -> Result<(), String> {
     if rows.is_empty() { return Ok(()); }
+    let lock = image_library_lock(workspace, channel_id)?;
+    let _guard = lock.lock().map_err(|_| "Materials library lock poisoned".to_string())?;
     let mut lib = load_library(workspace, channel_id)?;
     let mut changed = false;
     for row in rows {
@@ -457,13 +496,15 @@ pub fn downloads_path() -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn import_production_material_images(
+pub async fn import_production_material_images(
     workspace: String,
     channel_id: String,
     channel_name: String,
     files: Vec<String>,
 ) -> Result<ImageImportResult, String> {
-    import_images(&workspace, &channel_id, &channel_name, files)
+    tauri::async_runtime::spawn_blocking(move || import_images(&workspace, &channel_id, &channel_name, files))
+        .await
+        .map_err(|e| format!("Materials import worker failed: {e}"))?
 }
 
 #[tauri::command]
@@ -508,6 +549,84 @@ mod tests {
 
     fn write_image(path: &Path, bytes: &[u8]) {
         fs::write(path, bytes).unwrap();
+    }
+
+    #[test]
+    fn concurrent_imports_and_assignments_do_not_lose_library_updates() {
+        use std::{sync::{Arc, Barrier}, thread};
+        let workspace = temp_workspace("concurrent-transactions");
+        let workspace_string = workspace.to_string_lossy().into_owned();
+        let mut paths = Vec::new();
+        for i in 0..8 {
+            let path = workspace.join(format!("{i}.jpg"));
+            write_image(&path, format!("unique-image-{i}").as_bytes());
+            paths.push(path.to_string_lossy().into_owned());
+        }
+        let barrier = Arc::new(Barrier::new(paths.len()));
+        let imports: Vec<_> = paths.into_iter().map(|path| {
+            let workspace = workspace_string.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                import_images(&workspace, "fixture", "Fixture", vec![path]).unwrap();
+            })
+        }).collect();
+        for thread in imports { thread.join().unwrap(); }
+        let images = available_images(&workspace_string, "fixture").unwrap();
+        assert_eq!(images.len(), 8);
+
+        let barrier = Arc::new(Barrier::new(images.len()));
+        let assignments: Vec<_> = images.into_iter().enumerate().map(|(i, image)| {
+            let workspace = workspace_string.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                mark_assigned(&workspace, "fixture", &[ImageAssignment {
+                    asset_id: image.asset_id,
+                    project_id: format!("project-{i}"),
+                    job_id: None,
+                }]).unwrap();
+            })
+        }).collect();
+        for thread in assignments { thread.join().unwrap(); }
+        let summary = image_summary(&workspace_string, "fixture").unwrap();
+        assert_eq!(summary.total, 8);
+        assert_eq!(summary.assigned, 8);
+
+        let assigned = load_library(&workspace_string, "fixture").unwrap().assets;
+        let barrier = Arc::new(Barrier::new(assigned.len()));
+        let renders: Vec<_> = assigned.into_iter().map(|image| {
+            let workspace = workspace_string.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                mark_rendered_used(&workspace, "fixture", &[RenderedImageUse {
+                    asset_id: image.asset_id,
+                    project_id: image.project_id.unwrap(),
+                    job_id: None,
+                    completed_at: "2026-01-01T00:00:00Z".into(),
+                }]).unwrap();
+            })
+        }).collect();
+        for thread in renders { thread.join().unwrap(); }
+        let summary = image_summary(&workspace_string, "fixture").unwrap();
+        assert_eq!(summary.total, 8);
+        assert_eq!(summary.used, 8);
+        fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn aliased_workspace_uses_the_same_library_lock() {
+        use std::os::unix::fs::symlink;
+        let workspace = temp_workspace("library-alias");
+        let alias = workspace.with_extension("alias");
+        symlink(&workspace, &alias).unwrap();
+        let direct = image_library_lock(workspace.to_str().unwrap(), "fixture").unwrap();
+        let via_alias = image_library_lock(alias.to_str().unwrap(), "fixture").unwrap();
+        assert!(Arc::ptr_eq(&direct, &via_alias));
+        fs::remove_file(alias).unwrap();
+        fs::remove_dir_all(workspace).unwrap();
     }
 
     #[test]

@@ -9,7 +9,7 @@ use base64::{engine::general_purpose::STANDARD as B64,Engine as _};
 use chacha20poly1305::{aead::{Aead,KeyInit,Payload},Key,XChaCha20Poly1305,XNonce};
 use rand_core::{OsRng,RngCore};
 use serde::{Deserialize,Serialize};
-use tauri::{AppHandle,Manager};
+use tauri::AppHandle;
 
 use crate::security;
 
@@ -89,15 +89,13 @@ fn create_private_dir(path:&Path)->Result<(),String>{
  Ok(())
 }
 fn local_paths(app:&AppHandle)->Result<LocalPaths,String>{
- let documents=app.path().document_dir().map_err(|e|format!("OAUTH_LOCAL_DOCUMENTS_PATH_FAILED: {e}"))?;
- let root=documents.join("VYRON");
- let auth=root.join("Auth");
- let state=root.join("State");
- let backups=root.join("Backups");
- let logs=root.join("Logs");
- let auth_backup=auth.join("backup");
- for dir in [&root,&auth,&state,&backups,&logs,&auth_backup]{create_private_dir(dir)?;}
- let app_dir=app.path().app_data_dir().map_err(|e|format!("OAUTH_VAULT_APP_DATA: {e}"))?;
+ let root=crate::apex_paths::documents_root(app)?;
+ let auth=crate::apex_paths_fs::private_child_dir(&root,"Auth")?;
+ let state=crate::apex_paths_fs::private_child_dir(&root,"State")?;
+ let backups=crate::apex_paths_fs::private_child_dir(&root,"Backups")?;
+ let logs=crate::apex_paths_fs::private_child_dir(&root,"Logs")?;
+ let auth_backup=crate::apex_paths_fs::private_child_dir(&auth,"backup")?;
+ let app_dir=crate::apex_paths::data_dir(app)?;
  create_private_dir(&app_dir)?;
  Ok(LocalPaths{
   root,

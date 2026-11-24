@@ -77,6 +77,20 @@ export function renderFileNeedsFingerprint(file:RenderFolderVideoFile,jobs:Video
  return false;
 }
 
+/** Prepare the same fingerprint decision once per channel scan. */
+export function createRenderFingerprintMatcher(jobs:VideoJob[],history:UploadHistoryRecord[],channelId:string,exactRoot:string){
+ const scoped=jobs.filter(j=>j.channelId===channelId),successful=successfulHistory(history,channelId);
+ const jobPaths=new Set(scoped.map(j=>normalizeRenderPath(j.finalPath||'')));
+ const sequences=new Set(scoped.map(j=>j.number));
+ const historyPaths=new Set(successful.map(x=>normalizeRenderPath(x.localFilePath)));
+ const uploadedSizes=new Set(successful.filter(trustedHistory).map(x=>x.fileSize));
+ return (file:RenderFolderVideoFile)=>{
+  const path=normalizeRenderPath(file.path),sequence=renderSequence(file.name);
+  if(!renderPathInsideRoot(path,exactRoot))return false;
+  return jobPaths.has(path)||historyPaths.has(path)||Boolean(sequence&&sequences.has(sequence))||uploadedSizes.has(file.size);
+ }
+}
+
 export function classifyChannelRenderFiles(files:RenderFolderVideoFile[],jobs:VideoJob[],history:UploadHistoryRecord[],channelId:string,exactRoot:string):RenderScanRow[]{
  const scoped=jobs.filter(j=>j.channelId===channelId),seen=new Set<string>(),historyRows=successfulHistory(history,channelId);
  return files.map(file=>{

@@ -43,7 +43,7 @@ describe('VYRON 4.0.0 schedule frequency truth',()=>{
     const dashboard=fs.readFileSync('src/DashboardOS.tsx','utf8');
     expect(runway).toContain('scheduleFrequencyTruthLabel(channel,record)');
     expect(runway).not.toContain('scheduleDescription(channel)');
-    expect(dashboard).toContain('Public watch hours: нет данных');
-    expect(dashboard).toContain('Shorts views: нет данных')
+    expect(dashboard).toContain('Часы публичного просмотра: нет данных');
+    expect(dashboard).toContain('Просмотры Shorts: нет данных')
   });
 });

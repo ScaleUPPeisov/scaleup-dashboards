@@ -22,8 +22,7 @@ pub struct LocalSourceStatus {
     pub modified_at: Option<u128>,
 }
 
-#[tauri::command]
-pub fn local_source_status(path: String) -> Result<LocalSourceStatus, String> {
+fn local_source_status_impl(path: String) -> Result<LocalSourceStatus, String> {
     let value = path.trim();
     if value.is_empty() {
         return Err("SOURCE_PATH_EMPTY".into());
@@ -53,35 +52,22 @@ pub fn local_source_status(path: String) -> Result<LocalSourceStatus, String> {
     })
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ChannelFolderDiscovery { pub render: Vec<String>, pub projects: Vec<String>, pub roots_checked: Vec<String> }
+// Metadata lookup may wait for an external disk to wake or reconnect. Keep the
+// observational check off the WebView IPC thread; the result remains a snapshot.
+async fn run_source_status_task<T, F>(work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|e| format!("SOURCE_STAT_TASK_FAILED: {e}"))?
+}
 
-fn normalized_folder_name(value: &str) -> String { value.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase() }
-fn canonical_dir(path: &Path) -> Option<PathBuf> { if !path.is_dir(){return None} path.canonicalize().ok() }
-fn push_base(bases:&mut Vec<PathBuf>,candidate:PathBuf){let Some(canon)=canonical_dir(&candidate) else{return};if !bases.iter().any(|x|x==&canon){bases.push(canon)}}
-fn matching_container_dirs(base:&Path,expected:&str)->Vec<PathBuf>{
- let target=normalized_folder_name(expected);let mut out=Vec::new();
- if base.file_name().and_then(|x|x.to_str()).map(normalized_folder_name).as_deref()==Some(target.as_str()){out.push(base.to_path_buf())}
- if let Ok(entries)=fs::read_dir(base){for entry in entries.flatten(){let p=entry.path();if !p.is_dir(){continue}let yes=p.file_name().and_then(|x|x.to_str()).map(normalized_folder_name).as_deref()==Some(target.as_str());if yes{if let Some(c)=canonical_dir(&p){if !out.iter().any(|x|x==&c){out.push(c)}}}}}
- out
-}
-fn exact_named_channel_dirs(container:&Path,channel_name:&str)->Vec<PathBuf>{
- let target=normalized_folder_name(channel_name);if target.is_empty(){return Vec::new()}let mut out=Vec::new();
- if let Ok(entries)=fs::read_dir(container){for entry in entries.flatten(){let p=entry.path();if !p.is_dir(){continue}let yes=p.file_name().and_then(|x|x.to_str()).map(normalized_folder_name).as_deref()==Some(target.as_str());if yes{if let Some(c)=canonical_dir(&p){out.push(c)}}}}
- out
-}
-pub fn discover_channel_folders_impl(workspace:&str,channel_name:&str)->Result<ChannelFolderDiscovery,String>{
- let workspace=workspace.trim();let channel_name=channel_name.trim();
- if workspace.is_empty(){return Err("CHANNEL_FOLDER_DISCOVERY_WORKSPACE_EMPTY".into())}if channel_name.is_empty(){return Err("CHANNEL_FOLDER_DISCOVERY_CHANNEL_EMPTY".into())}
- let workspace_canon=canonical_dir(&PathBuf::from(workspace)).ok_or_else(||"CHANNEL_FOLDER_DISCOVERY_WORKSPACE_NOT_FOUND".to_string())?;
- let mut bases=Vec::new();push_base(&mut bases,workspace_canon.clone());if let Some(parent)=workspace_canon.parent(){push_base(&mut bases,parent.to_path_buf())}
- let mut render=BTreeSet::new();let mut projects=BTreeSet::new();let mut roots_checked=BTreeSet::new();
- for base in &bases{roots_checked.insert(base.to_string_lossy().into_owned());for container in matching_container_dirs(base,"Render"){roots_checked.insert(container.to_string_lossy().into_owned());for p in exact_named_channel_dirs(&container,channel_name){render.insert(p.to_string_lossy().into_owned());}}for container in matching_container_dirs(base,"Projects"){roots_checked.insert(container.to_string_lossy().into_owned());for p in exact_named_channel_dirs(&container,channel_name){projects.insert(p.to_string_lossy().into_owned());}}}
- Ok(ChannelFolderDiscovery{render:render.into_iter().collect(),projects:projects.into_iter().collect(),roots_checked:roots_checked.into_iter().collect()})
-}
 #[tauri::command]
-pub fn discover_channel_folders(workspace:String,channel_name:String)->Result<ChannelFolderDiscovery,String>{discover_channel_folders_impl(&workspace,&channel_name)}
+pub async fn local_source_status(path: String) -> Result<LocalSourceStatus, String> {
+    run_source_status_task(move || local_source_status_impl(path)).await
+}
 
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
@@ -380,6 +366,72 @@ pub fn trash_local_file(
 ) -> Result<TrashLocalFileResult, String> {
     trash_local_file_impl(&path, &allowed_roots)
 }
+
+#[cfg(test)]
+mod local_source_status_async_tests {
+    use super::*;
+
+    #[test]
+    fn metadata_work_runs_off_the_caller_thread() {
+        let caller=std::thread::current().id();
+        let worker=tauri::async_runtime::block_on(run_source_status_task(|| Ok(std::thread::current().id()))).unwrap();
+        assert_ne!(caller,worker);
+    }
+
+    #[test]
+    fn preserves_file_directory_missing_and_empty_path_results() {
+        struct TempDir(PathBuf);
+        impl Drop for TempDir {
+            fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
+        }
+        let dir=TempDir(std::env::temp_dir().join(format!("vyron-source-status-{}",uuid::Uuid::new_v4())));
+        fs::create_dir_all(&dir.0).unwrap();
+        let file=dir.0.join("sample.mov");
+        fs::write(&file,b"fixture").unwrap();
+        let check=|p: &Path| tauri::async_runtime::block_on(local_source_status(p.to_string_lossy().into_owned())).unwrap();
+        let existing=check(&file);
+        assert!(existing.exists && existing.is_file);
+        assert_eq!(existing.size,Some(7));
+        let directory=check(&dir.0);
+        assert!(directory.exists && !directory.is_file);
+        let missing=check(&dir.0.join("missing.mov"));
+        assert!(!missing.exists && !missing.is_file);
+        assert_eq!(missing.size,None);
+        assert_eq!(tauri::async_runtime::block_on(local_source_status("  ".into())).unwrap_err(),"SOURCE_PATH_EMPTY");
+    }
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelFolderDiscovery { pub render: Vec<String>, pub projects: Vec<String>, pub roots_checked: Vec<String> }
+
+fn normalized_folder_name(value: &str) -> String { value.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase() }
+fn canonical_dir(path: &Path) -> Option<PathBuf> { if !path.is_dir(){return None} path.canonicalize().ok() }
+fn push_base(bases:&mut Vec<PathBuf>,candidate:PathBuf){let Some(canon)=canonical_dir(&candidate) else{return};if !bases.iter().any(|x|x==&canon){bases.push(canon)}}
+fn matching_container_dirs(base:&Path,expected:&str)->Vec<PathBuf>{
+ let target=normalized_folder_name(expected);let mut out=Vec::new();
+ if base.file_name().and_then(|x|x.to_str()).map(normalized_folder_name).as_deref()==Some(target.as_str()){out.push(base.to_path_buf())}
+ if let Ok(entries)=fs::read_dir(base){for entry in entries.flatten(){let p=entry.path();if !p.is_dir(){continue}let yes=p.file_name().and_then(|x|x.to_str()).map(normalized_folder_name).as_deref()==Some(target.as_str());if yes{if let Some(c)=canonical_dir(&p){if !out.iter().any(|x|x==&c){out.push(c)}}}}}
+ out
+}
+fn exact_named_channel_dirs(container:&Path,channel_name:&str)->Vec<PathBuf>{
+ let target=normalized_folder_name(channel_name);if target.is_empty(){return Vec::new()}let mut out=Vec::new();
+ if let Ok(entries)=fs::read_dir(container){for entry in entries.flatten(){let p=entry.path();if !p.is_dir(){continue}let yes=p.file_name().and_then(|x|x.to_str()).map(normalized_folder_name).as_deref()==Some(target.as_str());if yes{if let Some(c)=canonical_dir(&p){out.push(c)}}}}
+ out
+}
+pub fn discover_channel_folders_impl(workspace:&str,channel_name:&str)->Result<ChannelFolderDiscovery,String>{
+ let workspace=workspace.trim();let channel_name=channel_name.trim();
+ if workspace.is_empty(){return Err("CHANNEL_FOLDER_DISCOVERY_WORKSPACE_EMPTY".into())}if channel_name.is_empty(){return Err("CHANNEL_FOLDER_DISCOVERY_CHANNEL_EMPTY".into())}
+ let workspace_canon=canonical_dir(&PathBuf::from(workspace)).ok_or_else(||"CHANNEL_FOLDER_DISCOVERY_WORKSPACE_NOT_FOUND".to_string())?;
+ let mut bases=Vec::new();push_base(&mut bases,workspace_canon.clone());if let Some(parent)=workspace_canon.parent(){push_base(&mut bases,parent.to_path_buf())}
+ let mut render=BTreeSet::new();let mut projects=BTreeSet::new();let mut roots_checked=BTreeSet::new();
+ for base in &bases{roots_checked.insert(base.to_string_lossy().into_owned());for container in matching_container_dirs(base,"Render"){roots_checked.insert(container.to_string_lossy().into_owned());for p in exact_named_channel_dirs(&container,channel_name){render.insert(p.to_string_lossy().into_owned());}}for container in matching_container_dirs(base,"Projects"){roots_checked.insert(container.to_string_lossy().into_owned());for p in exact_named_channel_dirs(&container,channel_name){projects.insert(p.to_string_lossy().into_owned());}}}
+ Ok(ChannelFolderDiscovery{render:render.into_iter().collect(),projects:projects.into_iter().collect(),roots_checked:roots_checked.into_iter().collect()})
+}
+#[tauri::command]
+pub fn discover_channel_folders(workspace:String,channel_name:String)->Result<ChannelFolderDiscovery,String>{discover_channel_folders_impl(&workspace,&channel_name)}
+
+
 
 #[cfg(test)]
 mod tests {

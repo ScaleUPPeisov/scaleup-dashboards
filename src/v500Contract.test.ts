@@ -20,6 +20,7 @@ const migrationPanel=fs.readFileSync('src/MigrationPanel.tsx','utf8');
 const migrationRust=fs.readFileSync('src-tauri/src/migration.rs','utf8');
 const commandPalette=fs.readFileSync('src/CommandPalette.tsx','utf8');
 const notifications=fs.readFileSync('src/NotificationStack.tsx','utf8');
+const notificationCenter=fs.readFileSync('src/notificationCenter.ts','utf8');
 const channelsOs=fs.readFileSync('src/ChannelsOS.tsx','utf8');
 const healthPanel=fs.readFileSync('src/SystemHealthPanel.tsx','utf8');
 const packageJson=JSON.parse(fs.readFileSync('package.json','utf8'));
@@ -120,13 +121,17 @@ describe('VYRON 5.0.0 product contract',()=>{
   expect(commandPalette).not.toContain('refreshYoutubeIntelligence');
  });
  it('provides a persistent notification bell with unread badge and required levels',()=>{
-  expect(notifications).toContain('🔔');
+  expect(notifications).toContain('aria-label="Уведомления"');
+  expect(notifications).toContain('<svg');
   expect(notifications).toContain('readNotificationHistory');
   expect(notifications).toContain('subscribeNotificationHistory');
-  expect(notifications).toContain("error:'CRITICAL'");
-  expect(notifications).toContain("warning:'WARNING'");
-  expect(notifications).toContain("success:'SUCCESS'");
-  expect(notifications).toContain("info:'INFO'");
+  expect(notificationCenter).toContain('vyron:notification-history:v1');
+  expect(notificationCenter).toContain('localStorage.setItem(HISTORY_KEY');
+  expect(notificationCenter).toContain('appendErrorHistory');
+  expect(notifications).toContain("error:'Ошибка'");
+  expect(notifications).toContain("warning:'Внимание'");
+  expect(notifications).toContain("success:'Готово'");
+  expect(notifications).toContain("info:'Информация'");
   expect(notifications).toContain('unread>0');
  });
  it('supports OWNER and MANAGER as local profile modes without touching OAuth',()=>{

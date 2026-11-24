@@ -1,11 +1,12 @@
-import {describe,expect,it} from 'vitest';
+import {describe,expect,it,vi} from 'vitest';
 import fs from 'node:fs';
+import {createNotificationToastQueue} from './notificationToastQueue';
+import type {AppNotification} from './notificationCenter';
 
 describe('VYRON 3.0.0 final owner workflow contracts',()=>{
  const publisher=fs.readFileSync('src/PublisherOS.tsx','utf8');
  const app=fs.readFileSync('src/App.tsx','utf8');
  const modal=fs.readFileSync('src/ModalPortal.tsx','utf8');
- const notifications=fs.readFileSync('src/NotificationStack.tsx','utf8');
  const rust=fs.readFileSync('src-tauri/src/oauth_vault.rs','utf8');
  const security=fs.readFileSync('src-tauri/src/security.rs','utf8');
  const workflow=fs.readFileSync('.github/workflows/vyron-300-physical-candidate.yml','utf8');
@@ -49,9 +50,20 @@ describe('VYRON 3.0.0 final owner workflow contracts',()=>{
   expect(publisher).not.toContain('<b>DRY RUN:');
   expect(publisher).not.toContain("notifyWarning('CHANNEL_RENDER_FOLDER_NOT_CONFIGURED'");
  });
- it('deduplicates logical notifications by operationId',()=>{
-  expect(notifications).toContain('findIndex(x=>x.operationId===n.operationId)');
-  expect(notifications).toContain('queue.current[queued]=n');
+ it('deduplicates visible and queued noncritical notifications by operationId',async()=>{
+  vi.useFakeTimers();vi.setSystemTime(1_000);
+  const snapshots:AppNotification[][]=[];
+  const q=createNotificationToastQueue(rows=>snapshots.push(rows));
+  const notice=(id:string,operationId:string,message:string):AppNotification=>({id,operationId,type:'info',title:'Состояние',message,durationMs:8000,actions:[],createdAt:Date.now()});
+  try{
+   q.enqueue(notice('first','active','old'));q.enqueue(notice('new','active','updated'));
+   q.enqueue(notice('second','other','visible'));
+   q.enqueue(notice('queued-old','queued','old'));q.enqueue(notice('queued-new','queued','updated'));
+   await vi.advanceTimersByTimeAsync(450);
+   expect(snapshots.at(-1)?.map(x=>[x.operationId,x.message])).toEqual([['active','updated'],['other','visible']]);
+   q.close('new');await vi.advanceTimersByTimeAsync(350);
+   expect(snapshots.at(-1)?.filter(x=>x.operationId==='queued').map(x=>x.message)).toEqual(['updated']);
+  }finally{q.dispose();vi.useRealTimers()}
  });
  it('stores OAuth secrets in authenticated encrypted local vault without a normal-startup Keychain gate',()=>{
   expect(rust).toContain('XChaCha20Poly1305');

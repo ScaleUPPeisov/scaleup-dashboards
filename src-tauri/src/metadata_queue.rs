@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
 };
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 const SCHEMA_VERSION:u32=1;
 const CHUNK_SIZE:usize=250;
@@ -174,8 +174,7 @@ fn root(app:&AppHandle)->Result<PathBuf,String>{
     let p=if std::env::var("VYRON_M1_PERF_PROBE").ok().as_deref()==Some("1"){
         crate::performance_probe::performance_storage_root()?.join("MetadataQueue")
     }else{
-        app.path().document_dir().map_err(|e|format!("METADATA_QUEUE_DOCUMENTS_PATH: {e}"))?
-            .join("VYRON").join("MetadataQueue")
+        crate::apex_paths_fs::private_child_dir(&crate::apex_paths::documents_root(app)?,"MetadataQueue")?
     };
     fs::create_dir_all(&p).map_err(|e|format!("METADATA_QUEUE_MKDIR: {e}"))?;
     Ok(p)

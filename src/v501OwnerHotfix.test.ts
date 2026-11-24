@@ -56,11 +56,11 @@ describe('VYRON 5.0.1 owner hotfix contract',()=>{
   expect(publisher).toContain('youtubeVideoProcessingStatusBatch');
  });
  it('shows cached all-channel network statistics and manual quota preview',()=>{
-  expect(dashboard).toContain('ВСЕ КАНАЛЫ');
+  expect(dashboard).toContain('Статистика всех каналов');
   expect(dashboard).toContain('Автообновление YouTube: <b>ВЫКЛ</b>');
-  expect(dashboard).toContain('↻ ОБНОВИТЬ ВСЕ КАНАЛЫ');
+  expect(dashboard).toContain('Обновить все каналы');
   expect(dashboard).toContain('planStatisticsProjectBatches');
-  expect(dashboard).toContain('channels.list requests');
+  expect(dashboard).toContain('Запросы channels.list');
   expect(dashboard).toContain('ОТМЕНА');
   expect(dashboard).toContain("values.length?(values.length<enabled.length?'≥ ':'')+fmt(total):'—'");
  });

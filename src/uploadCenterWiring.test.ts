@@ -16,7 +16,8 @@ describe('VYRON 2.1.6 live upload wiring',()=>{
    expect(app).not.toMatch(/onYoutubeProgress\([^\n]*patchJob/);
    expect(app).toContain("import {applyUploadProgressFact,seedActiveUploadFacts,uploadTelemetrySnapshot} from './uploadTelemetry'");
    expect(app).toContain("import {journalUploadProgressMilestone} from './activityJournalRuntime'");
-   expect(app).toContain("import {ensureTask,reconcileUploadTasks,updateTask} from './taskEngine'");
+   expect(app).toContain("import {ensureTask,flushPendingTaskProgress,reconcileUploadTasks,updateTask} from './taskEngine'");
+   expect(app).toContain('unlisten?.();flushPendingTaskProgress()');
  });
  it('backend progress carries factual byte totals and safe immutable identity',()=>{
    const rust=read('../src-tauri/src/youtube.rs');

@@ -1,15 +1,19 @@
-import React,{useMemo,useState} from 'react';
+import React,{useEffect,useMemo,useState} from 'react';
 import {VYRON_5_ARTWORK} from './vyronBrand';
 import {useUpdaterRuntime} from './updaterRuntime';
 import {useApp} from './store';
 import {currentUpdaterBlockers,updaterBlockerText} from './updaterGuard';
+import {subscribeRenderFacts} from './activeOperationFacts';
 
 const activeStatuses=new Set(['AVAILABLE','DOWNLOADING','VERIFYING','READY_TO_INSTALL','INSTALLING','READY_TO_RESTART','RESTARTING']);
 const mb=(n:number)=>n>0?(n/1024/1024).toFixed(n>=100*1024*1024?0:1)+' MB':'—';
 export function UpdateExperience(){
  const status=useUpdaterRuntime(s=>s.status),current=useUpdaterRuntime(s=>s.currentVersion),latest=useUpdaterRuntime(s=>s.latestVersion),currentBuild=useUpdaterRuntime(s=>s.currentBuildRevision),latestBuild=useUpdaterRuntime(s=>s.latestBuildRevision),progress=useUpdaterRuntime(s=>s.progress),downloaded=useUpdaterRuntime(s=>s.downloadedBytes),total=useUpdaterRuntime(s=>s.totalBytes),notes=useUpdaterRuntime(s=>s.notes),download=useUpdaterRuntime(s=>s.download),install=useUpdaterRuntime(s=>s.installAndRestart);
  const jobs=useApp(s=>s.jobs),channels=useApp(s=>s.channels),identity=latest+':'+latestBuild,[later,setLater]=useState('');
- const blockers=useMemo(()=>currentUpdaterBlockers(jobs,channels.map(x=>x.id)),[jobs,channels]);
+ const [factRevision,setFactRevision]=useState(0);
+ useEffect(()=>status==='READY_TO_INSTALL'?subscribeRenderFacts(()=>setFactRevision(x=>x+1)):undefined,[status]);
+ const blockers=useMemo(()=>currentUpdaterBlockers(jobs,channels.map(x=>x.id)),[jobs,channels,factRevision]);
+ const installSafely=()=>{const state=useApp.getState();void install(currentUpdaterBlockers(state.jobs,state.channels.map(x=>x.id)))};
  const isMajor=/^\d+\.0\.0(?:$|-)/.test(latest);
  if(!activeStatuses.has(status)||later===identity)return null;
  const downloading=status==='DOWNLOADING'||status==='VERIFYING',ready=status==='READY_TO_INSTALL';
@@ -19,6 +23,6 @@ export function UpdateExperience(){
    {notes&&<div className="updateNotes"><b>Что изменилось</b><p>{notes}</p></div>}
    {downloading&&<div className="updateDownload"><div><b>{status==='VERIFYING'?'Проверка подписи…':'Скачивание обновления'}</b><span>{total>0?mb(downloaded)+' / '+mb(total):''}</span></div><div className="updateProgress"><i style={{width:Math.max(0,Math.min(100,progress))+'%'}}/></div><strong>{Math.round(progress)}%</strong></div>}
    {ready&&blockers.length>0&&<div className="publisherNotice"><b>Сначала завершите активные операции</b><pre>{updaterBlockerText(blockers)}</pre></div>}
-   <footer>{status==='AVAILABLE'&&<button className="primary" onClick={()=>void download()}>Обновить сейчас</button>}{ready&&<button className="primary" disabled={blockers.length>0} onClick={()=>void install(blockers)}>Установить и перезапустить</button>}{status==='INSTALLING'&&<b>Установка…</b>}{status==='READY_TO_RESTART'&&<b>Готово к перезапуску…</b>}{status==='RESTARTING'&&<b>VYRON перезапускается…</b>}<button className="secondary" disabled={status==='INSTALLING'||status==='RESTARTING'} onClick={()=>setLater(identity)}>Позже</button></footer>
+   <footer>{status==='AVAILABLE'&&<button className="primary" onClick={()=>void download()}>Обновить сейчас</button>}{ready&&<button className="primary" disabled={blockers.length>0} onClick={installSafely}>Установить и перезапустить</button>}{status==='INSTALLING'&&<b>Установка…</b>}{status==='READY_TO_RESTART'&&<b>Готово к перезапуску…</b>}{status==='RESTARTING'&&<b>VYRON перезапускается…</b>}<button className="secondary" disabled={status==='INSTALLING'||status==='RESTARTING'} onClick={()=>setLater(identity)}>Позже</button></footer>
  </section></div>;
 }

@@ -1,7 +1,7 @@
 import {create} from 'zustand';
 import {api,type CheckedUpdaterCandidate,type UpdaterInstallPreflight,type UpdaterTransferProgress} from './api';
 import {appendErrorHistory,type ErrorStage} from './errorHistory';
-import type {UpdaterBlocker} from './updaterGuard';
+import {collectUpdaterBlockers,type UpdaterBlocker} from './updaterGuard';
 import type {UpdaterStatus} from './updaterPolicy';
 import {UPDATER_AUTO_INTERVAL_MS,updaterNextAutomaticCheckAt} from './updaterSchedule';
 
@@ -96,6 +96,8 @@ export const useUpdaterRuntime=create<UpdaterRuntimeState>((set,get)=>({
     if(installPromise)return installPromise;
     const task=(async():Promise<boolean>=>{
     if(blockers.length){set({blockers});return false}
+    const currentBlockers=collectUpdaterBlockers([],[]);
+    if(currentBlockers.length){set({blockers:currentBlockers});return false}
     try{
       // Candidate objects are intentionally memory-only. If the WebView/app shell was reloaded after
       // download, recover the exact target from the signed feed and re-download/verify it.
@@ -124,6 +126,9 @@ export const useUpdaterRuntime=create<UpdaterRuntimeState>((set,get)=>({
     let marker:any={productVersion:target,buildRevision:targetRevision,artifactSha256:candidate!.artifactSha256||'',channel:candidate!.channel||get().updateChannel,notes:get().notes||'',releaseDate:get().releaseDate||'',startedAt:new Date().toISOString()};
     try{
       preflight=await ensureUpdaterInstallable(set);
+      // The facts may have expired while preflight or re-download was running.
+      const currentBlockers=collectUpdaterBlockers([],[]);
+      if(currentBlockers.length){set({status:'READY_TO_INSTALL',blockers:currentBlockers});return false}
       marker={...marker,
         expectedAppBundlePath:preflight?.currentAppBundlePath||undefined,
         expectedAppBundleCanonicalPath:preflight?.currentAppBundleCanonicalPath||undefined,

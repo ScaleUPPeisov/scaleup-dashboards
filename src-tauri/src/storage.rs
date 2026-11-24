@@ -5,21 +5,20 @@ use std::{
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
 };
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 static STATE_WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 fn state_write_lock() -> &'static Mutex<()> { STATE_WRITE_LOCK.get_or_init(|| Mutex::new(())) }
 
 fn state_file(app: &AppHandle) -> Result<PathBuf, String> {
-    let d = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let d = crate::apex_paths::data_dir(app)?;
     fs::create_dir_all(&d).map_err(|e| e.to_string())?;
     Ok(d.join("state.json"))
 }
 
 
 fn state_mirror_dir(app:&AppHandle)->Result<PathBuf,String>{
-    let root=app.path().document_dir().map_err(|e|format!("VYRON documents path: {e}"))?.join("VYRON").join("State");
-    fs::create_dir_all(&root).map_err(|e|format!("VYRON state mirror mkdir: {e}"))?;
+    let root=crate::apex_paths_fs::private_child_dir(&crate::apex_paths::documents_root(app)?,"State")?;
     #[cfg(unix)]{
         use std::os::unix::fs::PermissionsExt;
         let _=fs::set_permissions(&root,fs::Permissions::from_mode(0o700));

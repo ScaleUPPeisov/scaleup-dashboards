@@ -19,3 +19,287 @@
 .channelProgressRows i em{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#31d9ff,#59e7b4)}
 @media(max-width:1250px){.opsKpiGrid.v400{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:950px){.opsDashboardGrid.v400{grid-template-columns:1fr}.opsKpiGrid.v400{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* APEX dashboard: a compact hierarchy with readable labels and no nested tiles. */
+.apexDashboard .opsKpiGrid.v400 { gap: 8px; margin-bottom: 12px; }
+.apexDashboard .opsDashboardGrid.v400 { gap: 12px; }
+.apexDashboard .opsCard,
+.apexDashboard .opsKpi {
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: none;
+}
+.apexDashboard .opsCard { padding: 16px; }
+.apexDashboard .opsCardHead { align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+.apexDashboard .opsCardHead > div { min-width: 0; }
+.apexDashboard .opsCardHead h2 { margin: 0; color: var(--text); font-size: 16px; line-height: 1.3; }
+.apexDashboard .opsKpi { padding: 12px; }
+.apexDashboard .opsKpi small {
+  color: var(--muted); font-size: 11px; line-height: 1.35; letter-spacing: 0;
+  white-space: normal; overflow-wrap: anywhere;
+}
+.apexDashboard .opsKpi strong { color: var(--text); font-size: 21px; line-height: 1.2; }
+.apexDashboard .opsKpi.warn strong { color: var(--red); }
+.apexDashboard .opsKpi em { color: var(--muted); font-size: 11px; line-height: 1.35; }
+.apexDashboard .networkStatsGrid,
+.apexDashboard .opsStats,
+.apexDashboard .opsStats.production { gap: 0; }
+.apexDashboard .opsStats,
+.apexDashboard .opsStats.production { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.apexDashboard .networkStatsGrid > span,
+.apexDashboard .opsStats span {
+  min-width: 0; padding: 10px 12px; border: 0; border-radius: 0;
+  border-bottom: 1px solid var(--line); background: transparent;
+}
+.apexDashboard .networkStatsGrid small,
+.apexDashboard .opsStats small {
+  min-height: 0; color: var(--muted); font-size: 11px; line-height: 1.4;
+  white-space: normal; overflow-wrap: anywhere;
+}
+.apexDashboard .networkStatsGrid b,
+.apexDashboard .opsStats b {
+  color: var(--text); font-size: 14px; line-height: 1.35;
+  white-space: normal; overflow-wrap: anywhere; font-variant-numeric: tabular-nums;
+}
+.apexDashboard .opsCard footer { flex-wrap: wrap; }
+.apexDashboard .opsCard footer button { min-height: 34px; }
+.apexDashboard .dashboardSourceDetails { margin-top: 10px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.apexDashboard .dashboardSourceDetails summary { cursor: pointer; color: #c9c0ff; }
+.apexDashboard .dashboardSourceDetails p { margin: 6px 0 0; }
+.apexDashboard .dashboardSourceDetails summary:focus-visible { outline: 2px solid #c1b6ff; outline-offset: 3px; }
+.apexDashboard .opsEmpty,
+.apexDashboard .opsSourceNote { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.apexDashboard .ownerTruth { color: #9be6c7; font-size: 11px; letter-spacing: 0; white-space: normal; }
+.apexDashboard .ownerTruth.partial { color: #f5c77c; }
+.apexDashboard .channelProgressRows > div { padding: 10px 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; }
+.apexDashboard .channelProgressRows b { color: var(--text); font-size: 12px; }
+.apexDashboard .channelProgressRows span,
+.apexDashboard .channelProgressRows small { color: var(--muted); font-size: 11px; line-height: 1.4; }
+.apexDashboard .channelProgressRows i em,
+.apexDashboard .activeUploadLine i em { background: var(--accent); }
+.apexDashboard .opsAttentionRows button { background: transparent; border-color: var(--line); }
+.apexDashboard .opsAttentionRows b { color: var(--text); font-size: 12px; }
+.apexDashboard .opsAttentionRows small { color: var(--muted); font-size: 11px; white-space: normal; }
+.apexDashboard .healthScore { display: block; margin-top: 4px; color: var(--text); font-size: 20px; }
+.apexDashboard .systemHealthSummary { gap: 8px; }
+.apexDashboard .healthState { font-size: 11px; }
+.apexDashboard .healthState--green { color: #8ce2bc; }
+.apexDashboard .healthState--yellow { color: #f5c77c; }
+.apexDashboard .healthState--red { color: #ffadb5; }
+.apexDashboard .healthState--unknown { color: var(--muted); }
+@media (max-width: 1100px) {
+  .apexDashboard .networkStatsGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) {
+  .apexDashboard .opsStats,
+  .apexDashboard .opsStats.production { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .apexDashboard .opsCardHead { flex-wrap: wrap; }
+}
+
+/* APEX production: compact surfaces, clear status and readable controls. */
+.productionTabs.youtubeTabs {
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+}
+.youtubeTabs.productionTabs button {
+  min-height: 44px;
+  padding: 0 14px !important;
+  color: var(--muted) !important;
+  font-size: 12px !important;
+  font-weight: 600;
+}
+.youtubeTabs.productionTabs button.active {
+  background: #302b45 !important;
+  color: #f2efff !important;
+  box-shadow: inset 0 0 0 1px #665b91;
+}
+.productionTabs button:focus-visible,
+.productionManager :is(button,input,select,summary):focus-visible,
+.productionWorkspace :is(button,summary):focus-visible,
+.productionQueueDetails summary:focus-visible {
+  outline: 2px solid #c1b6ff;
+  outline-offset: 2px;
+}
+.pmStorageUnified {
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  padding: 16px;
+  border-radius: 10px;
+}
+.pmStorageUnifiedMain small {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0;
+}
+.pmStorageUnifiedMain h3 {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.pmStorageUnifiedMain p,
+.pmStorageError { font-size: 12px; line-height: 1.45; }
+.pmStorageUnified .pmActions button { min-height: 44px; font-size: 12px; }
+.pmStorageUnifiedMain p { color: var(--muted); }
+.pmStorageError { color: #ffadb5; }
+.productionWorkspace .productionSummary { gap: 0; }
+.productionWorkspace .productionSummary > span {
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+.productionWorkspace .productionSummary small,
+.productionWorkspace .productionFacts small,
+.productionWorkspace .productionFolders span,
+.productionWorkspace .productionStage small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.productionWorkspace .productionSummary b { color: var(--text); font-size: 17px; }
+.productionWorkspace .productionSummary .warn b { color: #ffadb5; }
+.productionWorkspace .productionFleet { gap: 0; }
+.productionWorkspace .productionChannelRow {
+  padding: 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.productionWorkspace .productionStage b,
+.productionWorkspace .productionFacts b { color: var(--text); font-size: 12px; }
+.productionWorkspace .productionFacts b { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+.productionWorkspace .productionStage span { color: var(--muted); font-size: 11px; }
+.productionWorkspace .productionStage > i { background: #2b2d38; }
+.productionWorkspace .productionStage > i > em { background: var(--accent); }
+.productionWorkspace .productionFolders .ok { color: #8ce2bc; }
+.productionWorkspace .productionFolders .warn { color: #f5c77c; }
+.productionQueueDetails { margin-top: 12px; }
+.productionQueueDetails > summary { color: var(--text); font-size: 13px; }
+.productionQueueDetails .productionPipeline button {
+  min-height: 54px;
+  border-color: var(--line);
+  border-radius: 8px;
+  background: var(--panel2);
+  color: var(--muted);
+}
+.productionQueueDetails .productionPipeline button small { font-size: 11px; line-height: 1.35; }
+.productionQueueDetails .productionPipeline button b { color: var(--text); font-size: 18px; }
+.productionQueueDetails .productionPipeline button.warn { border-color: var(--red); }
+.productionManager { gap: 12px; color: var(--text); }
+.productionManager button { min-height: 44px; }
+.productionManager :is(.pmHero,.pmCard,.pmBuilder,.pmResult,.pmHistory) {
+  border-radius: 10px;
+  box-shadow: none;
+}
+.productionManager :is(.pmHero,.pmBuilderHead,.pmResultHead,.pmHistoryHead) small,
+.productionManager .pmCardHead span small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+  letter-spacing: 0;
+}
+.productionManager :is(.pmHero,.pmBuilderHead,.pmResultHead) p,
+.productionManager :is(.pmCard > p,.pmHint,.pmEmpty) {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.productionManager :is(.pmHero h2,.pmCardHead h3,.pmBuilderHead h3,.pmResultHead h3,.pmHistoryHead h3) {
+  color: var(--text);
+}
+.productionManager :is(.pmBigNumber,.pmFileCount b,.pmFormula b,.pmChecklist b) { color: var(--text); }
+.productionManager :is(.pmPath,.pmFormula,.pmReuse,.pmBuildProgress,.pmShortage) {
+  border-color: var(--line);
+  border-radius: 8px;
+  background: var(--panel2);
+  box-shadow: none;
+}
+.productionManager .pmPath {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.productionManager :is(.pmControls > label,.pmReuse b,.pmReuse small,.pmReadiness span,.pmChecklist span) {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.productionManager :is(.pmReadiness,.pmChecklist) { gap: 0; }
+.productionManager :is(.pmReadiness,.pmChecklist) span {
+  padding: 10px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+.productionManager :is(.pmReadiness,.pmChecklist) b { color: var(--text); font-size: 13px; }
+.productionManager .pmReadiness .ok b { color: #8ce2bc; }
+.productionManager .pmReadiness .warn b { color: #f5c77c; }
+.productionManager :is(.pmHero select,.pmControls input,.pmStepper input,.pmPresetLine input) {
+  border-color: var(--line);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+.productionManager :is(.pmActions,.pmHistoryHead,.pmShortage,.pmStepper,.pmPresetLine) button:not(.primary):not(.danger),
+.productionManager .pmModes button,
+.productionManager .pmBatchRows > button {
+  border-color: var(--line);
+  background: var(--panel2);
+  color: var(--text);
+  font-size: 12px;
+  box-shadow: none;
+  transform: none;
+}
+.productionManager :is(.pmPresetLine button.active,.pmModes button.active,.pmBatchRows button.active) {
+  border-color: #9d8cff;
+  background: #302b45;
+  color: #f2efff;
+}
+.productionManager .pmModes button { min-height: 68px; }
+.productionManager .pmModes b,
+.productionManager .pmBatchRows b { color: var(--text); font-size: 12px; }
+.productionManager .pmModes small,
+.productionManager .pmBatchRows small,
+.productionManager .pmBatchRows em { color: var(--muted); font-size: 11px; }
+.productionManager .pmReuse input { accent-color: var(--accent); }
+.productionManager .pmBuildProgress > div,
+.productionManager .pmBuildProgress small { color: var(--muted); font-size: 12px; }
+.productionManager .pmBuildProgress > i em { background: var(--accent); }
+.productionManager .pmProjectRows { gap: 0; }
+.productionManager .pmProjectRows label {
+  min-width: 0;
+  padding: 10px 8px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+.productionManager .pmProjectRows label :is(b,span,small) { min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
+.productionManager .pmProjectRows small { color: var(--muted); }
+.productionManager .pmProjectRows input { accent-color: var(--accent); }
+.productionManager :is(.pmValidation.good,.pmReadiness .ok b) { color: #8ce2bc; }
+.productionManager :is(.pmValidation.bad,.pmErrors b) { color: #ffadb5; }
+.productionManager .pmErrors span { color: #f2c1c6; }
+@media (max-width: 1100px) {
+  .productionManager .pmBatchRows > button { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .productionManager .pmBatchRows > button > strong,
+  .productionManager .pmBatchRows > button > small { display: block; text-align: left; }
+}
+@media (max-width: 850px) {
+  .pmStorageUnifiedMain { width: 100%; }
+  .productionManager .pmProjectRows label { grid-template-columns: 24px minmax(0, 1fr); }
+  .productionManager .pmProjectRows label small { grid-column: 2; }
+}

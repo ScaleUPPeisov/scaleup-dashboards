@@ -53,7 +53,7 @@ import {MetadataQueueAssignmentBridge} from './MetadataQueueAssignmentBridge';
 import {LiveInventoryBridge} from './LiveInventoryBridge';
 import {LiveContentInventory} from './LiveContentInventory';
 import {inventoryTotals,useLiveInventory} from './renderInventoryRuntime';
-import {ensureTask,reconcileUploadTasks,updateTask} from './taskEngine';
+import {ensureTask,flushPendingTaskProgress,reconcileUploadTasks,updateTask} from './taskEngine';
 import {globalDailyUploadStatus,restorePublishLedgerFromUploadHistory,subscribeGlobalDailyUploadStatus} from './youtubePublishSafety';
 import {UiErrorBoundary} from './UiErrorBoundary';
 import {SafeArtwork} from './SafeArtwork';
@@ -268,7 +268,7 @@ export function App(){
   useEffect(()=>{document.documentElement.classList.toggle('reduceMotion',reduceMotion)},[reduceMotion]);
   useEffect(()=>{const mac=/Macintosh|Mac OS X/.test(navigator.userAgent);document.documentElement.classList.toggle('platform-macos',mac);return()=>document.documentElement.classList.remove('platform-macos')},[]);
   useEffect(()=>{document.documentElement.classList.toggle('compactDensity',(interfaceDensity||'compact')==='compact');document.documentElement.classList.toggle('comfortableDensity',interfaceDensity==='comfortable')},[interfaceDensity]);
-  useEffect(()=>{let unlisten:(()=>void)|undefined;void api.onYoutubeProgress(f=>{applyUploadProgressFact(f);journalUploadProgressMilestone(f);const row=uploadTelemetrySnapshot().active.find(x=>x.jobId===f.jobId);updateTask(`upload:${f.jobId}`,{progress:row?.percent,bytesCompleted:row?.bytesUploaded,bytesTotal:row?.totalBytes,speedBps:row?.speedBps,etaSeconds:row?.etaSeconds,detail:'Передача данных'})}).then(fn=>unlisten=fn);return()=>unlisten?.()},[]);
+  useEffect(()=>{let unlisten:(()=>void)|undefined,disposed=false;void api.onYoutubeProgress(f=>{applyUploadProgressFact(f);journalUploadProgressMilestone(f);const row=uploadTelemetrySnapshot().active.find(x=>x.jobId===f.jobId);updateTask(`upload:${f.jobId}`,{progress:row?.percent,bytesCompleted:row?.bytesUploaded,bytesTotal:row?.totalBytes,speedBps:row?.speedBps,etaSeconds:row?.etaSeconds,detail:'Передача данных'})}).then(fn=>{if(disposed)fn();else unlisten=fn});return()=>{disposed=true;unlisten?.();flushPendingTaskProgress()}},[]);
   useEffect(()=>{if(!booted)return;void Promise.all([api.youtubeActiveUploads(),api.youtubeUploadSessions()]).then(([facts,sessions])=>{seedActiveUploadFacts(facts);const state=useApp.getState(),activeIds=new Set(facts.map(x=>x.jobId));for(const f of facts){const job=state.jobs.find(j=>j.id===f.jobId),channel=job&&state.channels.find(c=>c.id===job.channelId);ensureTask({taskId:`upload:${f.jobId}`,type:'UPLOAD',state:'RUNNING',channelId:job?.channelId||f.channelId,channelName:channel?.name,profileId:f.profileId,jobId:f.jobId,label:job?`VIDEO_${String(job.number).padStart(3,'0')}`:'YouTube upload',detail:job?.finalPath?.split('/').pop()||f.filePath,progress:f.totalBytes&&f.totalBytes>0?Math.max(0,Math.min(100,(f.bytesUploaded||0)/f.totalBytes*100)):undefined,bytesCompleted:f.bytesUploaded,bytesTotal:f.totalBytes??undefined,resourceKey:`upload:${job?.channelId||f.channelId}:${f.jobId}`})}reconcileUploadTasks(activeIds,new Set());const patches=buildStaleOperationPatches(state.jobs,{uploadsKnown:true,rendersKnown:false,activeUploadIds:activeIds,activeRenderIds:new Set(),uploadSessionIds:new Set(sessions.map(x=>x.jobId)),now:new Date().toISOString()});state.patchJobsBatch(patches.map(x=>({id:x.jobId,patch:x.patch})))}).catch(()=>{})},[booted]);
   useEffect(()=>{let unlisten:(()=>void)|undefined;void api.onYoutubeApiRequest(()=>{}).then(fn=>unlisten=fn);return()=>unlisten?.()},[]);
   useEffect(()=>{if(!booted||!autopilotEnabled)return;void runAutopilotCycle();const ms=Math.max(10,autopilotIntervalSec||30)*1000;const id=window.setInterval(()=>void runAutopilotCycle(),ms);return()=>window.clearInterval(id)},[booted,autopilotEnabled,autopilotIntervalSec]);
@@ -285,29 +285,14 @@ const CachedDashboardRoute=React.memo(({mode}:{mode:'dashboard'|'autopilot'})=><
 const CachedChannelsRoute=React.memo(ChannelsOS);
 const CachedProductionRoute=React.memo(ProductionOS);
 const CachedYouTubeRoute=React.memo(({routeTab,active}:{routeTab?:'publish'|'metadata'|'uploaded';active:boolean})=><YouTubeCenter routeTab={routeTab} active={active}/>);
-const HEAVY_ROUTE_SETTLE_MS=90;
-function RouteWarmup({route}:{route:string}){
-  const title=route==='dashboard'?'Главная':route==='channels'?'Каналы':route==='youtube'?'YouTube':'VYRON';
-  return <section className="routeWarmup" aria-live="polite"><small>VYRON • FAST ROUTE</small><h1>{title}</h1><div className="routeWarmupLine"><i/><i/><i/></div></section>
-}
-
 function PageRouter({license}:{license:LicenseStatus}){
   const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage);
   const youtubeRouteTab=page==='metadata'?'metadata':page==='existing'?'uploaded':page==='publisher'?'publish':undefined;
   const canonical=page==='autopilot'?'dashboard':page==='metadata'||page==='existing'||page==='publisher'?'youtube':page;
-  const heavyRoute=canonical==='dashboard'||canonical==='channels';
-  const [settledRoute,setSettledRoute]=useState<string>('');
-  useEffect(()=>{
-    if(!heavyRoute){setSettledRoute(String(canonical));return}
-    setSettledRoute('');
-    const id=window.setTimeout(()=>setSettledRoute(String(canonical)),HEAVY_ROUTE_SETTLE_MS);
-    return()=>window.clearTimeout(id)
-  },[canonical,heavyRoute]);
-  const heavyReady=!heavyRoute||settledRoute===canonical;
   const youtubeSelected=canonical==='youtube';
 
-  const transient=canonical==='dashboard'?(heavyReady?<><DashboardUploadSummary/><DashboardOS/></>:<RouteWarmup route="dashboard"/>)
-    :canonical==='channels'?(heavyReady?<ChannelsOS/>:<RouteWarmup route="channels"/>)
+  const transient=canonical==='dashboard'?<><DashboardUploadSummary/><DashboardOS/></>
+    :canonical==='channels'?<ChannelsOS/>
     :canonical==='production'||canonical==='content'?<ProductionOS/>
     :canonical==='history'?<HistoryPage/>
     :canonical==='inventory'?<LiveContentInventory/>
@@ -404,7 +389,9 @@ function FpsMonitor(){
     window.addEventListener('vyron:fps-reset',reset);
     const pct=(rows:number[],p:number)=>rows.length?rows[Math.min(rows.length-1,Math.floor((rows.length-1)*p))]:0;
     const loop=(t:number)=>{
-      const r=ref.current,delta=t-r.last;r.last=t;
+      const r=ref.current;r.raf=0;
+      if(document.visibilityState==='hidden')return;
+      const delta=t-r.last;r.last=t;
       if(delta>0&&delta<1000){r.frames.push(delta);if(r.frames.length>360)r.frames.shift()}
       if(t-r.lastPublish>=700&&r.frames.length){
         const rows=[...r.frames].sort((a,b)=>a-b),avg=r.frames.reduce((a,b)=>a+b,0)/r.frames.length;
@@ -413,8 +400,20 @@ function FpsMonitor(){
       }
       r.raf=requestAnimationFrame(loop);
     };
-    ref.current.raf=requestAnimationFrame(loop);
-    return()=>{cancelAnimationFrame(ref.current.raf);observer?.disconnect();window.removeEventListener('vyron:fps-reset',reset)};
+    const onVisibility=()=>{
+      const r=ref.current;
+      if(document.visibilityState==='hidden'){
+        if(r.raf)cancelAnimationFrame(r.raf);
+        r.raf=0;
+      }else if(!r.raf){
+        r.last=performance.now();
+        r.lastPublish=r.last;
+        r.raf=requestAnimationFrame(loop);
+      }
+    };
+    document.addEventListener('visibilitychange',onVisibility);
+    onVisibility();
+    return()=>{cancelAnimationFrame(ref.current.raf);observer?.disconnect();document.removeEventListener('visibilitychange',onVisibility);window.removeEventListener('vyron:fps-reset',reset)};
   },[]);
   const bad=metrics.p95>30||metrics.long50>0;
   return <div className={`fps fpsDetailed ${bad?'bad':''}`}><b>{metrics.fps||'…'} FPS</b><span>p50 {metrics.p50.toFixed(1)} ms</span><span>p95 {metrics.p95.toFixed(1)} ms</span><span>p99 {metrics.p99.toFixed(1)} ms</span><span>worst {metrics.worst.toFixed(1)} ms</span><span>dropped {metrics.dropped.toFixed(1)}%</span><span>long &gt;50 {metrics.long50} • &gt;100 {metrics.long100}</span></div>

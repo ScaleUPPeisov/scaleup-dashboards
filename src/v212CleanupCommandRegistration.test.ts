@@ -9,7 +9,9 @@ describe('VYRON 2.0.12 cleanup command registration hotfix',()=>{
     const rust=read('../src-tauri/src/production_manager.rs');
     const lib=read('../src-tauri/src/lib.rs');
     expect(api).toContain("invoke<CleanupResult>('cleanup_completed_production_assets',{manifestPath})");
-    expect(rust).toContain('pub fn cleanup_completed_production_assets');
+    expect(rust).toContain('pub async fn cleanup_completed_production_assets');
+    expect(rust).toContain('run_production_worker(move || cleanup_completed_production_assets_sync(manifest_path)).await');
+    expect(rust).toContain('fn cleanup_completed_production_assets_sync(manifest_path: String)');
     const start=lib.indexOf('tauri::generate_handler![');
     const end=lib.indexOf('])',start);
     expect(start).toBeGreaterThanOrEqual(0);

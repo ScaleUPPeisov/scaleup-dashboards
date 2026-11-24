@@ -4,8 +4,8 @@ import {useApp} from './store';
 import type {Channel,FingerprintCacheEntry,UploadHistoryRecord,VideoJob} from './types';
 import {
   classifyChannelRenderFiles,
+  createRenderFingerprintMatcher,
   normalizeRenderPath,
-  renderFileNeedsFingerprint,
   renderSequence,
   summarizeRenderScan,
   type RenderScanRow,
@@ -174,24 +174,27 @@ function errorSnapshot(channel:Channel,previous:ChannelInventorySnapshot|undefin
 }
 
 async function fingerprintNeededFiles(result:RenderFolderScanResult,jobs:VideoJob[],history:UploadHistoryRecord[],channelId:string,forceNumbered=false){
-  const cache={...useApp.getState().fingerprintCache};
+  const cache=useApp.getState().fingerprintCache;
   const pendingCache:Record<string,FingerprintCacheEntry>={};
   const files:RenderFolderVideoFile[]=new Array(result.files.length);
+  const needsFingerprint=createRenderFingerprintMatcher(jobs,history,channelId,result.root);
   let cursor=0;
   const worker=async()=>{
     while(true){
       const i=cursor++;if(i>=result.files.length)return;
+      // Cached and unneeded files can otherwise monopolise a single UI task.
+      if(i>0&&i%64===0)await yieldToUi();
       const file=result.files[i];
-      const identityRequired=renderFileNeedsFingerprint(file,jobs,history,channelId,result.root)||(forceNumbered&&Boolean(renderSequence(file.name)));
+      const identityRequired=needsFingerprint(file)||(forceNumbered&&Boolean(renderSequence(file.name)));
       if(!identityRequired){files[i]=file;continue}
-      const cached=cache[file.path];
+      const cached=pendingCache[file.path]||cache[file.path];
       if(cached&&cached.size===file.size&&Number(cached.mtimeMs)===Number(file.modifiedAt||0)&&/^[a-f0-9]{64}$/i.test(cached.sha256)){
         files[i]={...file,fingerprint:cached.sha256};continue
       }
       try{
         const fp=await api.youtubeFileFingerprint(file.path,cached?{size:cached.size,mtimeMs:cached.mtimeMs,sha256:cached.sha256}:undefined);
         const entry:FingerprintCacheEntry={path:file.path,size:fp.size,mtimeMs:fp.modifiedAt,sha256:fp.fingerprint,computedAt:nowIso()};
-        cache[file.path]=entry;pendingCache[file.path]=entry;
+        pendingCache[file.path]=entry;
         files[i]={...file,size:fp.size,modifiedAt:fp.modifiedAt,fingerprint:fp.fingerprint};
         await yieldToUi()
       }catch{files[i]=file}

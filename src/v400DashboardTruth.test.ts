@@ -9,7 +9,7 @@ const app=fs.readFileSync('src/App.tsx','utf8');
 describe('VYRON 4.0.0 dashboard truth separation',()=>{
  it('uses owner-authorized inventory for YouTube scheduled and keeps local ready separate',()=>{
    expect(dashboard).toContain('aggregateOwnerInventories');
-   expect(dashboard).toContain('YOUTUBE SCHEDULED');
+   expect(dashboard).toContain('ЗАПЛАНИРОВАНО НА YOUTUBE');
    expect(dashboard).toContain('ЛОКАЛЬНО ГОТОВО');
    expect(dashboard).toContain('ownerTotals.scheduled');
    expect(dashboard).not.toContain('inventory.channels.reduce((n,x)=>n+x.scheduled');
@@ -17,8 +17,8 @@ describe('VYRON 4.0.0 dashboard truth separation',()=>{
  it('does not use public channel videoCount as owner total',()=>{
    // Owner-authorized uploads are a separate section from public channel stats.
    expect(dashboard).toContain('const ownerVideoValue=ownerTotals.availableChannels?ownerPrefix+fmt(ownerTotals.total)');
-   expect(dashboard).toContain('<small>Всего owner-visible</small><b>{ownerVideoValue}</b>');
-   expect(dashboard).toContain('Public channel videoCount здесь не используется как абсолютн');
+   expect(dashboard).toContain('<small>Всего доступно владельцу</small><b>{ownerVideoValue}</b>');
+   expect(dashboard).toContain('Публичная статистика канала не используется как полное число видео');
    // Public statistics can still be shown independently, with a partial-data prefix.
    expect(dashboard).toContain('const videoValues=enabled.map(c=>c.stats?.videoCount??c.stats?.videos)');
    expect(dashboard).toContain('aggregate(videoValues,videoTotal)');

@@ -31,7 +31,7 @@ type Store=AppState&{
   addChannel:(p:Partial<Channel>)=>Channel; updateChannel:(id:string,p:Partial<Channel>)=>void; removeChannel:(id:string)=>void;
   setJobs:(jobs:VideoJob[])=>void; patchJob:(id:string,p:Partial<VideoJob>)=>void; patchJobsBatch:(patches:Array<{id:string;patch:Partial<VideoJob>}>)=>void; addJobs:(jobs:VideoJob[])=>void;
   addCompetitor:(c:Competitor)=>void; patchCompetitor:(id:string,p:Partial<Competitor>)=>void; removeCompetitor:(id:string)=>void;
-  patchSettings:(p:Partial<Settings>)=>void; recordUploadHistory:(r:UploadHistoryRecord)=>void; replaceUploadHistory:(rows:UploadHistoryRecord[])=>void; appendActivity:(e:ActivityEvent)=>void; appendActivities:(e:ActivityEvent[])=>void; replaceActivityJournal:(rows:ActivityEvent[])=>void; recordStatisticsSnapshot:(row:ChannelStatisticsSnapshot)=>void; replaceStatisticsHistory:(rows:ChannelStatisticsHistory)=>void; cacheFingerprint:(path:string,e:FingerprintCacheEntry)=>void; cacheFingerprints:(entries:Record<string,FingerprintCacheEntry>)=>void; patchProjectLifecycle:(key:string,p:ProjectLifecycleRecord)=>void; log:(message:string,level?:'info'|'warn'|'error')=>void; toast:(message:string)=>void;
+  patchSettings:(p:Partial<Settings>)=>void; recordUploadHistory:(r:UploadHistoryRecord)=>void; replaceUploadHistory:(rows:UploadHistoryRecord[])=>void; appendActivity:(e:ActivityEvent)=>void; appendActivities:(e:ActivityEvent[])=>void; replaceActivityJournal:(rows:ActivityEvent[])=>void; recordStatisticsSnapshot:(row:ChannelStatisticsSnapshot)=>void; replaceStatisticsHistory:(rows:ChannelStatisticsHistory)=>void; cacheFingerprint:(path:string,e:FingerprintCacheEntry)=>void; cacheFingerprints:(entries:Record<string,FingerprintCacheEntry>)=>void; patchProjectLifecycle:(key:string,p:ProjectLifecycleRecord)=>void; patchProjectLifecycles:(entries:Record<string,ProjectLifecycleRecord>)=>void; log:(message:string,level?:'info'|'warn'|'error')=>void; toast:(message:string)=>void;
 };
 
 let saveTimer:number|undefined;
@@ -42,12 +42,17 @@ let persistIdleHandle:number|undefined;
 let persistenceSuspended=false;
 let performanceProbeMode=false;
 
-function cancelScheduledPersistence(){
+// Clear callbacks that have not started. Do not reset persistAgain: a caller
+// may already have requested a follow-up while a write is in flight.
+function cancelPendingAutosave(){
   if(typeof window!=='undefined'){
-    window.clearTimeout(saveTimer);
+    if(saveTimer!==undefined)window.clearTimeout(saveTimer);
     if(persistIdleHandle!==undefined&&'cancelIdleCallback' in window)(window as any).cancelIdleCallback(persistIdleHandle);
   }
-  saveTimer=undefined;persistIdleHandle=undefined;persistAgain=false;
+  saveTimer=undefined;persistIdleHandle=undefined;
+}
+function cancelScheduledPersistence(){
+  cancelPendingAutosave();persistAgain=false;
 }
 export async function enterPerformanceProbeMode(){
   persistenceSuspended=true;
@@ -68,6 +73,9 @@ function persistedSnapshot(s:Store):AppState{
 }
 async function persistStoreState(){
   if(persistenceSuspended)return;
+  // An explicit flush supersedes a debounce/idle callback for the same state.
+  // A mutation made after this point will schedule its own callback normally.
+  cancelPendingAutosave();
   if(persistInFlight){persistAgain=true;return persistInFlight}
   const run=(async()=>{
     do{
@@ -81,7 +89,14 @@ async function persistStoreState(){
     }while(persistAgain&&!persistenceSuspended)
   })();
   persistInFlight=run;
-  try{await run}finally{if(persistInFlight===run)persistInFlight=null}
+  try{await run}catch(error){
+    // A timer may have fired while this write was pending. Its requested
+    // follow-up must not disappear just because the current write failed.
+    const retryFollowup=persistAgain&&!persistenceSuspended;
+    persistAgain=false;
+    if(retryFollowup)scheduleSave();
+    throw error;
+  }finally{if(persistInFlight===run)persistInFlight=null}
 }
 function scheduleSave(){
   if(persistenceSuspended)return;
@@ -170,6 +185,17 @@ export const useApp=create<Store>((set,get)=>({
   cacheFingerprint:(path,e)=>{set(s=>({fingerprintCache:{...s.fingerprintCache,[path]:e}}));scheduleSave()},
   cacheFingerprints:entries=>{if(!Object.keys(entries).length)return;set(s=>({fingerprintCache:{...s.fingerprintCache,...entries}}));scheduleSave()},
   patchProjectLifecycle:(key,p)=>{set(s=>({projectLifecycle:{...s.projectLifecycle,[key]:p}}));scheduleSave()},
+  patchProjectLifecycles:entries=>{
+    const current=get().projectLifecycle;
+    let next:Record<string,ProjectLifecycleRecord>|undefined;
+    for(const [key,value] of Object.entries(entries)){
+      const old=current[key];
+      // A fresh observation timestamp alone is not a lifecycle change.
+      if(old&&old.projectId===value.projectId&&old.jobId===value.jobId&&old.projectPath===value.projectPath&&old.renderPath===value.renderPath&&old.status===value.status&&old.renderExists===value.renderExists&&old.youtubeVideoId===value.youtubeVideoId&&old.uploadedAt===value.uploadedAt)continue;
+      (next||(next={...current}))[key]=value;
+    }
+    if(next){set({projectLifecycle:next});scheduleSave()}
+  },
   log:(message,level='info')=>{const safe=redactSensitive(message);set(s=>({logs:[{at:new Date().toISOString(),level,message:safe},...s.logs].slice(0,500)}));scheduleSave()},
   toast:notice=>{notifyLegacy(notice)}
 }));

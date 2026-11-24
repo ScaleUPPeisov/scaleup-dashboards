@@ -19,7 +19,12 @@ describe('VYRON 6.0.3 critical Production hotfix',()=>{
   it('uses one SHA-deduplicated resolved image inventory in state, preflight and plan',()=>{
     expect(backend).toContain('fn resolve_production_images(workspace: &str, channel_id: &str)');
     expect(backend).toContain('let mut seen = HashSet::<String>::new()');
-    expect(backend).toContain('let available = resolve_production_images(&request.workspace, &request.channel_id)?.len()');
+    const preparation=backend.slice(backend.indexOf('fn prepare_production_build'),backend.indexOf('#[tauri::command]',backend.indexOf('fn prepare_production_build')));
+    expect(preparation).toContain('let resolved_images = resolve(&request.workspace, &request.channel_id)?');
+    expect(preparation).toContain('let available = resolved_images.len()');
+    expect(preparation).toContain('plan_build_with_images(request, resolved_images)');
+    expect(preparation.match(/resolve\(&request\.workspace, &request\.channel_id\)/g)).toHaveLength(1);
+    expect(backend).toContain('prepare_production_build(&request, resolve_production_images)');
     expect(backend).toContain('let resolved_images = resolve_production_images(&req.workspace, &req.channel_id)?');
     expect(backend).not.toContain('let use_material_library = material_summary.total > 0');
     expect(api).toContain('resolvedImagesAvailable:number');

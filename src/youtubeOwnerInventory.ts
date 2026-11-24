@@ -93,8 +93,8 @@ export function ownerInventoryForChannel(channelId:string,nowMs=Date.now()):Owne
   return ownerInventoryFromVideos(channelId,snapshot.videos,snapshot.updatedAt,snapshot.syncInfo,nowMs)
 }
 
-export function aggregateOwnerInventories(channels:Channel[],nowMs=Date.now()):OwnerYoutubeInventoryTotals{
-  const rows=channels.filter(c=>c.enabled!==false).map(c=>ownerInventoryForChannel(c.id,nowMs)).filter(x=>x.available);
+export function aggregateOwnerInventories(channels:Channel[],nowMs=Date.now(),snapshots?:ReadonlyMap<string,OwnerYoutubeInventorySnapshot>):OwnerYoutubeInventoryTotals{
+  const rows=channels.filter(c=>c.enabled!==false).map(c=>snapshots?.get(c.id)??ownerInventoryForChannel(c.id,nowMs)).filter(x=>x.available);
   const future=rows.map(x=>x.nextScheduledAt).filter((x):x is string=>Boolean(x)).sort((a,b)=>Date.parse(a)-Date.parse(b));
   return{
     availableChannels:rows.length,

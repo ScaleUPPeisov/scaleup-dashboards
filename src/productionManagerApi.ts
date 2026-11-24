@@ -94,8 +94,24 @@ export type ProductionBuildRuntimeSnapshot={
 };
 const productionSnapshots=new Map<string,ProductionBuildRuntimeSnapshot>();
 const productionSubscribers=new Set<()=>void>();
+const PRODUCTION_PROGRESS_NOTIFY_MS=250;
+let productionProgressTimer:ReturnType<typeof setTimeout>|undefined;
 let productionListener:Promise<UnlistenFn>|null=null;
 function broadcastProductionBuild(){for(const subscriber of productionSubscribers)subscriber()}
+function cancelProductionProgressNotification(){
+  if(productionProgressTimer!==undefined)clearTimeout(productionProgressTimer);
+  productionProgressTimer=undefined;
+}
+function scheduleProductionProgressNotification(){
+  // Keep the factual snapshot current even when no page is subscribed.
+  // Only visual notifications are coalesced; the Rust operation is untouched.
+  if(!productionSubscribers.size||productionProgressTimer!==undefined)return;
+  productionProgressTimer=setTimeout(()=>{productionProgressTimer=undefined;broadcastProductionBuild()},PRODUCTION_PROGRESS_NOTIFY_MS);
+}
+function broadcastProductionTransition(){
+  cancelProductionProgressNotification();
+  broadcastProductionBuild();
+}
 function listenProductionBuild(){
   if(!productionListener){
     productionListener=productionManagerApi.onBatchProgress(p=>{
@@ -105,7 +121,7 @@ function listenProductionBuild(){
         // Never show progress belonging to another request.
         if(p.requestId!==task.requestId)continue;
         task.progress={completed:p.completed,total:p.total,stage:p.stage};
-        broadcastProductionBuild();
+        scheduleProductionProgressNotification();
       }
     }).catch(error=>{productionListener=null;throw error});
   }
@@ -114,8 +130,11 @@ function listenProductionBuild(){
 export const productionBuildRuntime={
   snapshot:(channelId:string)=>productionSnapshots.get(channelId)||null,
   subscribe:(callback:()=>void)=>{
-    productionSubscribers.add(callback);
-    return()=>{productionSubscribers.delete(callback)};
+    // Each registration owns its own subscription, even if callers pass the
+    // same callback. One cleanup must not cancel another caller's updates.
+    const subscriber=()=>callback();
+    productionSubscribers.add(subscriber);
+    return()=>{productionSubscribers.delete(subscriber);if(!productionSubscribers.size)cancelProductionProgressNotification()};
   },
   start:async(request:BuildRequest):Promise<BuildResult>=>{
     const current=[...productionSnapshots.values()].find(task=>task.state==='RUNNING');
@@ -125,17 +144,17 @@ export const productionBuildRuntime={
       progress:{completed:0,total:request.projectCount,stage:'Подготовка'}
     };
     productionSnapshots.set(request.channelId,task);
-    broadcastProductionBuild();
+    broadcastProductionTransition();
     try{
       await listenProductionBuild();
       const result=await productionManagerApi.build(request);
       task.state='COMPLETED';task.result=result;
       task.progress={completed:result.batch?.projectCount||0,total:request.projectCount,stage:'Готово'};
-      broadcastProductionBuild();
+      broadcastProductionTransition();
       return result;
     }catch(error){
       task.state='FAILED';task.error=String(error);
-      broadcastProductionBuild();
+      broadcastProductionTransition();
       throw error;
     }
   }

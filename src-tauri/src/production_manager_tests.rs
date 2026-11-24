@@ -804,7 +804,9 @@ fn v603_automatic_cleanup_still_requires_completed_render() {
     let (ws, cid, name) = fixture(1, 20);
     let plan = plan_build(&request(&ws, &cid, &name, 1, 10, "even", false)).unwrap();
     let summary = execute_plan(None, &plan).unwrap();
-    let eligible = preview_completed_production_projects(summary.manifest_path).unwrap();
+    let expected = preview_completed_production_projects_sync(summary.manifest_path.clone()).unwrap();
+    let eligible = tauri::async_runtime::block_on(preview_completed_production_projects(summary.manifest_path)).unwrap();
+    assert_eq!(eligible, expected);
     assert!(eligible.is_empty());
     cleanup(&ws);
 }
@@ -860,4 +862,136 @@ fn acceptance_render_output_is_channel_isolated() {
     assert!(!is_production_batches_path(&first));
     assert!(!is_production_batches_path(&second));
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn batch_listing_reports_unreadable_directory_instead_of_empty_success() {
+    let root = std::env::temp_dir().join(format!("vyron-batch-list-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    assert!(list_production_batches_at(&root).unwrap().is_empty());
+    let not_a_directory = root.join("file");
+    fs::write(&not_a_directory, b"fixture").unwrap();
+    let error = list_production_batches_at(&not_a_directory).unwrap_err();
+    assert!(error.contains("PRODUCTION_BATCH_LIST_FAILED"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn batch_list_worker_runs_off_async_executor_and_preserves_contract() {
+    let root = std::env::temp_dir().join(format!("vyron-batch-async-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let workspace = root.to_string_lossy().into_owned();
+    let channel = "fixture-channel".to_string();
+    let parent = batch_root_parent(&workspace, &channel).unwrap();
+    let batch = parent.join("one");
+    fs::create_dir_all(&batch).unwrap();
+    let status_path = batch.join("status.json");
+    let manifest = BatchManifest {
+        batch_id: "batch-one".into(),
+        channel_id: channel.clone(),
+        root_path: batch.to_string_lossy().into_owned(),
+        status_path: status_path.to_string_lossy().into_owned(),
+        ..Default::default()
+    };
+    atomic_json(&batch.join("batch.json"), &manifest).unwrap();
+    atomic_json(&status_path, &BatchStatus { status: "Rendering".into(), ..Default::default() }).unwrap();
+    let direct = list_production_batches_sync(workspace.clone(), channel.clone()).unwrap();
+    let (worker_thread, caller_thread, actual) = tauri::async_runtime::block_on(async {
+        let caller_thread = std::thread::current().id();
+        let worker_thread = run_production_worker(|| Ok(std::thread::current().id())).await.unwrap();
+        let actual = list_production_batches(workspace, channel).await.unwrap();
+        (worker_thread, caller_thread, actual)
+    });
+    assert_ne!(worker_thread, caller_thread);
+    assert_eq!(serde_json::to_value(actual).unwrap(), serde_json::to_value(direct).unwrap());
+    assert!(tauri::async_runtime::block_on(list_production_batches(String::new(), "x".into())).is_err());
+    let manifest_path = batch.join("batch.json").to_string_lossy().into_owned();
+    let direct_status = read_production_batch_status_sync(manifest_path.clone()).unwrap();
+    let async_status = tauri::async_runtime::block_on(read_production_batch_status(manifest_path)).unwrap();
+    assert_eq!(serde_json::to_value(async_status).unwrap(), serde_json::to_value(direct_status).unwrap());
+    assert!(tauri::async_runtime::block_on(read_production_batch_status("missing-fixture".into())).is_err());
+    let missing = root.join("missing-batch.json").to_string_lossy().into_owned();
+    let direct_error = preview_completed_production_projects_sync(missing.clone()).unwrap_err();
+    let async_error = tauri::async_runtime::block_on(preview_completed_production_projects(missing)).unwrap_err();
+    assert_eq!(async_error, direct_error);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn production_build_preparation_resolves_images_once_and_reuses_snapshot() {
+    let (ws, cid, name) = fixture(3, 3);
+    let req = request(&ws, &cid, &name, 3, 2, "even", false);
+    let expected = resolve_production_images(&req.workspace, &req.channel_id).unwrap()
+        .into_iter().map(|image| image.path).collect::<Vec<_>>();
+    let mut calls = 0;
+    let prepared = prepare_production_build(&req, |workspace, channel_id| {
+        calls += 1;
+        resolve_production_images(workspace, channel_id)
+    }).unwrap();
+    let (available, plan) = match prepared {
+        BuildPreparation::Plan { available, plan, .. } => (available, plan),
+        BuildPreparation::Ready(_) => panic!("expected a new build plan"),
+    };
+    assert_eq!(calls, 1);
+    assert_eq!(available, 3);
+    assert_eq!(plan.projects.iter().map(|project| project.image_source.clone()).collect::<Vec<_>>(), expected);
+    assert!(plan.projects.iter().all(|project| project.tracks.len() == 2));
+
+    let insufficient = request(&ws, &cid, &name, 4, 2, "even", false);
+    let mut checks = 0;
+    let result = prepare_production_build(&insufficient, |workspace, channel_id| {
+        checks += 1;
+        resolve_production_images(workspace, channel_id)
+    }).unwrap();
+    match result {
+        BuildPreparation::Ready(result) => {
+            assert_eq!(result.status, "insufficient_images");
+            assert_eq!(result.available_images, 3);
+        }
+        BuildPreparation::Plan { .. } => panic!("insufficient images must not create a plan"),
+    }
+    assert_eq!(checks, 1);
+    cleanup(&ws);
+}
+
+#[test]
+fn production_storage_worker_preserves_status_and_missing_path_behavior() {
+    let root = std::env::temp_dir().join(format!("vyron-storage-worker-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let path = root.to_string_lossy().into_owned();
+    let sync = production_storage_status_sync(path.clone());
+    let actual = tauri::async_runtime::block_on(production_storage_status(path));
+    assert_eq!(actual.path, sync.path);
+    assert_eq!(actual.exists, sync.exists);
+    assert_eq!(actual.writable, sync.writable);
+    assert_eq!(actual.external, sync.external);
+    assert_eq!(actual.error, sync.error);
+    assert!(actual.exists && actual.writable);
+    assert!(!fs::read_dir(&root).unwrap().any(|entry| entry.unwrap().file_name().to_string_lossy().starts_with(".vyron-write-probe-")));
+
+    let missing = root.join("absent").to_string_lossy().into_owned();
+    let sync_missing = production_storage_status_sync(missing.clone());
+    let async_missing = tauri::async_runtime::block_on(production_storage_status(missing));
+    assert_eq!(serde_json::to_value(async_missing).unwrap(), serde_json::to_value(sync_missing).unwrap());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn manual_music_worker_preserves_scan_order_and_errors() {
+    let root = std::env::temp_dir().join(format!("vyron-music-worker-{}", Uuid::new_v4()));
+    let nested = root.join("nested");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(root.join("b.mp3"), b"fixture").unwrap();
+    fs::write(nested.join("a.wav"), b"fixture").unwrap();
+    fs::write(nested.join("ignored.txt"), b"fixture").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&nested, root.join("alias")).unwrap();
+    let path = root.to_string_lossy().into_owned();
+    let direct = scan_manual_production_music_sync(path.clone()).unwrap();
+    let actual = tauri::async_runtime::block_on(scan_manual_production_music(path)).unwrap();
+    assert_eq!(actual, direct);
+    assert_eq!(actual.len(), 2);
+    let missing = root.join("absent").to_string_lossy().into_owned();
+    assert_eq!(tauri::async_runtime::block_on(scan_manual_production_music(missing)).unwrap_err(), "Выбранная музыкальная папка недоступна");
+    fs::remove_dir_all(root).unwrap();
 }

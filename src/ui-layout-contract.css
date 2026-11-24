@@ -360,3 +360,124 @@ button>*{min-width:0;max-width:100%}
 .recoveryDialogV320 footer{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:14px}.recoveryDialogV320 footer button{flex:0 1 auto}
 @media(max-width:700px){.recoveryFactsV320{grid-template-columns:repeat(2,minmax(0,1fr))!important}.recoveryDialogV320 footer button{flex:1 1 160px}}
 @media(max-height:760px){.recoveryOverlay{place-items:start center!important;padding:8px!important}.recoveryDialogV320{max-height:calc(100vh - 16px)!important}}
+
+/* VYRON APEX — shared shell palette. Feature-specific status semantics remain intact. */
+:root {
+  color-scheme: dark;
+  --bg: #0d0e12;
+  --panel: #191b23;
+  --panel2: #20222c;
+  --line: #363945;
+  --muted: #a6a9b8;
+  --text: #f2f3f7;
+  --accent: #9d8cff;
+  --cyan: #69c9e6;
+  --purple: #b6aaff;
+  --green: #51d6a0;
+  --orange: #f5b860;
+  --red: #f26c7a;
+  --blue: #96b9ff;
+  --os-border: #363945;
+  --os-panel: #191b23;
+  --os-panel2: #20222c;
+  --os-text: #f2f3f7;
+  --os-muted: #a6a9b8;
+  --os-accent: #9d8cff;
+}
+
+body,
+.appShell {
+  color: var(--text);
+  background: var(--bg);
+}
+
+/* Preserve layout geometry; remove expensive decorative compositing. */
+.bgGlow { display: none; }
+.sidebar {
+  background: #111217;
+  border-right-color: var(--line);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.topbar {
+  background: #111217;
+  border-bottom-color: var(--line);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.sidebarFooter { background: #111217; }
+.sidebar nav .sidebarNavItem { color: #b1b4c2; }
+.sidebar nav .sidebarNavItem:not(.active):hover {
+  background: #242631;
+  color: var(--text);
+}
+.sidebar nav .sidebarNavItem.active {
+  color: #f2efff;
+  background: #302b45;
+  border-color: #544a78;
+}
+.sidebar nav .sidebarNavItem.active::before {
+  background: var(--accent);
+  box-shadow: none;
+}
+.sidebar nav .sidebarNavItem:focus-visible {
+  outline: 2px solid #c1b6ff;
+  outline-offset: -2px;
+}
+.sidebar .sidebarNavItem > .sidebarCount {
+  color: #e3ddff;
+  background: #302b45;
+  border-color: #544a78;
+}
+
+.panel,
+.settingsCard {
+  background: var(--panel) !important;
+  border-color: var(--line) !important;
+  box-shadow: none !important;
+}
+.metric {
+  background: var(--panel);
+  border-color: var(--line);
+  box-shadow: none;
+}
+.pageHeader h1,
+.panelHead h3,
+.settingsCard h3 { color: var(--text); }
+.pageHeader p { color: var(--muted); }
+
+.appShell .primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #15121f;
+  box-shadow: none;
+}
+.appShell .primary:hover:not(:disabled) {
+  background: #b2a5ff;
+  border-color: #b2a5ff;
+  box-shadow: none;
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid #c1b6ff;
+  outline-offset: 2px;
+}
+
+/* Celebration content remains available without an infinite decorative effect. */
+.majorCelebrationHalo,
+.majorCelebrationFx { display: none; }
+.appShell .majorCelebrationBackdrop {
+  background: rgba(0, 0, 0, .82);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: .001ms !important;
+  }
+}

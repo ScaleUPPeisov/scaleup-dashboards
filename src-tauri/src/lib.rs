@@ -1,5 +1,8 @@
 #![recursion_limit = "512"]
 mod updater_bridge;
+mod apex_guard;
+mod apex_paths;
+mod apex_paths_fs;
 use tauri::Manager;
 mod license;
 mod storage;
@@ -30,6 +33,14 @@ mod profile;
 
 #[cfg_attr(mobile,tauri::mobile_entry_point)]
 pub fn run(){
+    // Builds from this experimental branch are intentionally non-runnable until their filesystem,
+    // Publisher, updater and credential isolation are enforced and verified.
+    // Check before creating the application, plugins or its WebView.
+    let context = tauri::generate_context!();
+    if apex_guard::must_block_startup(&context.config().identifier) {
+        eprintln!("VYRON APEX: запуск заблокирован до проверки изоляции данных и публикации.");
+        std::process::exit(78);
+    }
     tauri::Builder::default()
         .manage(inventory_watch::InventoryWatchState::default())
         .plugin(tauri_plugin_dialog::init())
@@ -69,7 +80,7 @@ pub fn run(){
             materials_manager::production_materials_downloads_path,materials_manager::import_production_material_images,materials_manager::production_materials_summary,materials_manager::production_materials_summaries,production_manager::production_storage_status,production_manager::start_production_import,production_manager::stop_production_import,production_manager::production_import_status,production_manager::set_production_music_library,production_manager::index_production_music_library,production_manager::scan_manual_production_music,production_manager::build_manual_production_batch,production_manager::build_production_batch,production_manager::resume_production_batch,production_manager::resume_production_recovery,production_manager::find_production_recovery,production_manager::restart_production_batch,recovery::recovery_candidates,recovery::recovery_refresh_candidate,recovery::recovery_dismiss_session,recovery::recovery_mark_clean_shutdown,production_manager::read_production_batch_status,production_manager::list_production_batches,production_manager::production_channel_state,production_manager::validate_production_batch,production_manager::validate_production_projects,production_manager::delete_production_batch_projects,production_manager::preview_completed_production_projects,production_manager::cleanup_completed_production_assets,production_manager::cleanup_completed_production_projects,production_manager::apply_production_cleanup_policy,production_manager::preview_global_production_project_cleanup,production_manager::execute_global_production_project_cleanup,production_manager::archive_production_rendered_videos,production_manager::delete_production_job_folder,production_manager::open_production_batch_in_endlume,production_manager::production_endlume_handoff_consumed,
             ai::ai_generate_metadata
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building VYRON")
         .run(|app_handle,event|{
             if matches!(event,tauri::RunEvent::ExitRequested{..}|tauri::RunEvent::Exit){

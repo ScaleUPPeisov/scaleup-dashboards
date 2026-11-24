@@ -11,7 +11,8 @@ import {loadActivePublishChannel,subscribeActivePublishChannel} from './publishW
 import {CommandCenter} from './CommandCenter';
 import {ScreenErrorBoundary} from './ScreenErrorBoundary';
 import {activeJobErrors} from './activeErrors';
-import {inventoryTotals,useLiveInventory} from './renderInventoryRuntime';
+import {useLiveInventory} from './renderInventoryRuntime';
+import {dashboardLocalInventory,dashboardLocalInventoryTotal} from './dashboardLocalInventory';
 import {OWNER_INVENTORY_EVENT,aggregateOwnerInventories,ownerInventoryForChannel} from './youtubeOwnerInventory';
 import {globalDailyUploadStatus,safeDailyStatus,subscribeGlobalDailyUploadStatus} from './youtubePublishSafety';
 import {youtubeQuotaUsage} from './youtubeQuota';
@@ -57,9 +58,11 @@ function OperationsDashboard(){
  const enabled=useMemo(()=>channels.filter(c=>c.enabled!==false),[channels]);
  const uploadFacts=useMemo(()=>uploadQueueRuntimeFacts(),[queue]);
  const inventory=useMemo(()=>buildReadyVideoInventory(enabled,jobs,uploadHistory,projectLifecycle,fingerprintCache,uploadFacts,new Date()),[enabled,jobs,uploadHistory,projectLifecycle,fingerprintCache,uploadFacts]);
- const liveTotals=useMemo(()=>inventoryTotals(liveSnapshots,enabled),[liveSnapshots,enabled]);
- const ownerTotals=useMemo(()=>aggregateOwnerInventories(enabled),[enabled,ownerRevision]);
+ const localTotal=useMemo(()=>dashboardLocalInventoryTotal(enabled,liveSnapshots),[liveSnapshots,enabled]);
+ const localTotalValue=localTotal.ready==null?'Нет данных':fmt(localTotal.ready);
+ const localTotalNote=localTotal.missing||localTotal.stale?[localTotal.missing?'нет данных по каналам: '+localTotal.missing:'',localTotal.stale?'устарели: '+localTotal.stale:''].filter(Boolean).join(' • '):'папка Render';
  const ownerByChannel=useMemo(()=>new Map(enabled.map(c=>[c.id,ownerInventoryForChannel(c.id)])),[enabled,ownerRevision]);
+ const ownerTotals=useMemo(()=>aggregateOwnerInventories(enabled,undefined,ownerByChannel),[enabled,ownerByChannel]);
  const connectedCount=useMemo(()=>exactConnectedCount(enabled,profiles),[enabled,profiles]);
 
  const subscriberValues=enabled.map(c=>c.stats?.hiddenSubscriberCount?undefined:(c.stats?.subscriberCount??c.stats?.subscribers)).filter(numeric);
@@ -75,6 +78,8 @@ function OperationsDashboard(){
  const ownerScheduledValue=ownerTotals.availableChannels?ownerPrefix+fmt(ownerTotals.scheduled):'—';
 
  const active=enabled.find(c=>c.id===activeId)||enabled[0],activeInv=active?inventory.byChannel[active.id]:undefined,activeLive=active?liveSnapshots[active.id]:undefined,activeOwner=active?ownerByChannel.get(active.id):undefined,activeQueued=active?queue.queued.filter(x=>x.spec.channelId===active.id).length:0;
+ const activeLocal=dashboardLocalInventory(activeLive);
+ const activeLocalNote=activeLocal.state==='stale'?'Устаревшие данные':activeLocal.state==='unknown'?'Нет подтверждённых данных':'';
  const jobErrors=activeJobErrors(jobs),actionableErrors=jobErrors.length,readyEndlume=jobs.filter(j=>j.status==='READY_RENDER').length,rendering=jobs.filter(j=>j.status==='RENDERING').length;
  const now=new Date(),dailyOps=buildDailyOperations(enabled,uploadHistory,liveSnapshots,now),uploadedTodayRows=uploadHistory.filter(x=>sameLocalDay(x.uploadedAt,now)&&Boolean(x.youtubeVideoId)),uploadedToday=dailyOps.uploadedToday,failedToday=queue.recent.filter(x=>x.state==='FAILED'&&sameLocalDay(x.finishedAt,now)).length;
  const apiQuota=youtubeQuotaUsage();
@@ -101,10 +106,10 @@ function OperationsDashboard(){
    const inv=liveSnapshots[c.id],owner=ownerByChannel.get(c.id);
    if(inv&&inv.folderState==='ONLINE'&&inv.readyVideos===0)rows.push({key:'stock:'+c.id,label:c.name,text:'Локальный запас Render закончился',page:'inventory'});
    if(!isFutureChannel(c)&&!c.youtubeProfileId)rows.push({key:'oauth:'+c.id,label:c.name,text:'Требуется подключение YouTube OAuth',page:'youtube'});
-   if(owner?.available&&!owner.complete)rows.push({key:'owner-partial:'+c.id,label:c.name,text:'YouTube inventory подтверждён не полностью',page:'youtube'});
+   if(owner?.available&&!owner.complete)rows.push({key:'owner-partial:'+c.id,label:c.name,text:'Список видео YouTube подтверждён не полностью',page:'youtube'});
    if(c.safeDailyUploadLimit!=null){
     const daily=safeDailyStatus(c.id,c.safeDailyUploadLimit);
-    if(!daily.unlimited&&daily.remaining===0)rows.push({key:'daily-limit:'+c.id,label:c.name,text:'Локальный дневной upload limit: '+daily.used+'/'+daily.limit,page:'youtube'})
+    if(!daily.unlimited&&daily.remaining===0)rows.push({key:'daily-limit:'+c.id,label:c.name,text:'Дневной лимит загрузок: '+daily.used+'/'+daily.limit,page:'youtube'})
    }else if(!isFutureChannel(c)&&settings.autoUploadYoutube){
     rows.push({key:'upload-limit:'+c.id,label:c.name,text:'Для авто-YouTube не задан локальный дневной лимит',page:'youtube'})
    }
@@ -130,10 +135,10 @@ function OperationsDashboard(){
    const stats=r.stats;
    const statsText=stats?`Статистика: ${stats.updated} / ${plan.eligible}`:'Статистика: ошибка';
    const owner=r.owner,counts=owner?.counts;
-   const skipped=[counts?.UNLINKED?`UNLINKED ${counts.UNLINKED}`:'',counts?.MISMATCH?`MISMATCH ${counts.MISMATCH}`:'',counts?.DUPLICATE?`DUPLICATE ${counts.DUPLICATE}`:'',counts?.OAUTH_BLOCKED?`OAUTH_BLOCKED ${counts.OAUTH_BLOCKED}`:'',counts?.API_FAILED?`API_FAILED ${counts.API_FAILED}`:'',counts?.QUOTA_STOPPED?`QUOTA_STOPPED ${counts.QUOTA_STOPPED}`:''].filter(Boolean).join(' • ');
-   const ownerText=owner?`Scheduled sync: ${owner.updated} / ${plan.workspace} • API ${owner.apiRequests} • quota ${owner.quotaUnits}`:'Scheduled sync: ошибка';
-   const localText=`Render: ${r.local.online} / ${r.local.requested} • READY ${r.local.ready}`;
-   const text=`${statsText} • ${ownerText} • ${localText} • API quota +${r.quotaDelta}${skipped?' • '+skipped:''}`;
+   const skipped=[counts?.UNLINKED?`Не подключены: ${counts.UNLINKED}`:'',counts?.MISMATCH?`Несовпадение канала: ${counts.MISMATCH}`:'',counts?.DUPLICATE?`Дубликаты: ${counts.DUPLICATE}`:'',counts?.OAUTH_BLOCKED?`Нет доступа OAuth: ${counts.OAUTH_BLOCKED}`:'',counts?.API_FAILED?`Ошибки API: ${counts.API_FAILED}`:'',counts?.QUOTA_STOPPED?`Остановлено по квоте: ${counts.QUOTA_STOPPED}`:''].filter(Boolean).join(' • ');
+   const ownerText=owner?`Расписание: ${owner.updated} / ${plan.workspace} • запросов API: ${owner.apiRequests} • квота: ${owner.quotaUnits}`:'Расписание: ошибка';
+   const localText=`Render: ${r.local.online} / ${r.local.requested} • готово: ${r.local.ready}`;
+   const text=`${statsText} • ${ownerText} • ${localText} • квота API: +${r.quotaDelta}${skipped?' • '+skipped:''}`;
    setStatsResult(text);
    const partial=Boolean(r.errors.length||!stats||stats.failed||stats.credentialBlocked||!owner||owner.updated!==plan.workspace||owner.failed||owner.stoppedForQuota||r.local.issues);
    if(partial)notifyWarning('Каналы обновлены частично',text+(r.errors.length?' • '+r.errors.slice(0,2).join(' • '):''));
@@ -143,9 +148,9 @@ function OperationsDashboard(){
  }
  function openRpmSettings(){try{localStorage.setItem('vyron:settings-target-tab','general');localStorage.setItem('vyron:settings-target-section','rpm')}catch{}setPage('settings');window.setTimeout(()=>window.dispatchEvent(new CustomEvent('vyron:settings-target-section',{detail:'rpm'})),0)}
 
- return <>
+ return <div className="apexDashboard">
   <section className="opsCard networkStatsCard" data-testid="all-channels-network-stats">
-   <div className="opsCardHead"><div><small>ВСЕ КАНАЛЫ</small><h2>Сохранённая статистика сети</h2><p>Автообновление YouTube: <b>ВЫКЛ</b> • данные читаются из локального state.</p></div><button className="primary" disabled={statsBusy||!connectedCount} onClick={()=>void previewAllChannelStatistics()}>{statsBusy?'ОБНОВЛЯЮ…':'↻ ОБНОВИТЬ ВСЕ КАНАЛЫ'}</button></div>
+   <div className="opsCardHead"><div><h2>Статистика всех каналов</h2><details className="dashboardSourceDetails"><summary>Источник данных</summary><p>Автообновление YouTube: <b>ВЫКЛ</b>. Показаны сохранённые локальные данные.</p></details></div><button className="primary" disabled={statsBusy||!connectedCount} onClick={()=>void previewAllChannelStatistics()}>{statsBusy?'Обновление…':'Обновить все каналы'}</button></div>
    <div className="networkStatsGrid">
     <span><small>Каналов</small><b>{enabled.length}</b></span>
     <span><small>Подключено YouTube</small><b>{connectedCount} / {enabled.length}</b></span>
@@ -163,36 +168,36 @@ function OperationsDashboard(){
    <div className="settingsInfoGrid">
     <span><small>Рабочих каналов</small><b>{statsPreview.workspace}</b></span>
     <span><small>Будет обновлено</small><b>{statsPreview.eligible}</b></span>
-    <span><small>API project groups</small><b>{statsPreview.projectGroups}</b></span>
-    <span><small>channels.list requests</small><b>{statsPreview.requests}</b></span>
-    <span><small>Stats API</small><b>≈ {statsPreview.statsUnits} units</b></span>
-    <span><small>Schedule sync API</small><b>≈ {statsPreview.ownerUnits} units</b></span>
-    <span><small>Оценка всего</small><b>≈ {statsPreview.units} units</b></span>
-    <span><small>Local Render scan</small><b>0 units</b></span>
+    <span><small>Группы проектов API</small><b>{statsPreview.projectGroups}</b></span>
+    <span><small>Запросы channels.list</small><b>{statsPreview.requests}</b></span>
+    <span><small>Статистика: квота API</small><b>≈ {statsPreview.statsUnits} ед.</b></span>
+    <span><small>Расписание: квота API</small><b>≈ {statsPreview.ownerUnits} ед.</b></span>
+    <span><small>Оценка всего</small><b>≈ {statsPreview.units} ед.</b></span>
+    <span><small>Проверка папок Render</small><b>0 ед.</b></span>
    </div>
-   <p>Одним запуском будут обновлены статистика каналов, подтверждённое YouTube-расписание и локальный READY. Local Render scan не расходует YouTube API. Оценка schedule sync зависит от фактического числа видео; итоговый расход показывается после операции.</p>
+   <p>Обновятся статистика, подтверждённое расписание YouTube и локальный запас. Проверка Render не расходует квоту API. Расход на расписание зависит от числа видео; итог появится после обновления.</p>
    <footer><button onClick={()=>setStatsPreview(null)}>ОТМЕНА</button><button className="primary" onClick={()=>void refreshAllChannelStatistics()}>ОБНОВИТЬ</button></footer>
   </section></ModalPortal>}
   <div className="opsKpiGrid v400" data-testid="dashboard-kpis">
    <Kpi label="КАНАЛЫ" value={enabled.length} hint={'YouTube подключено: '+connectedCount}/>
    <Kpi label="ОБРАБОТАНО СЕГОДНЯ" value={dailyOps.processedChannels+' / '+enabled.length} hint={'загружено: '+dailyOps.uploadedToday}/>
-   <Kpi label="НЕ ОБРАБОТАНО" value={dailyOps.unprocessedChannels} hint="по uploadHistory сегодня"/>
-   <Kpi label="ЛОКАЛЬНО ГОТОВО" value={fmt(liveTotals.ready)} hint="Render • 0 YouTube API"/>
-   <Kpi label="YOUTUBE SCHEDULED" value={ownerScheduledValue} hint="только реальный future publishAt"/>
+   <Kpi label="НЕ ОБРАБОТАНО" value={dailyOps.unprocessedChannels} hint="по истории загрузок за сегодня"/>
+   <Kpi label="ЛОКАЛЬНО ГОТОВО" value={localTotalValue} hint={localTotalNote}/>
+   <Kpi label="ЗАПЛАНИРОВАНО НА YOUTUBE" value={ownerScheduledValue} hint="подтверждено YouTube"/>
    <Kpi label="ОШИБКИ" value={actionableErrors} hint={actionableErrors?'требуют внимания':'активных ошибок нет'} warn={actionableErrors>0}/>
-   <Kpi label="YOUTUBE API" value={apiQuota.limit?apiQuota.used+' / '+apiQuota.limit:'Нет данных'} hint="general units"/>
-   <Kpi label="VYRON UPLOADS" value={globalUploads.used+' / '+globalUploads.limit} hint={'осталось: '+globalUploads.remaining}/>
+   <Kpi label="YOUTUBE API" value={apiQuota.limit?apiQuota.used+' / '+apiQuota.limit:'Нет данных'} hint="единиц квоты"/>
+   <Kpi label="ЗАГРУЗКИ VYRON" value={globalUploads.used+' / '+globalUploads.limit} hint={'осталось: '+globalUploads.remaining}/>
   </div>
 
   <SystemHealthPanel profiles={profiles}/>
 
   <div className="opsDashboardGrid v400">
    <section className="opsCard todayCard">
-    <div className="opsCardHead"><div><small>СЕГОДНЯ</small><h2>Что происходит сейчас</h2></div></div>
+    <div className="opsCardHead"><div><h2>Сегодня</h2></div></div>
     <div className="opsStats">
      <span><small>Опубликовано</small><b>{ownerTotals.availableChannels?ownerTotals.publishedToday:'—'}</b></span>
      <span><small>Загружено через VYRON</small><b>{uploadedToday}</b></span>
-     <span><small>YouTube Scheduled</small><b>{ownerTotals.availableChannels?ownerTotals.scheduled:'—'}</b></span>
+     <span><small>Запланировано на YouTube</small><b>{ownerTotals.availableChannels?ownerTotals.scheduled:'—'}</b></span>
      <span><small>Активных каналов</small><b>{activeTodayChannels}</b></span>
      <span><small>Активные ошибки</small><b>{actionableErrors}</b></span>
      <span><small>Следующая публикация</small><b>{shortDateTime(ownerTotals.nextScheduledAt)}</b></span>
@@ -201,39 +206,39 @@ function OperationsDashboard(){
    </section>
 
    <section className="opsCard ownerInventoryCard">
-    <div className="opsCardHead"><div><small>YOUTUBE • OWNER INVENTORY</small><h2>Реально находится на YouTube</h2></div><span className={ownerExact?'ownerTruth exact':'ownerTruth partial'}>{ownerExact?'ПОЛНЫЙ CACHE':'ЧАСТИЧНЫЕ ДАННЫЕ'}</span></div>
+    <div className="opsCardHead"><div><h2>Видео на YouTube</h2></div><span className={ownerExact?'ownerTruth exact':'ownerTruth partial'}>{ownerExact?'Полные данные':'Частичные данные'}</span></div>
     <div className="opsStats ownerStates">
-     <span><small>Всего owner-visible</small><b>{ownerVideoValue}</b></span>
-     <span><small>Public</small><b>{ownerTotals.availableChannels?ownerPrefix+fmt(ownerTotals.public):'—'}</b></span>
-     <span><small>Private</small><b>{ownerTotals.availableChannels?ownerPrefix+fmt(ownerTotals.private):'—'}</b></span>
-     <span><small>Scheduled</small><b>{ownerScheduledValue}</b></span>
-     <span><small>Unlisted</small><b>{ownerTotals.availableChannels?ownerPrefix+fmt(ownerTotals.unlisted):'—'}</b></span>
+     <span><small>Всего доступно владельцу</small><b>{ownerVideoValue}</b></span>
+     <span><small>Открытые</small><b>{ownerTotals.availableChannels?ownerPrefix+fmt(ownerTotals.public):'—'}</b></span>
+     <span><small>Закрытые</small><b>{ownerTotals.availableChannels?ownerPrefix+fmt(ownerTotals.private):'—'}</b></span>
+     <span><small>Запланированные</small><b>{ownerScheduledValue}</b></span>
+     <span><small>По ссылке</small><b>{ownerTotals.availableChannels?ownerPrefix+fmt(ownerTotals.unlisted):'—'}</b></span>
     </div>
-    <p className="opsSourceNote">Источник: authenticated uploads playlist + videos.list cache. Public channel videoCount здесь не используется как абсолютное число.</p>
+    <details className="dashboardSourceDetails"><summary>Источник данных</summary><p>Сохранённый список загрузок владельца и данные videos.list. Публичная статистика канала не используется как полное число видео.</p></details>
     <footer><button onClick={()=>setPage('youtube')}>Открыть «Загруженные»</button></footer>
    </section>
 
    <section className="opsCard">
-    <div className="opsCardHead"><div><small>ТЕКУЩИЙ КАНАЛ</small><h2 className="dashboardChannelTitle">{active&&<ChannelAvatar channel={active} size="sm"/>}<span>{active?.name||'Канал не выбран'}</span></h2></div></div>
+    <div className="opsCardHead"><div><h2 className="dashboardChannelTitle">{active&&<ChannelAvatar channel={active} size="sm"/>}<span>{active?.name||'Канал не выбран'}</span></h2></div></div>
     {active?<div className="opsStats">
-     <span><small>Локально готово</small><b>{activeLive?.readyVideos??activeInv?.free??0}</b></span>
-     <span><small>YouTube Scheduled</small><b>{activeOwner?.available?activeOwner.scheduled:'—'}</b></span>
-     <span><small>Private</small><b>{activeOwner?.available?activeOwner.private:'—'}</b></span>
+     <span><small>Локально готово</small><b>{activeLocal.ready??'Нет данных'}</b>{activeLocalNote&&<small>{activeLocalNote}</small>}{activeLocal.ready==null&&activeInv&&<small>По задачам: {activeInv.free}</small>}</span>
+     <span><small>Запланировано на YouTube</small><b>{activeOwner?.available?activeOwner.scheduled:'—'}</b></span>
+     <span><small>Закрытые</small><b>{activeOwner?.available?activeOwner.private:'—'}</b></span>
      <span><small>В очереди</small><b>{activeQueued}</b></span>
-     <span><small>Запас local</small><b>{activeLive?.runwayDays??0} дн.</b></span>
+     <span><small>Локальный запас</small><b>{activeLocal.runwayDays==null?'Нет данных':activeLocal.runwayDays+' дн.'}</b>{activeLocalNote&&<small>{activeLocalNote}</small>}</span>
     </div>:<p className="opsEmpty">Добавьте канал, чтобы видеть оперативное состояние.</p>}
     <footer><button onClick={()=>setPage('autopilot')}>Командный центр</button><button onClick={()=>setPage('channels')}>Открыть канал</button><button className="primary" onClick={()=>setPage('youtube')}>Публикация</button></footer>
    </section>
 
    <section className="opsCard">
-    <div className="opsCardHead"><div><small>ПРОИЗВОДСТВО • LOCAL</small><h2>Локальный запас отдельно от YouTube</h2></div></div>
-    <div className="opsStats production"><span><small>Проектов</small><b>{fmt(jobs.length)}</b></span><span><small>MP4 всего</small><b>{fmt(inventory.globalFinalVideoCount)}</b></span><span><small>Готово локально</small><b>{fmt(liveTotals.ready)}</b></span><span><small>Рендерится</small><b>{fmt(rendering)}</b></span><span><small>Готово к ENDLUME</small><b>{fmt(readyEndlume)}</b></span></div>
-    <footer><button className="primary" onClick={()=>setPage('inventory')}>Запас видео</button><button onClick={()=>setPage('production')}>Production</button></footer>
+    <div className="opsCardHead"><div><h2>Локальное производство</h2></div></div>
+    <div className="opsStats production"><span><small>Проектов</small><b>{fmt(jobs.length)}</b></span><span><small>MP4 всего</small><b>{fmt(inventory.globalFinalVideoCount)}</b></span><span><small>Готово локально</small><b>{localTotalValue}</b>{(localTotal.missing>0||localTotal.stale>0)&&<small>{localTotalNote}</small>}</span><span><small>Рендерится</small><b>{fmt(rendering)}</b></span><span><small>Готово к ENDLUME</small><b>{fmt(readyEndlume)}</b></span></div>
+    <footer><button className="primary" onClick={()=>setPage('inventory')}>Запас видео</button><button onClick={()=>setPage('production')}>Производство</button></footer>
    </section>
 
    <section className="opsCard progressCard">
-    <div className="opsCardHead"><div><small>ПРОГРЕСС К МОНЕТИЗАЦИИ</small><h2>Подписчики к ориентиру 1 000</h2></div></div>
-    {progressRows.length?<div className="channelProgressRows">{progressRows.map(x=><div key={x.channel.id}><div className="dashboardProgressIdentity"><ChannelAvatar channel={x.channel} size="sm"/><span><b>{x.channel.name}</b><span>{fmt(x.subscribers)} / 1 000 • осталось {fmt(x.remaining)}</span></span></div><i><em style={{width:x.pct+'%'}}/></i><small>{x.views==null?'Просмотры: нет данных':'Просмотры: '+fmt(x.views)}</small><small>Public watch hours: нет данных • Shorts views: нет данных</small></div>)}</div>:<p className="opsEmpty">Нет доступных данных по подписчикам.</p>}
+    <div className="opsCardHead"><div><h2>Подписчики к монетизации</h2></div></div>
+    {progressRows.length?<div className="channelProgressRows">{progressRows.map(x=><div key={x.channel.id}><div className="dashboardProgressIdentity"><ChannelAvatar channel={x.channel} size="sm"/><span><b>{x.channel.name}</b><span>{fmt(x.subscribers)} / 1 000 • осталось {fmt(x.remaining)}</span></span></div><i><em style={{width:x.pct+'%'}}/></i><small>{x.views==null?'Просмотры: нет данных':'Просмотры: '+fmt(x.views)}</small><small>Часы публичного просмотра: нет данных • Просмотры Shorts: нет данных</small></div>)}</div>:<p className="opsEmpty">Нет доступных данных по подписчикам.</p>}
     <p className="opsSourceNote">Ориентировочный прогресс. Достижение 1 000 подписчиков само по себе не означает одобрение монетизации.</p>
     <footer><button onClick={()=>setPage('analytics')}>Аналитика</button></footer>
    </section>
@@ -241,18 +246,18 @@ function OperationsDashboard(){
    <RpmCoverageCard channels={enabled} profiles={profiles} rpm={configuredRpm} onSettings={openRpmSettings} onAnalytics={()=>setPage('analytics')}/>
 
    <section className="opsCard">
-    <div className="opsCardHead"><div><small>YOUTUBE • UPLOAD</small><h2>Передача файлов</h2></div></div>
+    <div className="opsCardHead"><div><h2>Загрузки YouTube</h2></div></div>
     <div className="opsStats"><span><small>В очереди</small><b>{queue.queued.length}</b></span><span><small>Активно</small><b>{telemetry.active.length}</b></span><span><small>Загружено сегодня</small><b>{uploadedToday}</b></span><span><small>Ошибок сегодня</small><b>{failedToday}</b></span></div>
-    {primaryUpload?<div className="activeUploadLine"><div><small>{primaryChannel?.name||'Канал'} • {primaryJob?'VIDEO_'+String(primaryJob.number).padStart(3,'0'):'Видео'}</small><b>{primaryUpload.percent==null?'…':Math.round(primaryUpload.percent)+'%'}</b></div><div><span>{formatUploadSpeed(primaryUpload.speedBps)}</span><span>ETA {formatDuration(primaryUpload.etaSeconds)}</span></div><i><em style={{width:Math.max(0,Math.min(100,primaryUpload.percent||0))+'%'}}/></i></div>:<p className="opsEmpty">Активных загрузок нет</p>}
-    <footer><button onClick={()=>setPage('youtube')}>Upload Center</button></footer>
+    {primaryUpload?<div className="activeUploadLine"><div><small>{primaryChannel?.name||'Канал'} • {primaryJob?'VIDEO_'+String(primaryJob.number).padStart(3,'0'):'Видео'}</small><b>{primaryUpload.percent==null?'…':Math.round(primaryUpload.percent)+'%'}</b></div><div><span>{formatUploadSpeed(primaryUpload.speedBps)}</span><span>Осталось {formatDuration(primaryUpload.etaSeconds)}</span></div><i><em style={{width:Math.max(0,Math.min(100,primaryUpload.percent||0))+'%'}}/></i></div>:<p className="opsEmpty">Активных загрузок нет</p>}
+    <footer><button onClick={()=>setPage('youtube')}>Центр загрузок</button></footer>
    </section>
 
    <section className={'opsCard attention '+(attention.length?'warn':'good')}>
-    <div className="opsCardHead"><div><small>ТРЕБУЕТ ВНИМАНИЯ</small><h2>{attention.length?attention.length+' важных пунктов':'Всё в порядке'}</h2></div></div>
+    <div className="opsCardHead"><div><h2>{attention.length?'Требует внимания ('+attention.length+')':'Всё в порядке'}</h2></div></div>
     {attention.length?<div className="opsAttentionRows">{attention.map(x=><button key={x.key} onClick={()=>setPage(x.page)}><span><b>{x.label}</b><small>{x.text}</small></span><em>→</em></button>)}</div>:<div className="opsAllGood">✓ Активных ошибок нет</div>}
     <footer><button onClick={()=>setPage(attention[0]?.page||'youtube')}>{attention.length?'Показать':'Открыть YouTube'}</button></footer>
    </section>
   </div>
- </>;
+ </div>;
 }
 function Kpi({label,value,hint,warn=false}:{label:string;value:React.ReactNode;hint?:string;warn?:boolean}){return <div className={'opsKpi '+(warn?'warn':'')}><small>{label}</small><strong>{value}</strong>{hint&&<em>{hint}</em>}</div>}

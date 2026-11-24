@@ -23,10 +23,10 @@ describe('VYRON 2.1.6 UI hotfix',()=>{
  it('renders the compact operational dashboard with the six required KPI labels',()=>{
   hydrate([]);
   const html=renderToStaticMarkup(<DashboardOS/>);
-  for(const label of ['КАНАЛЫ','ОБРАБОТАНО СЕГОДНЯ','НЕ ОБРАБОТАНО','ЛОКАЛЬНО ГОТОВО','YOUTUBE SCHEDULED','ОШИБКИ','YOUTUBE API','VYRON UPLOADS'])expect(html).toContain(label);
-  expect(html).toContain('ПРОИЗВОДСТВО');
+  for(const label of ['КАНАЛЫ','ОБРАБОТАНО СЕГОДНЯ','НЕ ОБРАБОТАНО','ЛОКАЛЬНО ГОТОВО','ЗАПЛАНИРОВАНО НА YOUTUBE','ОШИБКИ','YOUTUBE API','ЗАГРУЗКИ VYRON'])expect(html).toContain(label);
+  expect(html).toContain('Локальное производство');
   expect(html).toContain('YOUTUBE');
-  expect(html).toContain('ТРЕБУЕТ ВНИМАНИЯ');
+  expect(html).toContain('Всё в порядке');
   expect(html).not.toContain('Views 28d');
   expect(html).not.toContain('Revenue 28d');
   expect(html).not.toContain('Views trend 7d');

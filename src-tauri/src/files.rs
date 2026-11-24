@@ -9,6 +9,18 @@ use std::{
 };
 use uuid::Uuid;
 
+// Filesystem calls can wait indefinitely on a disconnected or sleeping volume.
+// Never execute those calls on the thread dispatching a WebView IPC request.
+async fn run_filesystem_task<T, F>(work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|e| format!("FILESYSTEM_TASK_FAILED: {e}"))?
+}
+
 fn safe_name(s: &str) -> String {
     let out: String = s
         .chars()
@@ -255,8 +267,7 @@ pub fn ensure_channel_inbox(workspace: String, channel_name: String) -> Result<V
     }))
 }
 
-#[tauri::command]
-pub fn scan_channel_inbox(workspace: String, channel_name: String) -> Result<Value, String> {
+fn scan_channel_inbox_impl(workspace: String, channel_name: String) -> Result<Value, String> {
     let dirs = ensure_channel_inbox(workspace, channel_name)?;
     let root = PathBuf::from(dirs.get("root").and_then(|x| x.as_str()).unwrap_or(""));
     let collect = |name: &str, kind: &str| -> Vec<String> {
@@ -297,6 +308,11 @@ pub fn scan_channel_inbox(workspace: String, channel_name: String) -> Result<Val
         "images": collect("Images", "image"),
         "metadata": collect("Metadata", "metadata")
     }))
+}
+
+#[tauri::command]
+pub async fn scan_channel_inbox(workspace: String, channel_name: String) -> Result<Value, String> {
+    run_filesystem_task(move || scan_channel_inbox_impl(workspace, channel_name)).await
 }
 
 #[tauri::command]
@@ -520,8 +536,7 @@ fn finder_open_args(path: &Path, is_dir: bool) -> Vec<std::ffi::OsString> {
     else { vec![std::ffi::OsString::from("-R"), path.as_os_str().to_os_string()] }
 }
 
-#[tauri::command]
-pub fn reveal_path(path: String) -> Result<(), String> {
+fn reveal_path_impl(path: String) -> Result<(), String> {
     let raw = PathBuf::from(path.trim());
     if !raw.exists() { return Err(format!("Папка или файл больше не существует: {}", raw.display())); }
     let p = raw.canonicalize().map_err(|e| format!("Не удалось определить точный путь {}: {e}", raw.display()))?;
@@ -545,6 +560,52 @@ pub fn reveal_path(path: String) -> Result<(), String> {
     };
     c.spawn().map_err(|e| format!("Не удалось открыть {}: {e}", p.display()))?;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn reveal_path(path: String) -> Result<(), String> {
+    run_filesystem_task(move || reveal_path_impl(path)).await
+}
+
+#[cfg(test)]
+mod filesystem_task_tests {
+    use super::*;
+
+    #[test]
+    fn task_runs_blocking_work_off_caller_thread_and_preserves_errors() {
+        let caller = std::thread::current().id();
+        let worker = tauri::async_runtime::block_on(run_filesystem_task(|| {
+            Ok(std::thread::current().id())
+        })).unwrap();
+        assert_ne!(caller, worker);
+        let error = tauri::async_runtime::block_on(run_filesystem_task(|| -> Result<(), String> {
+            Err("fixture error".into())
+        })).unwrap_err();
+        assert_eq!(error, "fixture error");
+    }
+
+    #[test]
+    fn inbox_scan_keeps_result_contract_for_supported_files() {
+        struct TempDir(PathBuf);
+        impl Drop for TempDir {
+            fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
+        }
+        let dir = TempDir(std::env::temp_dir().join(format!("vyron-inbox-test-{}", Uuid::new_v4())));
+        fs::create_dir_all(&dir.0).unwrap();
+        let workspace = dir.0.to_string_lossy().into_owned();
+        let inbox = ensure_channel_inbox(workspace.clone(), "fixture".into()).unwrap();
+        let root = PathBuf::from(inbox["root"].as_str().unwrap());
+        fs::write(root.join("Music").join("track.mp3"), b"fixture").unwrap();
+        fs::write(root.join("Images").join("cover.png"), b"fixture").unwrap();
+        fs::write(root.join("Metadata").join("record.json"), b"{}").unwrap();
+        fs::write(root.join("Music").join("ignore.txt"), b"fixture").unwrap();
+
+        let result = tauri::async_runtime::block_on(scan_channel_inbox(workspace, "fixture".into())).unwrap();
+        assert_eq!(result["root"].as_str(), Some(root.to_str().unwrap()));
+        for key in ["music", "images", "metadata"] {
+            assert_eq!(result[key].as_array().unwrap().len(), 1, "{key}");
+        }
+    }
 }
 
 #[cfg(all(test,target_os="macos"))]

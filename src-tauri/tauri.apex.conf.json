@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "VYRON APEX",
+  "version": "7.0.0-dev.1",
+  "identifier": "studio.channelflow.apex",
+  "bundle": {
+    "targets": ["app"],
+    "macOS": {
+      "bundleName": "VYRON APEX"
+    },
+    "createUpdaterArtifacts": false
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": []
+    }
+  }
+}

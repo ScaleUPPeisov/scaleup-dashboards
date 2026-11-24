@@ -302,6 +302,41 @@ fn shuffle<T>(v: &mut [T], mut x: u64) {
         v.swap(i, (x as usize) % (i + 1));
     }
 }
+
+// Sorting by modified time previously issued filesystem metadata requests from
+// the sort comparator. Cache the key so slow volumes are queried at most once
+// per image while preserving stable ordering for equal timestamps.
+fn sort_images_by_modified<F>(paths: &mut [PathBuf], modified: F)
+where
+    F: FnMut(&PathBuf) -> std::time::SystemTime,
+{
+    paths.sort_by_cached_key(modified);
+}
+
+#[cfg(test)]
+mod image_sort_cache_tests {
+    use super::*;
+
+    #[test]
+    fn caches_each_timestamp_and_keeps_stable_order_for_equal_times() {
+        let mut paths = ["third", "first-a", "first-b", "second"]
+            .into_iter().map(PathBuf::from).collect::<Vec<_>>();
+        let mut calls = HashMap::<PathBuf, usize>::new();
+        sort_images_by_modified(&mut paths, |path| {
+            *calls.entry(path.clone()).or_default() += 1;
+            let seconds = match path.to_str().unwrap() {
+                "first-a" | "first-b" => 1,
+                "second" => 2,
+                _ => 3,
+            };
+            UNIX_EPOCH + Duration::from_secs(seconds)
+        });
+        assert_eq!(paths, ["first-a", "first-b", "second", "third"].map(PathBuf::from));
+        assert_eq!(calls.len(), paths.len());
+        assert!(calls.values().all(|count| *count == 1));
+    }
+}
+
 fn recursive_images(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
@@ -333,7 +368,7 @@ fn recursive_images(root: &Path) -> Result<Vec<PathBuf>, String> {
             }
         }
     }
-    out.sort_by_key(|p| {
+    sort_images_by_modified(&mut out, |p| {
         fs::metadata(p)
             .ok()
             .and_then(|m| m.modified().ok())
@@ -365,13 +400,16 @@ fn recursive_audio(root: &Path) -> Vec<PathBuf> {
         if let Ok(rd) = fs::read_dir(dir) {
             for e in rd.flatten() {
                 let p = e.path();
-                if e.file_type().map(|x| x.is_symlink()).unwrap_or(false) {
-                    continue;
-                }
-                if p.is_dir() {
-                    stack.push(p)
-                } else if p.is_file() && is_audio(&p) {
-                    out.push(p)
+                match e.file_type() {
+                    Ok(kind) if kind.is_symlink() => continue,
+                    Ok(kind) if kind.is_dir() => stack.push(p),
+                    Ok(kind) if kind.is_file() && is_audio(&p) => out.push(p),
+                    Ok(_) => {},
+                    // Preserve the previous fallback when file_type cannot be
+                    // read but a later path-based stat is successful.
+                    Err(_) if p.is_dir() => stack.push(p),
+                    Err(_) if p.is_file() && is_audio(&p) => out.push(p),
+                    Err(_) => {},
                 }
             }
         }
@@ -379,6 +417,29 @@ fn recursive_audio(root: &Path) -> Vec<PathBuf> {
     out.sort();
     out
 }
+
+#[cfg(test)]
+mod recursive_audio_tests {
+    use super::*;
+
+    #[test]
+    fn scans_nested_audio_in_sorted_order_without_following_symlinks() {
+        let root = std::env::temp_dir().join(format!("vyron-audio-scan-{}", Uuid::new_v4()));
+        let nested = root.join("nested.mp3");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(root.join("z.MP3"), b"fixture").unwrap();
+        fs::write(nested.join("a.wav"), b"fixture").unwrap();
+        fs::write(nested.join("ignore.txt"), b"fixture").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&nested, root.join("alias")).unwrap();
+
+        let mut expected = vec![root.join("z.MP3"), nested.join("a.wav")];
+        expected.sort();
+        assert_eq!(recursive_audio(&root), expected);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
 fn audio_duration(path: &Path) -> f64 {
     #[cfg(target_os = "macos")]
     {
@@ -835,7 +896,21 @@ fn resolve_output_workspace(req: &BuildRequest) -> Result<String, String> {
     Ok(chosen.to_string())
 }
 #[tauri::command]
-pub fn production_storage_status(path: String) -> ProductionStorageStatus {
+pub async fn production_storage_status(path: String) -> ProductionStorageStatus {
+    let fallback_path = path.trim().to_string();
+    match run_production_worker(move || Ok(production_storage_status_sync(path))).await {
+        Ok(status) => status,
+        Err(error) => ProductionStorageStatus {
+            external: fallback_path.starts_with("/Volumes/"),
+            path: fallback_path,
+            exists: false,
+            writable: false,
+            free_bytes: None,
+            error: Some(error),
+        },
+    }
+}
+fn production_storage_status_sync(path: String) -> ProductionStorageStatus {
     let raw = PathBuf::from(path.trim());
     let exact = raw.canonicalize().unwrap_or(raw);
     storage_probe(&exact)
@@ -1592,7 +1667,7 @@ fn manual_result_from_manifest(m: &BatchManifest, s: &BatchStatus) -> ManualBuil
     }
 }
 
-fn plan_build(req: &BuildRequest) -> Result<BuildPlan, String> {
+fn validate_build_request(req: &BuildRequest) -> Result<(), String> {
     if req.project_count == 0 || req.project_count > 10000 {
         return Err("Количество проектов должно быть 1–10000".into());
     }
@@ -1605,7 +1680,17 @@ fn plan_build(req: &BuildRequest) -> Result<BuildPlan, String> {
     ) {
         return Err("Неизвестный режим распределения".into());
     }
+    Ok(())
+}
+
+fn plan_build(req: &BuildRequest) -> Result<BuildPlan, String> {
+    validate_build_request(req)?;
     let resolved_images = resolve_production_images(&req.workspace, &req.channel_id)?;
+    plan_build_with_images(req, resolved_images)
+}
+
+fn plan_build_with_images(req: &BuildRequest, resolved_images: Vec<ResolvedProductionImage>) -> Result<BuildPlan, String> {
+    validate_build_request(req)?;
     let available_images = resolved_images.len();
     if available_images == 0 {
         return Err("Сначала импортируй изображения в Production → Materials".into());
@@ -2166,6 +2251,45 @@ pub async fn resume_production_recovery(app:AppHandle,recovery_session_id:String
     }).await.map_err(|e|e.to_string())?
 }
 
+enum BuildPreparation {
+    Ready(BuildResult),
+    Plan { available: usize, request_map: HashMap<String, String>, plan: BuildPlan },
+}
+
+// Called while holding build_lock. The single resolved image snapshot is used
+// for both the capacity check and the plan, avoiding a second HDD hash pass.
+fn prepare_production_build<F>(request: &BuildRequest, resolve: F) -> Result<BuildPreparation, String>
+where
+    F: FnOnce(&str, &str) -> Result<Vec<ResolvedProductionImage>, String>,
+{
+    let resolved_images = resolve(&request.workspace, &request.channel_id)?;
+    let available = resolved_images.len();
+    if request.project_count > available && !request.allow_image_reuse {
+        return Ok(BuildPreparation::Ready(BuildResult {
+            status: "insufficient_images".into(),
+            available_images: available,
+            requested_projects: request.project_count,
+            batch: None,
+            message: Some(format!("Доступно {available}, запрошено {}",request.project_count)),
+        }));
+    }
+    let map = request_map(&request.workspace, &request.channel_id)?;
+    if let Some(path) = map.get(&request.request_id).cloned() {
+        if let Ok((m, _)) = load_manifest(&path) {
+            let s: BatchStatus = read_json(Path::new(&m.status_path));
+            return Ok(BuildPreparation::Ready(BuildResult {
+                status: "ready".into(),
+                available_images: available,
+                requested_projects: request.project_count,
+                batch: Some(summary_from(&m, &s)),
+                message: None,
+            }));
+        }
+    }
+    let plan = plan_build_with_images(request, resolved_images)?;
+    Ok(BuildPreparation::Plan { available, request_map: map, plan })
+}
+
 #[tauri::command]
 pub async fn build_production_batch(
     app: AppHandle,
@@ -2173,33 +2297,13 @@ pub async fn build_production_batch(
 ) -> Result<BuildResult, String> {
     let app2 = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        // Image resolution can hash files on an external HDD: never run it on
-        // the Tauri command/UI dispatcher.
-        let available = resolve_production_images(&request.workspace, &request.channel_id)?.len();
-        if request.project_count > available && !request.allow_image_reuse {
-            return Ok(BuildResult {
-                status: "insufficient_images".into(),
-                available_images: available,
-                requested_projects: request.project_count,
-                batch: None,
-                message: Some(format!("Доступно {available}, запрошено {}",request.project_count)),
-            });
-        }
         let _g = build_lock().lock().map_err(|_| "Build lock".to_string())?;
-        let mut map = request_map(&request.workspace, &request.channel_id)?;
-        if let Some(path) = map.get(&request.request_id).cloned() {
-            if let Ok((m, _)) = load_manifest(&path) {
-                let s: BatchStatus = read_json(Path::new(&m.status_path));
-                return Ok(BuildResult {
-                    status: "ready".into(),
-                    available_images: available,
-                    requested_projects: request.project_count,
-                    batch: Some(summary_from(&m, &s)),
-                    message: None,
-                });
-            }
-        }
-        let mut plan = plan_build(&request)?;
+        // The snapshot can require hashing external files, so resolve it on
+        // the blocking worker, not on the Tauri event dispatcher.
+        let (available, mut map, mut plan) = match prepare_production_build(&request, resolve_production_images)? {
+            BuildPreparation::Ready(result) => return Ok(result),
+            BuildPreparation::Plan { available, request_map, plan } => (available, request_map, plan),
+        };
         register_plan_recovery(&app2,&mut plan)?;
         let image_assignments = plan.projects.iter().filter_map(|p| p.image_asset_id.as_ref().map(|asset_id| materials_manager::ImageAssignment {
             asset_id: asset_id.clone(),
@@ -2226,7 +2330,10 @@ pub async fn build_production_batch(
 }
 
 #[tauri::command]
-pub fn scan_manual_production_music(path: String) -> Result<Vec<String>, String> {
+pub async fn scan_manual_production_music(path: String) -> Result<Vec<String>, String> {
+    run_production_worker(move || scan_manual_production_music_sync(path)).await
+}
+fn scan_manual_production_music_sync(path: String) -> Result<Vec<String>, String> {
     let root = PathBuf::from(path.trim());
     if !root.is_dir() {
         return Err("Выбранная музыкальная папка недоступна".into());
@@ -2344,36 +2451,65 @@ fn sync_material_image_usage(m: &BatchManifest, status: &BatchStatus) -> Result<
 }
 
 #[tauri::command]
-pub fn read_production_batch_status(manifest_path: String) -> Result<BatchStatus, String> {
+pub async fn read_production_batch_status(manifest_path: String) -> Result<BatchStatus, String> {
+    run_production_worker(move || read_production_batch_status_sync(manifest_path)).await
+}
+fn read_production_batch_status_sync(manifest_path: String) -> Result<BatchStatus, String> {
     let (m, _) = load_manifest(&manifest_path)?;
     let status = enrich_handoff(read_json(Path::new(&m.status_path)), &m);
     sync_material_image_usage(&m, &status)?;
     Ok(status)
 }
 #[tauri::command]
-pub fn list_production_batches(
+pub async fn list_production_batches(
+    workspace: String,
+    channel_id: String,
+) -> Result<Vec<BatchSummary>, String> {
+    run_production_worker(move || list_production_batches_sync(workspace, channel_id)).await
+}
+
+async fn run_production_worker<T, F>(work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|e| format!("PRODUCTION_WORKER_FAILED: {e}"))?
+}
+
+fn list_production_batches_sync(
     workspace: String,
     channel_id: String,
 ) -> Result<Vec<BatchSummary>, String> {
     let parent = batch_root_parent(&workspace, &channel_id)?;
+    list_production_batches_at(&parent)
+}
+
+fn list_production_batches_at(parent: &Path) -> Result<Vec<BatchSummary>, String> {
     let mut out = Vec::new();
-    if let Ok(rd) = fs::read_dir(parent) {
-        for e in rd.flatten() {
-            let p = e.path();
-            if !p.is_dir() {
-                continue;
-            }
-            if let Ok((m, _)) = load_manifest(&p.to_string_lossy()) {
-                let s: BatchStatus = read_json(Path::new(&m.status_path));
-                out.push(summary_from(&m, &s));
-            }
+    let entries = fs::read_dir(parent).map_err(|e| format!("PRODUCTION_BATCH_LIST_FAILED: {e}"))?;
+    for entry in entries {
+        let p = entry.map_err(|e| format!("PRODUCTION_BATCH_LIST_FAILED: {e}"))?.path();
+        if !p.is_dir() {
+            continue;
+        }
+        if let Ok((m, _)) = load_manifest(&p.to_string_lossy()) {
+            let s: BatchStatus = read_json(Path::new(&m.status_path));
+            out.push(summary_from(&m, &s));
         }
     }
     out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     Ok(out)
 }
 #[tauri::command]
-pub fn production_channel_state(
+pub async fn production_channel_state(
+    workspace: String,
+    channel_id: String,
+) -> Result<ChannelState, String> {
+    run_production_worker(move || production_channel_state_sync(workspace, channel_id)).await
+}
+fn production_channel_state_sync(
     workspace: String,
     channel_id: String,
 ) -> Result<ChannelState, String> {
@@ -2401,7 +2537,7 @@ pub fn production_channel_state(
         music,
         images,
         resolved_images_available,
-        batches: list_production_batches(workspace, channel_id)?,
+        batches: list_production_batches_sync(workspace, channel_id)?,
     })
 }
 fn validate_manifest_projects(
@@ -2963,7 +3099,10 @@ fn cleanup_completed_assets(m: &BatchManifest, st: &BatchStatus) -> Result<Clean
     cleanup_completed_assets_selected(m, st, None)
 }
 #[tauri::command]
-pub fn preview_completed_production_projects(manifest_path: String) -> Result<Vec<String>, String> {
+pub async fn preview_completed_production_projects(manifest_path: String) -> Result<Vec<String>, String> {
+    run_production_worker(move || preview_completed_production_projects_sync(manifest_path)).await
+}
+fn preview_completed_production_projects_sync(manifest_path: String) -> Result<Vec<String>, String> {
     let (m, _) = load_manifest(&manifest_path)?;
     let st: BatchStatus = read_json(Path::new(&m.status_path));
     let batch_root = PathBuf::from(&m.root_path);
@@ -2976,14 +3115,24 @@ pub fn preview_completed_production_projects(manifest_path: String) -> Result<Ve
 }
 
 #[tauri::command]
-pub fn cleanup_completed_production_assets(manifest_path: String) -> Result<CleanupResult, String> {
+pub async fn cleanup_completed_production_assets(manifest_path: String) -> Result<CleanupResult, String> {
+    run_production_worker(move || cleanup_completed_production_assets_sync(manifest_path)).await
+}
+fn cleanup_completed_production_assets_sync(manifest_path: String) -> Result<CleanupResult, String> {
+    let _guard = build_lock().lock().map_err(|_| "Build lock".to_string())?;
     let (m, _) = load_manifest(&manifest_path)?;
-    let st = read_production_batch_status(manifest_path)?;
+    let st = read_production_batch_status_sync(manifest_path)?;
     cleanup_completed_assets(&m, &st)
 }
 
 #[tauri::command]
-pub fn cleanup_completed_production_projects(
+pub async fn cleanup_completed_production_projects(
+    manifest_path: String,
+    project_ids: Vec<String>,
+) -> Result<CleanupResult, String> {
+    run_production_worker(move || cleanup_completed_production_projects_sync(manifest_path, project_ids)).await
+}
+fn cleanup_completed_production_projects_sync(
     manifest_path: String,
     project_ids: Vec<String>,
 ) -> Result<CleanupResult, String> {
@@ -2991,13 +3140,21 @@ pub fn cleanup_completed_production_projects(
     if wanted.is_empty() {
         return Ok(CleanupResult::default());
     }
+    let _guard = build_lock().lock().map_err(|_| "Build lock".to_string())?;
     let (m, _) = load_manifest(&manifest_path)?;
-    let st = read_production_batch_status(manifest_path)?;
+    let st = read_production_batch_status_sync(manifest_path)?;
     cleanup_completed_assets_selected(&m, &st, Some(&wanted))
 }
 
 #[tauri::command]
-pub fn apply_production_cleanup_policy(
+pub async fn apply_production_cleanup_policy(
+    manifest_path: String,
+    policy: String,
+    uploaded_job_ids: Vec<String>,
+) -> Result<CleanupResult, String> {
+    run_production_worker(move || apply_production_cleanup_policy_sync(manifest_path, policy, uploaded_job_ids)).await
+}
+fn apply_production_cleanup_policy_sync(
     manifest_path: String,
     policy: String,
     uploaded_job_ids: Vec<String>,
@@ -3008,8 +3165,9 @@ pub fn apply_production_cleanup_policy(
     if policy != "auto3d" && policy != "afterUpload" {
         return Err("Неизвестная cleanup policy".into());
     }
+    let _guard = build_lock().lock().map_err(|_| "Build lock".to_string())?;
     let (m, _) = load_manifest(&manifest_path)?;
-    let st = read_production_batch_status(manifest_path)?;
+    let st = read_production_batch_status_sync(manifest_path)?;
     let uploaded = uploaded_job_ids.into_iter().collect::<HashSet<_>>();
     let mut wanted = HashSet::new();
     for project in &m.projects {
