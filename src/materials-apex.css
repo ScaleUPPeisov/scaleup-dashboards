@@ -12,3 +12,17 @@
 .materialsApexActions{display:flex;flex-wrap:wrap;gap:8px}.materialsApexActions button{min-height:38px}
 .materialsApex :is(button,summary,select):focus-visible{outline:2px solid #bcabff;outline-offset:3px}
 @media(max-width:680px){.materialsApexHero,.materialsApexList{padding:16px}.materialsApexFigures{grid-template-columns:repeat(3,minmax(0,1fr))}.materialsApexHero h2{font-size:21px}}
+.manualAssemblyModal.manualAssemblyApex{background:#1b1b22;border:1px solid #4b4859;border-radius:16px;padding:24px;gap:16px;color:#f1eff8}
+.manualAssemblyApex .manualApexHeader{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.manualAssemblyApex .manualApexHeader small{color:#c2b2ff;font-size:11px;font-weight:700;letter-spacing:.08em}
+.manualAssemblyApex .manualApexHeader h2{color:#f1eff8;font-size:22px;margin:6px 0}
+.manualAssemblyApex .manualApexHeader p{font-size:13px;color:#c3c1ce;margin:0}
+.manualAssemblyApex .manualApexHeader button{min-width:40px;min-height:40px;font-size:20px}
+.manualAssemblyApex .manualField{font-size:13px;color:#e9e6f2}.manualAssemblyApex .manualField select{background:#26252e;color:#f1eff8;border-color:#504b5e;font-size:14px}.manualAssemblyApex .manualField>small{font-size:12px;color:#bfbcca;white-space:normal}
+.manualAssemblyApex .manualSection,.manualAssemblyApex .manualAssemblySummary span{background:#24232b;border-color:#403d4d;border-radius:10px}
+.manualAssemblyApex .manualSection>div:first-child small{font-size:12px;color:#c3c1ce}.manualAssemblyApex .manualSection>div:first-child b{font-size:14px;color:#f1eff8}
+.manualAssemblyApex .manualAssemblySummary small{font-size:12px;color:#c3c1ce}.manualAssemblyApex .manualAssemblySummary b{font-size:14px;color:#f1eff8;white-space:normal;overflow-wrap:anywhere}
+.manualAssemblyApex .manualModalActions button{min-height:40px;font-size:13px;background:#302e3a;color:#f1eff8;border-color:#554e68}.manualAssemblyApex .manualModalActions button.primary{background:#9c83e4;color:#17121f;border-color:#bba6f5}
+.manualAssemblyApex :is(button,select):focus-visible{outline:2px solid #c4b4fa;outline-offset:3px}
+.manualAssemblyApex .pmHint{color:#c3c1ce;font-size:12px;line-height:1.5}
+@media(max-width:700px){.manualAssemblyModal.manualAssemblyApex{padding:16px}.manualAssemblyApex .manualAssemblySummary{grid-template-columns:repeat(2,minmax(0,1fr))}}

@@ -26,7 +26,7 @@ describe('VYRON 6.0.1 manual assembly additive contract',()=>{
     expect(ui).toContain('importImages(ch)');
     expect(ui).toContain('chooseMusic(ch)');
     expect(ui).toContain('openFolder(row.image.rootPath)');
-    expect(ui).toContain('РУЧНАЯ СБОРКА ПРОЕКТОВ');
+    expect(ui).toContain('Ручная сборка проектов');
     expect(css).toContain('.manualAssemblyModal');
   });
 

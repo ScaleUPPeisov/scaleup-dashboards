@@ -1,4 +1,4 @@
-import React,{useEffect,useMemo,useRef,useState} from 'react';
+import React,{useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {productionManagerApi,type GlobalCleanupRenderRoot,type GlobalProjectCleanupPreview,type MaterialsSummary} from './productionManagerApi';
 import {patchChannelProductionPrefs,useProductionPrefs} from './productionPrefs';
 import {createJobsCount} from './autopilotCore';
@@ -6,6 +6,8 @@ import {useApp} from './store';
 import {notifyError,notifySuccess} from './notificationCenter';
 import {renderChannelFolderPath} from './renderFolderSelection';
 import {clearDeletedProjectWorkspaces} from './globalProjectCleanupState';
+import {ModalPortal} from './ModalPortal';
+import {nextManualProjectNumber} from './manualAssemblyCore';
 import './materials-apex.css';
 
 function n(value:number|undefined){return (value||0).toLocaleString('ru-RU')}
@@ -59,10 +61,10 @@ export function MaterialsManager(){
   const manualChannel=channels.find(x=>x.id===manualChannelId);
   const manualTracksPerProject=Math.max(1,Math.min(100,prefs.byChannel[manualChannelId]?.tracksPerProject||manualChannel?.minTracks||10));
   const manualCanBuild=Boolean(manualChannel&&manualImages.length&&manualMusic.length>=manualTracksPerProject);
-  const manualExisting=manualChannelId?jobs.filter(j=>j.channelId===manualChannelId):[];
-  const manualFrom=Math.max(0,...manualExisting.map(j=>j.number))+1;
+  const manualFrom=useMemo(()=>nextManualProjectNumber(jobs,manualChannelId),[jobs,manualChannelId]);
   const manualTo=manualFrom+Math.max(0,manualImages.length-1);
   const manualRequiredTracks=manualImages.length*manualTracksPerProject;
+  const closeManual=useCallback(()=>{if(!manualBusy)setManualOpen(false)},[manualBusy]);
 
   async function loadSummaries(channelIds:string[],generation:number){
     try{
@@ -332,28 +334,27 @@ export function MaterialsManager(){
       <div className="pmActions"><button disabled={!!busy} onClick={()=>void previewCleanup()}>{busy==='cleanup-preview'?'ПРОВЕРЯЮ…':'ПРОВЕРИТЬ'}</button><button className="danger" disabled={!!busy||!cleanup?.eligibleProjects} onClick={()=>void cleanSafeProjects()}>{busy==='cleanup'?'ОЧИЩАЮ…':'ОЧИСТИТЬ '+(cleanup?.eligibleProjects||0)+' PROJECT-ПАПОК'}</button></div>
     </section>
 
-    {manualOpen&&<div className="modalBackdrop" onMouseDown={()=>{if(!manualBusy)setManualOpen(false)}}>
-      <section className="confirmModal manualAssemblyModal" onMouseDown={e=>e.stopPropagation()}>
-        <small>PRODUCTION → MATERIALS • ДОПОЛНИТЕЛЬНЫЙ РЕЖИМ</small>
-        <h2>РУЧНАЯ СБОРКА ПРОЕКТОВ</h2>
-        <p>Image Library и Music Library не изменяются. Файлы используются только для выбранного channelId и копируются в обычный Production batch.</p>
+    {manualOpen&&<ModalPortal onClose={closeManual} closeOnBackdrop={!manualBusy} closeOnEscape={!manualBusy}>
+      <section className="confirmModal manualAssemblyModal manualAssemblyApex" role="dialog" aria-modal="true" aria-labelledby="manual-assembly-heading" onMouseDown={e=>e.stopPropagation()}>
+        <header className="manualApexHeader"><div><small>ПРОИЗВОДСТВО</small><h2 id="manual-assembly-heading">Ручная сборка проектов</h2>
+        <p>Выберите канал, изображения и музыку для сборки.</p></div><button disabled={!!manualBusy} onClick={closeManual} aria-label="Закрыть ручную сборку">×</button></header>
 
         <label className="manualField">Канал
           <select value={manualChannelId} disabled={!!manualBusy} onChange={e=>changeManualChannel(e.target.value)}>
             {sortedChannels.map(ch=><option key={ch.id} value={ch.id}>{ch.name}</option>)}
           </select>
-          <small>{manualChannel?.id||'—'}</small>
+          <small>Материалы будут назначены выбранному каналу.</small>
         </label>
 
         <div className="manualSection">
           <div><small>ИЗОБРАЖЕНИЯ</small><b>{manualImages.length.toLocaleString('ru-RU')} выбрано</b></div>
-          <div className="pmActions"><button className="primary" disabled={!!manualBusy} onClick={()=>void chooseManualImages()}>ВЫБРАТЬ ИЗ DOWNLOADS</button>{manualImages.length>0&&<button disabled={!!manualBusy} onClick={()=>setManualImages([])}>ОЧИСТИТЬ</button>}</div>
+          <div className="pmActions"><button className="primary" disabled={!!manualBusy} onClick={()=>void chooseManualImages()}>Выбрать изображения</button>{manualImages.length>0&&<button disabled={!!manualBusy} onClick={()=>setManualImages([])}>Очистить выбор</button>}</div>
           {manualImages.length>0&&<div className="manualPreviewList">{manualImages.slice(0,8).map((x,i)=><span key={x}>{String(i+1).padStart(2,'0')} • {fileName(x)}</span>)}{manualImages.length>8&&<span>+ ещё {manualImages.length-8}</span>}</div>}
         </div>
 
         <div className="manualSection">
           <div><small>МУЗЫКА</small><b>{manualMusic.length.toLocaleString('ru-RU')} файлов</b></div>
-          <div className="pmActions"><button className="primary" disabled={!!manualBusy} onClick={()=>void chooseManualMusicFiles()}>ВЫБРАТЬ С ДИСКА</button><button disabled={!!manualBusy} onClick={()=>void chooseManualMusicFolder()}>ВЫБРАТЬ ПАПКУ</button>{manualMusic.length>0&&<button disabled={!!manualBusy} onClick={()=>{setManualMusic([]);setManualMusicRoot('')}}>ОЧИСТИТЬ</button>}</div>
+          <div className="pmActions"><button className="primary" disabled={!!manualBusy} onClick={()=>void chooseManualMusicFiles()}>Выбрать файлы</button><button disabled={!!manualBusy} onClick={()=>void chooseManualMusicFolder()}>Выбрать папку</button>{manualMusic.length>0&&<button disabled={!!manualBusy} onClick={()=>{setManualMusic([]);setManualMusicRoot('')}}>Очистить выбор</button>}</div>
           {manualMusicRoot&&<code className="pmPath">{manualMusicRoot}</code>}
           {manualMusic.length>0&&<div className="manualPreviewList">{manualMusic.slice(0,6).map((x,i)=><span key={x}>{String(i+1).padStart(2,'0')} • {fileName(x)}</span>)}{manualMusic.length>6&&<span>+ ещё {manualMusic.length-6}</span>}</div>}
         </div>
@@ -367,13 +368,13 @@ export function MaterialsManager(){
           <span><small>Диапазон</small><b>{manualImages.length?'VIDEO_'+String(manualFrom).padStart(3,'0')+' — VIDEO_'+String(manualTo).padStart(3,'0'):'—'}</b></span>
         </div>
         {manualImages.length>0&&manualMusic.length<manualTracksPerProject&&<div className="pmShortage"><div><b>Недостаточно музыки</b><span>Нужно минимум {manualTracksPerProject} уникальных файлов для одного проекта.</span></div></div>}
-        {manualCanBuild&&manualMusic.length<manualRequiredTracks&&<small className="pmHint">Выбрано меньше {manualRequiredTracks} треков на весь batch — после исчерпания списка музыка будет использоваться повторно, но внутри одного VIDEO дублей не будет.</small>}
+        {manualCanBuild&&manualMusic.length<manualRequiredTracks&&<small className="pmHint">Для всех проектов нужно {manualRequiredTracks} назначений. Музыка может повторяться между проектами, но не внутри одного проекта.</small>}
 
         <div className="manualModalActions">
-          <button disabled={!!manualBusy} onClick={()=>setManualOpen(false)}>ОТМЕНА</button>
-          <button className="primary" disabled={!manualCanBuild||!!manualBusy} onClick={()=>void buildManualProjects()}>{manualBusy==='build'?'СОБИРАЮ…':'СОБРАТЬ '+(manualCanBuild?manualImages.length:0)+' ПРОЕКТОВ'}</button>
+          <button disabled={!!manualBusy} onClick={closeManual}>Отмена</button>
+          <button className="primary" disabled={!manualCanBuild||!!manualBusy} onClick={()=>void buildManualProjects()}>{manualBusy==='build'?'Собираем…':'Собрать проекты · '+(manualCanBuild?manualImages.length:0)}</button>
         </div>
       </section>
-    </div>}
+    </ModalPortal>}
   </div>
 }
