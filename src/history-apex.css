@@ -1,0 +1,24 @@
+.historyApex{display:flex;flex-direction:column;gap:18px;color:#eeeaf5}
+.historyApexHeader{display:flex;justify-content:space-between;align-items:end;gap:24px}
+.historyApexHeader small{color:#bba9de;font-size:11px;font-weight:700;letter-spacing:.12em}
+.historyApexHeader h1{font-size:30px;line-height:1.2;letter-spacing:-.02em;margin:7px 0 5px}
+.historyApexHeader p{font-size:13px;color:#bbb4c5;margin:0;line-height:1.5}
+.historyApexTotal{display:flex;flex-direction:column;gap:5px;min-width:150px;padding:14px 18px;border:1px solid #655080;border-radius:12px;background:#292331}
+.historyApexTotal span{font-size:12px;color:#c9bdd5}.historyApexTotal strong{font-size:23px;font-variant-numeric:tabular-nums;color:#dfcaff}
+.historyApexWorkspace{border:1px solid #3a3442;border-radius:14px;background:#1c1a20;overflow:hidden}
+.historyApexFilters{display:flex;flex-wrap:wrap;align-items:end;gap:12px;padding:20px;border-bottom:1px solid #3a3442}
+.historyApexFilters label{display:flex;flex-direction:column;gap:7px;min-width:160px;color:#ccc2d5;font-size:12px;font-weight:600}
+.historyApexFilters .historyApexSearch{flex:1 1 250px}
+.historyApexFilters input,.historyApexFilters select{width:100%;min-height:44px;border:1px solid #51485a;border-radius:9px;padding:9px 12px;background:#29252e;color:#f1ebf5;font:inherit;font-size:13px}
+.historyApexOrder,.historyApexMore{min-height:44px;padding:9px 16px;border:1px solid #5d4d6a;border-radius:9px;background:#302938;color:#eee4f7;font-size:12px;font-weight:600;cursor:pointer}
+.historyApex input:focus-visible,.historyApex select:focus-visible,.historyApex button:focus-visible,.historyApex summary:focus-visible{outline:2px solid #c6aaff;outline-offset:3px}
+.historyApexListHeading{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:20px 20px 12px}.historyApexListHeading h2{margin:0;font-size:16px}.historyApexListHeading p{margin:0;color:#bdb4c6;font-size:12px}
+.historyApexList{list-style:none;margin:0;padding:0 20px}
+.historyApexEvent{padding:16px 0;border-top:1px solid #3a3442}.historyApexEventMain{display:flex;justify-content:space-between;gap:18px;align-items:start}
+.historyApexEvent h3{margin:0;color:#f1ebf5;font-size:14px;line-height:1.4}.historyApexEventMain p{margin:5px 0 0;font-size:12px;color:#c2b9ca}
+.historyApexEventMeta{display:flex;align-items:end;flex-direction:column;gap:6px;color:#bfb6c7;font-size:11px;white-space:nowrap}
+.historyApexEventMeta span{border:1px solid #60546a;border-radius:99px;padding:4px 8px;color:#e1d7ea;font-weight:600}.historyApexEvent-failed .historyApexEventMeta span{border-color:#8b5756;color:#ffc6b9}.historyApexEvent-success .historyApexEventMeta span{border-color:#477268;color:#b8e7d2}.historyApexEvent-partial .historyApexEventMeta span{border-color:#8b7450;color:#f3d3a0}
+.historyApexIdentifiers{display:flex;flex-wrap:wrap;gap:5px 14px;margin:10px 0 0;color:#c5bbcd;font-size:12px;overflow-wrap:anywhere}
+.historyApexTechnical{font-size:12px;color:#beb3c9}.historyApexTechnical summary{display:flex;align-items:center;min-height:36px;width:max-content;color:#d8c4ed;cursor:pointer}.historyApexTechnical summary::before{content:'+';font-size:16px;margin-right:7px}.historyApexTechnical[open] summary::before{content:'−'}.historyApexTechnical p{margin:0 0 4px;overflow-wrap:anywhere}
+.historyApexEmpty{padding:35px 20px 40px;text-align:center;border-top:1px solid #3a3442}.historyApexEmpty strong{font-size:14px}.historyApexEmpty p{margin:7px 0 0;font-size:12px;color:#bdb4c6}.historyApexMore{margin:12px 20px 20px}
+@media(max-width:680px){.historyApexHeader{align-items:start;flex-direction:column}.historyApexTotal{align-self:stretch}.historyApexFilters label{flex:1 1 100%}.historyApexListHeading,.historyApexEventMain{align-items:start;flex-direction:column}.historyApexEventMeta{align-items:start;flex-direction:row;flex-wrap:wrap}}
