@@ -9,7 +9,7 @@ const TYPES=new Set<ActivityEventType>([
 const STATUSES=new Set<ActivityStatus>(['STARTED','SUCCESS','FAILED','PARTIAL','INFO']);
 const SOURCES=new Set<ActivitySource>(['LIVE_OPERATION','RECONSTRUCTED','LEGACY_IMPORT']);
 const FORBIDDEN_KEY=/(access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization[_-]?code|password|credential)/i;
-const MAX_EVENTS=20000;
+export const MAX_EVENTS=20000;
 
 function cleanString(v:unknown,max=1600){return typeof v==='string'?v.slice(0,max):undefined}
 function cleanDetails(raw:unknown):Record<string,ActivityDetailValue>|undefined{
@@ -70,6 +70,26 @@ export function appendJournalEvent(events:ActivityEvent[],raw:ActivityEvent):Act
  const idx=events.findIndex(e=>e.eventId===x.eventId);
  const next=idx>=0?events.map((e,i)=>i===idx?x:e):[...events,x];
  return next.slice(-MAX_EVENTS);
+}
+/** Preserve sequential first-match replacement and bounded eviction in one pass. */
+export function appendJournalEvents(events:ActivityEvent[],rows:ActivityEvent[]):ActivityEvent[]{
+ if(!rows.length)return events;
+ if(rows.length===1)return appendJournalEvent(events,rows[0]);
+ const all=events.slice();
+ const positions=new Map<string,{indices:number[];start:number}>();
+ const remember=(id:string,index:number)=>{const bucket=positions.get(id);if(bucket)bucket.indices.push(index);else positions.set(id,{indices:[index],start:0})};
+ for(let i=0;i<all.length;i++)remember(all[i].eventId,i);
+ let head=0,changed=false;
+ for(const raw of rows){
+  const event=normalizeActivityEvent(raw);if(!event)continue;
+  changed=true;
+  const bucket=positions.get(event.eventId);
+  if(bucket)while(bucket.start<bucket.indices.length&&bucket.indices[bucket.start]<head)bucket.start++;
+  if(bucket&&bucket.start<bucket.indices.length)all[bucket.indices[bucket.start]]=event;
+  else{remember(event.eventId,all.length);all.push(event)}
+  head=Math.max(head,all.length-MAX_EVENTS);
+ }
+ return changed?all.slice(head):events;
 }
 export function activityEvent(input:Omit<ActivityEvent,'eventId'|'timestamp'|'source'|'status'> & {eventId?:string;timestamp?:string;source?:ActivitySource;status?:ActivityStatus}):ActivityEvent{
  return normalizeActivityEvent({

@@ -5,7 +5,7 @@ import { generateMetadata, slugify } from './core';
 import {notifyError,notifyLegacy,notifyWarning} from './notificationCenter';
 import {humanizeError} from './errorCenter';
 import {redactSensitive} from './securityRedaction';
-import {appendJournalEvent,normalizeActivityJournal} from './activityJournalCore';
+import {appendJournalEvent,appendJournalEvents,normalizeActivityJournal} from './activityJournalCore';
 import {migrateUploadHistoryFingerprintProvenance} from './storageLifecycle';
 import {appendStatisticsSnapshot,normalizeStatisticsHistory} from './youtubeStatisticsCenter';
 import {resolvedJobStatus} from './activeErrors';
@@ -178,7 +178,7 @@ export const useApp=create<Store>((set,get)=>({
   recordUploadHistory:r=>{set(s=>({uploadHistory:[...s.uploadHistory,r]}));restorePublishLedgerFromUploadHistory(get().uploadHistory);scheduleSave()},
   replaceUploadHistory:rows=>{set({uploadHistory:rows});restorePublishLedgerFromUploadHistory(rows);scheduleSave()},
   appendActivity:e=>{set(s=>({activityJournal:appendJournalEvent(s.activityJournal,e)}));scheduleSave()},
-  appendActivities:rows=>{set(s=>({activityJournal:rows.reduce((acc,e)=>appendJournalEvent(acc,e),s.activityJournal)}));scheduleSave()},
+  appendActivities:rows=>{set(s=>({activityJournal:appendJournalEvents(s.activityJournal,rows)}));scheduleSave()},
   replaceActivityJournal:rows=>{set({activityJournal:normalizeActivityJournal(rows)});scheduleSave()},
   recordStatisticsSnapshot:row=>{set(s=>({statisticsHistory:appendStatisticsSnapshot(s.statisticsHistory,row)}));scheduleSave()},
   replaceStatisticsHistory:rows=>{set({statisticsHistory:normalizeStatisticsHistory(rows)});scheduleSave()},

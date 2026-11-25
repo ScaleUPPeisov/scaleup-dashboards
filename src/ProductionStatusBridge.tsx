@@ -3,7 +3,8 @@ import {api} from './api';
 import {notifySuccess} from './notificationCenter';
 import {useApp} from './store';
 import type {VideoJob} from './types';
-import {journal} from './activityJournalRuntime';
+import {journalMany} from './activityJournalRuntime';
+import {activityEvent} from './activityJournalCore';
 import {isRenderReadyTransitionAllowed} from './storageLifecycle';
 import {scanFactualRenderRuntime} from './renderRuntimeEvidence';
 import {replaceFactualActiveRenders,setRenderMonitoringExpected,invalidateRenderFacts} from './activeOperationFacts';
@@ -11,6 +12,7 @@ import {createRenderScanScheduler} from './renderScanScheduler';
 import {applyStaleOperationPatches,buildStaleOperationPatches} from './staleOperationReconciliation';
 import {productionRenderLedger} from './productionRenderTransitions';
 import {observeRuntimeRenderTransitions,runtimeRenderIdentity} from './runtimeRenderTransitions';
+import {createProductionScanLookup} from './productionScanLookup';
 
 // An unmounted bridge may still be awaiting a native scan. Do not overlap it
 // with a newly mounted bridge; native commands cannot be cancelled by a timer.
@@ -43,19 +45,24 @@ export function ProductionStatusBridge(){
         const rendered=observeRuntimeRenderTransitions(evidence.rows,productionRenderLedger());
         const newlyRendered=new Set(rendered.map(x=>runtimeRenderIdentity({rootPath:x.rootPath,batchId:x.batchId,projectId:x.row.projectId})));
         const notifications=new Map<string,typeof evidence.rows>();
+        const lookup=createProductionScanLookup(useApp.getState());
         for(const item of evidence.rows){
           const {batchId,row}=item;if(!row.jobId)continue;
-          const job=useApp.getState().jobs.find(j=>j.id===row.jobId);if(!job)continue;
+          const job=lookup.job(row.jobId);if(!job)continue;
           const renderKey=`${batchId}:${row.projectId}:${row.outputFile||''}`;
           if(row.renderStatus==='Rendering'){
-            if(isRenderReadyTransitionAllowed(job)&&job.status!=='RENDERING')useApp.getState().patchJob(job.id,{status:'RENDERING',error:undefined});
+            if(isRenderReadyTransitionAllowed(job)&&job.status!=='RENDERING')lookup.patchJob(job.id,{status:'RENDERING',error:undefined});
           }else if(row.renderStatus==='Completed'&&row.outputFile){
-            const patch:Partial<VideoJob>={};if(job.finalPath!==row.outputFile)patch.finalPath=row.outputFile;if(isRenderReadyTransitionAllowed(job)){patch.status='READY_UPLOAD';patch.error=undefined}if(Object.keys(patch).length)useApp.getState().patchJob(job.id,patch);
-            const eventId=`render-complete:${renderKey}`,already=useApp.getState().activityJournal.some(e=>e.eventId===eventId);
+            const patch:Partial<VideoJob>={};if(job.finalPath!==row.outputFile)patch.finalPath=row.outputFile;if(isRenderReadyTransitionAllowed(job)){patch.status='READY_UPLOAD';patch.error=undefined}if(Object.keys(patch).length)lookup.patchJob(job.id,patch);
+            const eventId=`render-complete:${renderKey}`;
             const genuinelyNew=newlyRendered.has(runtimeRenderIdentity({rootPath:item.rootPath,batchId,projectId:row.projectId}));
-            if(!already){journal({eventId,eventType:genuinelyNew?'RENDER_COMPLETED':'RENDER_DISCOVERED_LEGACY',status:'SUCCESS',source:genuinelyNew?'LIVE_OPERATION':'LEGACY_IMPORT',channelId:job.channelId,jobId:job.id,localSourcePath:row.outputFile,details:{batchId,projectId:row.projectId,renderStatus:'Completed',firstObservation:genuinelyNew?'runtime-transition':initialHydration?'startup-hydration':'historical-observation'}})}
-          }else if(row.renderStatus==='Error'&&!job.youtubeVideoId&&['READY_RENDER','RENDERING'].includes(job.status)){useApp.getState().patchJob(job.id,{status:'ERROR',error:row.error||'ENDLUME: ошибка рендера'})}
+            lookup.considerEvent(eventId,()=>activityEvent({eventId,eventType:genuinelyNew?'RENDER_COMPLETED':'RENDER_DISCOVERED_LEGACY',status:'SUCCESS',source:genuinelyNew?'LIVE_OPERATION':'LEGACY_IMPORT',channelId:job.channelId,jobId:job.id,localSourcePath:row.outputFile||undefined,details:{batchId,projectId:row.projectId,renderStatus:'Completed',firstObservation:genuinelyNew?'runtime-transition':initialHydration?'startup-hydration':'historical-observation'}}));
+          }else if(row.renderStatus==='Error'&&!job.youtubeVideoId&&['READY_RENDER','RENDERING'].includes(job.status)){lookup.patchJob(job.id,{status:'ERROR',error:row.error||'ENDLUME: ошибка рендера'})}
         }
+        // A single scan is synchronous here: preserve its row order in the
+        // local lookup, then notify store subscribers once per changed array.
+        const patches=lookup.patches();if(patches.length)useApp.getState().patchJobsBatch(patches);
+        journalMany(lookup.events(useApp.getState().activityJournal));
         for(const item of rendered){
           const group=notifications.get(item.channelId)||[];group.push(item);notifications.set(item.channelId,group)
         }
