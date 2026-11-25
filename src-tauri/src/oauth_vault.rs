@@ -212,6 +212,83 @@ fn decode_vault(bytes:&[u8],key:&[u8;32])->Result<PlainVault,String>{
  if vault.schema_version!=SCHEMA{return Err("OAUTH_VAULT_CONTENT_SCHEMA_INVALID".into())}
  Ok(vault)
 }
+
+/// Secret-free, offline assessment only. This does not import, write files,
+/// access Keychain, validate Google tokens, or authorize a second Publisher.
+#[derive(Debug,Clone,PartialEq,Eq)]
+pub(crate) struct OAuthImportAssessment {
+ pub channels:usize,
+ pub metadata_profiles:usize,
+ pub vault_profiles:usize,
+ pub bound_channels:usize,
+ pub unlinked_channels:usize,
+ pub missing_profiles:usize,
+ pub missing_refresh_tokens:usize,
+ pub missing_local_client_configuration:usize,
+ pub identity_conflicts:usize,
+ pub unverified_identities:usize,
+ pub unreferenced_profiles:usize,
+ pub unreferenced_vault_profiles:usize,
+ pub google_validation_performed:bool,
+ pub keychain_validation_performed:bool,
+}
+
+/// Validate an authenticated backup held entirely in memory. The caller must
+/// separately verify snapshot provenance and establish a transactional write
+/// boundary before an import can ever be offered.
+pub(crate) fn assess_oauth_import(
+ state_json:&[u8], metadata_json:&[u8], vault_envelope:&[u8], encoded_key:&str,
+)->Result<OAuthImportAssessment,&'static str>{
+ use std::collections::{HashMap,HashSet};
+ const MAX_STATE:usize=128*1024*1024;
+ const MAX_AUTH:usize=32*1024*1024;
+ if state_json.len()>MAX_STATE||metadata_json.len()>MAX_AUTH||vault_envelope.len()>MAX_AUTH||encoded_key.len()>4096{return Err("OAUTH_IMPORT_INPUT_TOO_LARGE")}
+ let key=decode_key(encoded_key).map_err(|_|"OAUTH_IMPORT_KEY_INVALID")?;
+ let vault=decode_vault(vault_envelope,&key).map_err(|_|"OAUTH_IMPORT_VAULT_INVALID")?;
+ let state:serde_json::Value=serde_json::from_slice(state_json).map_err(|_|"OAUTH_IMPORT_STATE_INVALID")?;
+ let metadata:serde_json::Value=serde_json::from_slice(metadata_json).map_err(|_|"OAUTH_IMPORT_METADATA_INVALID")?;
+ let channels=state.get("channels").and_then(|x|x.as_array()).ok_or("OAUTH_IMPORT_STATE_INVALID")?;
+ let profiles=metadata.get("profiles").and_then(|x|x.as_array()).ok_or("OAUTH_IMPORT_METADATA_INVALID")?;
+ let mut by_profile=HashMap::new();
+ for profile in profiles{
+  let id=profile.get("id").and_then(|x|x.as_str()).map(str::trim).filter(|x|!x.is_empty()).ok_or("OAUTH_IMPORT_METADATA_INVALID")?;
+  let channel=profile.get("channel_id").or_else(||profile.get("channelId")).and_then(|x|x.as_str()).map(str::trim).filter(|x|!x.is_empty());
+  let client=profile.get("client_id").or_else(||profile.get("clientId")).and_then(|x|x.as_str()).map(str::trim).filter(|x|!x.is_empty());
+  if by_profile.insert(id,(channel,client)).is_some(){return Err("OAUTH_IMPORT_DUPLICATE_PROFILE")}
+ }
+ // The map key and profile UUID are independent pieces of the authenticated
+ // schema; an inconsistency must not be silently accepted.
+ if vault.profiles.iter().any(|(id,p)|id.trim().is_empty()||p.profile_uuid.trim()!=id){return Err("OAUTH_IMPORT_VAULT_IDENTITY_INVALID")}
+ let mut referenced=HashSet::new();
+ let mut channel_ids=HashSet::new();
+ let mut report=OAuthImportAssessment{channels:channels.len(),metadata_profiles:profiles.len(),vault_profiles:vault.profiles.len(),bound_channels:0,unlinked_channels:0,missing_profiles:0,missing_refresh_tokens:0,missing_local_client_configuration:0,identity_conflicts:0,unverified_identities:0,unreferenced_profiles:0,unreferenced_vault_profiles:0,google_validation_performed:false,keychain_validation_performed:false};
+ for channel in channels{
+  let id=channel.get("id").and_then(|x|x.as_str()).map(str::trim).filter(|x|!x.is_empty()).ok_or("OAUTH_IMPORT_STATE_INVALID")?;
+  if !channel_ids.insert(id){return Err("OAUTH_IMPORT_DUPLICATE_CHANNEL")}
+  let profile=channel.get("youtubeProfileId").and_then(|x|x.as_str()).map(str::trim).filter(|x|!x.is_empty());
+  let channel_id=channel.get("youtubeChannelId").and_then(|x|x.as_str()).map(str::trim).filter(|x|!x.is_empty());
+  let Some(profile_id)=profile else{report.unlinked_channels+=1;continue};
+  if !referenced.insert(profile_id){report.identity_conflicts+=1;continue}
+  let Some((metadata_channel,metadata_client))=by_profile.get(profile_id).copied() else{report.missing_profiles+=1;continue};
+  let Some(credential)=vault.profiles.get(profile_id) else{report.missing_refresh_tokens+=1;continue};
+  let client_ready=metadata_client.is_some_and(|client|!credential.client_secret.trim().is_empty()||(!vault.global_client_secret.trim().is_empty()&&vault.global_client_id.trim()==client));
+  if !client_ready{report.missing_local_client_configuration+=1}
+  if credential.refresh_token.trim().is_empty(){report.missing_refresh_tokens+=1;continue}
+  let expected=credential.expected_channel_id.trim();
+  let vault_channel=(!expected.is_empty()).then_some(expected);
+  let known=[channel_id,metadata_channel,vault_channel];
+  if known.iter().flatten().any(|id|known.iter().flatten().any(|other|id!=other)){
+   report.identity_conflicts+=1;continue
+  }
+  match (channel_id,metadata_channel,vault_channel){
+   (Some(a),Some(b),Some(c)) if a==b&&b==c=>report.bound_channels+=1,
+   _=>report.unverified_identities+=1,
+  }
+ }
+ report.unreferenced_profiles=by_profile.keys().filter(|id|!referenced.contains(*id)).count();
+ report.unreferenced_vault_profiles=vault.profiles.keys().filter(|id|!referenced.contains(id.as_str())).count();
+ Ok(report)
+}
 fn decode_keychain_master(encoded:&str)->Result<[u8;32],String>{
  let bytes=B64.decode(encoded.trim()).map_err(|_|"OAUTH_VAULT_LEGACY_MASTER_KEY_INVALID".to_string())?;
  if bytes.len()!=32{return Err("OAUTH_VAULT_LEGACY_MASTER_KEY_INVALID_LENGTH".into())}
@@ -571,6 +648,70 @@ pub fn restore_encrypted_snapshot(app:&AppHandle,source:&Path)->Result<(),String
 #[cfg(test)]
 mod tests{
  use super::*;
+ fn fake_import_fixture(count:usize)->(Vec<u8>,Vec<u8>,Vec<u8>,String){
+  let key=[42u8;32];
+  let mut vault=PlainVault{global_client_id:"test-client".into(),global_client_secret:"test-secret-never-print".into(),..Default::default()};
+  let mut channels=Vec::new();let mut profiles=Vec::new();
+  for i in 0..count{
+   let profile=format!("profile-{i}");let channel=format!("UC-test-{i}");
+   channels.push(serde_json::json!({"id":format!("channel-{i}"),"youtubeProfileId":profile,"youtubeChannelId":channel}));
+   profiles.push(serde_json::json!({"id":profile,"channel_id":channel,"client_id":"test-client"}));
+   vault.profiles.insert(profile.clone(),VaultProfile{profile_uuid:profile,expected_channel_id:channel,refresh_token:"test-refresh-never-print".into(),..Default::default()});
+  }
+  let encrypted=encrypt_bytes(&serde_json::to_vec(&vault).unwrap(),&key,AAD).unwrap();
+  (serde_json::to_vec(&serde_json::json!({"channels":channels})).unwrap(),serde_json::to_vec(&serde_json::json!({"profiles":profiles})).unwrap(),encrypted,B64.encode(key))
+ }
+ #[test]fn import_assessment_authenticates_and_checks_33_bindings_without_exposing_secrets(){
+  let(state,metadata,vault,key)=fake_import_fixture(33);
+  let report=assess_oauth_import(&state,&metadata,&vault,&key).unwrap();
+  assert_eq!(report.channels,33);assert_eq!(report.metadata_profiles,33);assert_eq!(report.vault_profiles,33);assert_eq!(report.bound_channels,33);
+  assert_eq!(report.missing_profiles,0);assert_eq!(report.missing_refresh_tokens,0);assert_eq!(report.missing_local_client_configuration,0);
+  assert_eq!(report.identity_conflicts,0);assert_eq!(report.unverified_identities,0);
+  assert!(!report.google_validation_performed);assert!(!report.keychain_validation_performed);
+  let printable=format!("{report:?}");assert!(!printable.contains("test-secret-never-print"));assert!(!printable.contains("test-refresh-never-print"));
+ }
+ #[test]fn import_assessment_rejects_wrong_key_tampering_invalid_schema_and_duplicate_profiles(){
+  let(state,metadata,vault,key)=fake_import_fixture(1);
+  assert_eq!(assess_oauth_import(&state,&metadata,&vault,&B64.encode([43u8;32])),Err("OAUTH_IMPORT_VAULT_INVALID"));
+  let mut envelope:serde_json::Value=serde_json::from_slice(&vault).unwrap();envelope["schemaVersion"]=serde_json::json!(99);
+  assert_eq!(assess_oauth_import(&state,&metadata,&serde_json::to_vec(&envelope).unwrap(),&key),Err("OAUTH_IMPORT_VAULT_INVALID"));
+  assert_eq!(assess_oauth_import(b"{}",&metadata,&vault,&key),Err("OAUTH_IMPORT_STATE_INVALID"));
+  let duplicate=serde_json::json!({"profiles":[{"id":"p"},{"id":"p"}]});
+  assert_eq!(assess_oauth_import(&state,&serde_json::to_vec(&duplicate).unwrap(),&vault,&key),Err("OAUTH_IMPORT_DUPLICATE_PROFILE"));
+  let mut tampered:serde_json::Value=serde_json::from_slice(&vault).unwrap();
+  let mut ciphertext=B64.decode(tampered["ciphertext"].as_str().unwrap()).unwrap();ciphertext[0]^=1;
+  tampered["ciphertext"]=serde_json::json!(B64.encode(ciphertext));
+  assert_eq!(assess_oauth_import(&state,&metadata,&serde_json::to_vec(&tampered).unwrap(),&key),Err("OAUTH_IMPORT_VAULT_INVALID"));
+ }
+ #[test]fn import_assessment_distinguishes_missing_conflicting_and_unverified_data(){
+  let(state,metadata,vault,key)=fake_import_fixture(3);
+  let mut state:serde_json::Value=serde_json::from_slice(&state).unwrap();
+  state["channels"][0]["youtubeChannelId"]=serde_json::json!("UC-conflict");
+  state["channels"][1]["youtubeChannelId"]=serde_json::Value::Null;
+  state["channels"][2]["youtubeProfileId"]=serde_json::json!("unknown");
+  let report=assess_oauth_import(&serde_json::to_vec(&state).unwrap(),&metadata,&vault,&key).unwrap();
+  assert_eq!(report.identity_conflicts,1);assert_eq!(report.unverified_identities,1);assert_eq!(report.missing_profiles,1);
+  assert_eq!(report.bound_channels,0);assert_eq!(report.unreferenced_profiles,1);assert_eq!(report.unreferenced_vault_profiles,1);
+ }
+ #[test]fn import_assessment_flags_a_known_conflict_even_when_third_identity_is_missing(){
+  let(state,metadata,vault,key)=fake_import_fixture(1);
+  let key_bytes=decode_key(&key).unwrap();let mut decoded=decode_vault(&vault,&key_bytes).unwrap();
+  decoded.profiles.get_mut("profile-0").unwrap().expected_channel_id.clear();
+  let changed=encrypt_bytes(&serde_json::to_vec(&decoded).unwrap(),&key_bytes,AAD).unwrap();
+  let mut state:serde_json::Value=serde_json::from_slice(&state).unwrap();state["channels"][0]["youtubeChannelId"]=serde_json::json!("UC-other");
+  let report=assess_oauth_import(&serde_json::to_vec(&state).unwrap(),&metadata,&changed,&key).unwrap();
+  assert_eq!(report.identity_conflicts,1);assert_eq!(report.unverified_identities,0);assert_eq!(report.bound_channels,0);
+ }
+ #[test]fn import_assessment_reports_missing_refresh_and_local_client_without_guessing_keychain_state(){
+  let(state,metadata,vault,key)=fake_import_fixture(2);
+  let key_bytes=decode_key(&key).unwrap();let mut decoded=decode_vault(&vault,&key_bytes).unwrap();
+  decoded.profiles.get_mut("profile-0").unwrap().refresh_token.clear();
+  decoded.global_client_secret.clear();
+  let changed=encrypt_bytes(&serde_json::to_vec(&decoded).unwrap(),&key_bytes,AAD).unwrap();
+  let report=assess_oauth_import(&state,&metadata,&changed,&key).unwrap();
+  assert_eq!(report.missing_refresh_tokens,1);assert_eq!(report.missing_local_client_configuration,2);
+  assert!(!report.google_validation_performed);assert!(!report.keychain_validation_performed);
+ }
  #[test]fn schema_is_stable(){assert_eq!(SCHEMA,1);assert_eq!(AAD,b"VYRON-OAUTH-VAULT-v1")}
  #[test]fn local_key_precedes_legacy_keychain_even_when_old_vault_exists(){
   assert_eq!(startup_key_plan(true,true),StartupKeyPlan::LocalPersistent);
