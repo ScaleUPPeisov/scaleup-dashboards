@@ -1,5 +1,5 @@
-.settingsApex{--settings-surface:#1b1a22;--settings-border:#3b3948;--settings-muted:#c1becd;display:grid;gap:22px;color:#f2f0fa}
-.settingsApexHeader small,.settingsApexContentHead small{font-size:11px;font-weight:650;letter-spacing:.12em;color:#c1aeff}
+.settingsApex{--settings-surface:var(--apex-surface);--settings-border:var(--apex-border);--settings-muted:var(--apex-text-muted);display:grid;gap:22px;color:var(--apex-text)}
+.settingsApexHeader small,.settingsApexContentHead small{font-size:11px;font-weight:650;letter-spacing:.12em;color:var(--apex-accent)}
 .settingsApexHeader h1{font-size:30px;line-height:1.2;margin:7px 0}.settingsApexHeader p{margin:0;color:var(--settings-muted)}
 .settingsApexLayout{display:grid;grid-template-columns:220px minmax(0,1fr);align-items:start;gap:24px}
 .settingsApexNav{display:grid;gap:22px;min-width:0;padding:16px 10px;border:1px solid var(--settings-border);border-radius:14px;background:var(--settings-surface)}
@@ -9,5 +9,5 @@
 .settingsApexContent{min-width:0;display:grid;gap:16px}.settingsApexContentHead{padding:1px 2px}.settingsApexContentHead h2{margin:5px 0 0;font-size:22px}
 .settingsApexContent .settingsStack{gap:12px}.settingsApexContent .settingsCard{background:var(--settings-surface)!important;border-color:var(--settings-border)!important;border-radius:14px!important;padding:20px!important}
 .settingsApexContent .settingsCard>small{color:#bca8f6}.settingsApexContent .settingsCard h3{font-size:17px;margin:7px 0}.settingsApexContent .settingsCard p{color:var(--settings-muted);line-height:1.55}
-.settingsApexContent .toggleRow{min-height:52px}.settingsApex :is(button,input,select,summary):focus-visible{outline:2px solid #c7b8ff;outline-offset:2px}
+.settingsApexContent .toggleRow{min-height:52px}.settingsApex :is(button,input,select,summary):focus-visible{outline:2px solid var(--apex-focus);outline-offset:2px}
 @media(max-width:1000px){.settingsApexLayout{grid-template-columns:1fr;gap:14px}.settingsApexNav{display:flex;overflow:auto;gap:14px}.settingsApexNav section{min-width:150px}}

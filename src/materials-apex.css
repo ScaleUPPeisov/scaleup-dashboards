@@ -19,7 +19,7 @@
 .manualAssemblyApex .manualApexHeader p{font-size:13px;color:#c3c1ce;margin:0}
 .manualAssemblyApex .manualApexHeader button{min-width:40px;min-height:40px;font-size:20px}
 .manualAssemblyApex .manualField{font-size:13px;color:#e9e6f2}.manualAssemblyApex .manualField select{background:#26252e;color:#f1eff8;border-color:#504b5e;font-size:14px}.manualAssemblyApex .manualField>small{font-size:12px;color:#bfbcca;white-space:normal}
-.manualAssemblyApex .manualSection,.manualAssemblyApex .manualAssemblySummary span{background:#24232b;border-color:#403d4d;border-radius:10px}
+.manualAssemblyApex .manualSection,.manualAssemblyApex .manualAssemblySummary span{background:var(--apex-surface-raised);border-color:#403d4d;border-radius:10px}
 .manualAssemblyApex .manualSection>div:first-child small{font-size:12px;color:#c3c1ce}.manualAssemblyApex .manualSection>div:first-child b{font-size:14px;color:#f1eff8}
 .manualAssemblyApex .manualAssemblySummary small{font-size:12px;color:#c3c1ce}.manualAssemblyApex .manualAssemblySummary b{font-size:14px;color:#f1eff8;white-space:normal;overflow-wrap:anywhere}
 .manualAssemblyApex .manualModalActions button{min-height:40px;font-size:13px;background:#302e3a;color:#f1eff8;border-color:#554e68}.manualAssemblyApex .manualModalActions button.primary{background:#9c83e4;color:#17121f;border-color:#bba6f5}

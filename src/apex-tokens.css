@@ -1,0 +1,13 @@
+/* Shared APEX foundation. Existing legacy tokens remain available to older screens. */
+:root{
+ --apex-surface:#1b1a22;
+ --apex-surface-raised:#24232b;
+ --apex-border:#3b3948;
+ --apex-text:#f2f0fa;
+ --apex-text-muted:#c1becd;
+ --apex-accent:#c1aeff;
+ --apex-focus:#c7b8ff;
+ --apex-radius-panel:14px;
+ --apex-radius-control:8px;
+ --apex-space:16px;
+}
