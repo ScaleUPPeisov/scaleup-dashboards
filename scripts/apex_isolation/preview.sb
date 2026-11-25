@@ -1,0 +1,7 @@
+; Offline feasibility profile. Never an authorization to launch APEX.
+(version 1)
+(allow default)
+(deny file-write*)
+(allow file-write* (subpath (param "PRIVATE_ROOT")))
+(deny network*)
+(deny mach-lookup (global-name "com.apple.securityd"))
