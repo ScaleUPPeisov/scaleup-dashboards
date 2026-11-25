@@ -1094,6 +1094,30 @@ fn image_collector_skips_seen_metadata_but_keeps_unseen_order() {
 }
 
 #[test]
+fn cached_music_name_sort_matches_original_comparator_and_stable_ties() {
+    let paths = [
+        "/m/Zeta.MP3", "/m/a/Трек.mp3", "/m/b/трек.MP3", "/m/a/Трек.mp3",
+        "/m/Alpha.mp3", "/m/Beta.mp3", "/m/İ.mp3", "/m/i.mp3", "/", "",
+    ];
+    for size in [0usize, 1, 2, 13, 100, 1000] {
+        let mut tracks = (0..size).map(|i| TrackIndex {
+            track_id: format!("fixture-{i}"),
+            path: paths[(i * 17 + size) % paths.len()].to_string(),
+            ..Default::default()
+        }).collect::<Vec<_>>();
+        let mut expected = tracks.clone();
+        expected.sort_by(|a, b| {
+            let name = |t: &TrackIndex| Path::new(&t.path).file_name()
+                .and_then(|x| x.to_str()).unwrap_or("").to_lowercase();
+            name(a).cmp(&name(b)).then_with(|| a.path.cmp(&b.path))
+        });
+        sort_music_tracks_by_name(&mut tracks);
+        assert_eq!(tracks.iter().map(|t| (&t.track_id, &t.path)).collect::<Vec<_>>(),
+            expected.iter().map(|t| (&t.track_id, &t.path)).collect::<Vec<_>>(), "size={size}");
+    }
+}
+
+#[test]
 fn project_ready_file_check_accepts_only_nonempty_regular_files() {
     let root = std::env::temp_dir().join(format!("vyron-ready-file-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).unwrap();

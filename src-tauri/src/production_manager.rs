@@ -1314,6 +1314,16 @@ pub fn set_production_music_library(
     atomic_json(&settings_path(&workspace, &channel_id)?, &s)?;
     Ok(s)
 }
+fn sort_music_tracks_by_name(tracks: &mut [TrackIndex]) {
+    // Extract and lowercase each filename once, instead of allocating two
+    // lowercase strings for every comparison. The full path remains the
+    // secondary key, and the sort remains stable for equal keys.
+    tracks.sort_by_cached_key(|track| (
+        Path::new(&track.path).file_name().and_then(|x| x.to_str()).unwrap_or("").to_lowercase(),
+        track.path.clone(),
+    ));
+}
+
 fn index_music_sync(workspace: &str, channel_id: &str) -> Result<MusicIndex, String> {
     let s: ChannelSettings = read_json(&settings_path(workspace, channel_id)?);
     if s.music_library.is_empty() {
@@ -1351,19 +1361,7 @@ fn index_music_sync(workspace: &str, channel_id: &str) -> Result<MusicIndex, Str
             duration_sec: audio_duration(&p),
         });
     }
-    tracks.sort_by(|a, b| {
-        let an = Path::new(&a.path)
-            .file_name()
-            .and_then(|x| x.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        let bn = Path::new(&b.path)
-            .file_name()
-            .and_then(|x| x.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        an.cmp(&bn).then_with(|| a.path.cmp(&b.path))
-    });
+    sort_music_tracks_by_name(&mut tracks);
     let idx = MusicIndex {
         schema_version: SCHEMA_VERSION,
         library_path: lib.to_string_lossy().into_owned(),
