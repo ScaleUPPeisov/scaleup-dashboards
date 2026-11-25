@@ -29,7 +29,7 @@ describe('VYRON 4.0.1 hotfix contract',()=>{
     expect(profileUi).toContain('chooseProfileAvatar');
     expect(profileUi).toContain('Google, OAuth, YouTube-каналы или credentials');
     expect(nativeFiles).toContain('pub fn store_profile_avatar');
-    expect(nativeFiles).toContain('.app_data_dir()');
+    expect(nativeFiles).toContain('crate::apex_paths::data_dir(&app)?');
     expect(nativeFiles).toContain('.join("UserProfiles")');
     expect(nativeLib).toContain('files::store_profile_avatar');
     expect(profileUi).not.toContain('youtubeDisconnect');
