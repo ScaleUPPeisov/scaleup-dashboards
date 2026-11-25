@@ -13,16 +13,16 @@ import { AnalyticsPage } from './AnalyticsPage';
 const Analytics360Page = React.lazy(()=>import('./Analytics360Page').then(m=>({default:m.Analytics360Page})));
 // Code-split macOS-only Analytics 360 so inactive tabs and Windows do not load it eagerly.
 import { MetadataPage } from './MetadataPage';
-import { CompetitorsPage } from './CompetitorsPage';
+const CompetitorsPage = React.lazy(()=>import('./CompetitorsPage').then(m=>({default:m.CompetitorsPage})));
 import { AccountsPage } from './AccountsPage';
 import { DashboardOS } from './DashboardOS';
 import { ChannelsOS } from './ChannelsOS';
-import { ProductionOS } from './ProductionOS';
-import { HistoryPage } from './HistoryPage';
+const ProductionOS = React.lazy(()=>import('./ProductionOS').then(m=>({default:m.ProductionOS})));
+const HistoryPage = React.lazy(()=>import('./HistoryPage').then(m=>({default:m.HistoryPage})));
 import { YouTubeCenter } from './YouTubeCenter';
 import { ChannelRunwayScheduler } from './ChannelRunwayScheduler';
 import { ProductionStatusBridge } from './ProductionStatusBridge';
-import { SettingsOS } from './SettingsOS';
+const SettingsOS = React.lazy(()=>import('./SettingsOS').then(m=>({default:m.SettingsOS})));
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import {NotificationCenter} from './NotificationStack';
 import {notifyError,notifySuccess} from './notificationCenter';
@@ -51,7 +51,7 @@ import {CommandPalette} from './CommandPalette';
 import {M1PerformanceProbe} from './M1PerformanceProbe';
 import {MetadataQueueAssignmentBridge} from './MetadataQueueAssignmentBridge';
 import {LiveInventoryBridge} from './LiveInventoryBridge';
-import {LiveContentInventory} from './LiveContentInventory';
+const LiveContentInventory = React.lazy(()=>import('./LiveContentInventory').then(m=>({default:m.LiveContentInventory})));
 import {inventoryTotals,useLiveInventory} from './renderInventoryRuntime';
 import {ensureTask,flushPendingTaskProgress,reconcileUploadTasks,updateTask} from './taskEngine';
 import {globalDailyUploadStatus,restorePublishLedgerFromUploadHistory,subscribeGlobalDailyUploadStatus} from './youtubePublishSafety';
@@ -302,7 +302,7 @@ function PageRouter({license}:{license:LicenseStatus}){
     :null;
 
   return <div className="pageWrap">
-    {youtubeSelected?<UiErrorBoundary scope="youtube" onHome={()=>setPage('dashboard')}><CachedYouTubeRoute routeTab={youtubeRouteTab} active/></UiErrorBoundary>:<UiErrorBoundary scope={String(page)} onHome={()=>setPage('dashboard')}>{transient}</UiErrorBoundary>}
+    {youtubeSelected?<UiErrorBoundary scope="youtube" onHome={()=>setPage('dashboard')}><CachedYouTubeRoute routeTab={youtubeRouteTab} active/></UiErrorBoundary>:<UiErrorBoundary scope={String(page)} onHome={()=>setPage('dashboard')}><React.Suspense fallback={<div className="panel" role="status">Открываем раздел…</div>}>{transient}</React.Suspense></UiErrorBoundary>}
   </div>
 }
 
