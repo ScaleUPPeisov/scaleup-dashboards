@@ -1062,6 +1062,38 @@ fn even_track_selection_skips_uncompetitive_hashes_without_changing_order() {
 }
 
 #[test]
+fn image_collector_skips_seen_metadata_but_keeps_unseen_order() {
+    let root = std::env::temp_dir().join(format!("vyron-unseen-images-{}", Uuid::new_v4()));
+    fs::create_dir_all(root.join("nested")).unwrap();
+    let paths = [root.join("first.jpg"), root.join("nested/second.png"), root.join("third.webp")];
+    for path in &paths { fs::write(path, b"fixture").unwrap(); }
+    fs::write(root.join("not-image.txt"), b"fixture").unwrap();
+    fs::write(root.join(".hidden.jpg"), b"fixture").unwrap();
+    let modified = |path: &PathBuf| match path.file_name().unwrap().to_str().unwrap() {
+        "first.jpg" => UNIX_EPOCH + Duration::from_secs(3),
+        "second.png" => UNIX_EPOCH + Duration::from_secs(1),
+        "third.webp" => UNIX_EPOCH + Duration::from_secs(2),
+        _ => unreachable!(),
+    };
+    let all = recursive_images_matching(&root, |_| true, modified).unwrap();
+    assert_eq!(all.len(), 3);
+    for seen in [HashSet::new(), HashSet::from([paths[0].to_string_lossy().into_owned()]),
+        paths.iter().map(|p| p.to_string_lossy().into_owned()).collect()] {
+        let expected = all.iter().filter(|p| !seen.contains(p.to_string_lossy().as_ref())).cloned().collect::<Vec<_>>();
+        let mut metadata_calls = 0;
+        let actual = recursive_images_matching(&root, |p| !seen.contains(p.to_string_lossy().as_ref()), |p| {
+            metadata_calls += 1;
+            modified(p)
+        }).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(metadata_calls, expected.len());
+        // Pending/unseen files must remain eligible on subsequent scans.
+        assert_eq!(recursive_unseen_images(&root, &seen).unwrap().len(), expected.len());
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn project_ready_file_check_accepts_only_nonempty_regular_files() {
     let root = std::env::temp_dir().join(format!("vyron-ready-file-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).unwrap();

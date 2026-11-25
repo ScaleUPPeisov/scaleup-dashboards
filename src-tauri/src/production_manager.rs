@@ -337,7 +337,11 @@ mod image_sort_cache_tests {
     }
 }
 
-fn recursive_images(root: &Path) -> Result<Vec<PathBuf>, String> {
+fn recursive_images_matching<F, M>(root: &Path, mut include: F, modified: M) -> Result<Vec<PathBuf>, String>
+where
+    F: FnMut(&Path) -> bool,
+    M: FnMut(&PathBuf) -> SystemTime,
+{
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -363,18 +367,23 @@ fn recursive_images(root: &Path) -> Result<Vec<PathBuf>, String> {
             }
             if ft.is_dir() {
                 stack.push(p)
-            } else if ft.is_file() && is_image(&p) {
+            } else if ft.is_file() && is_image(&p) && include(&p) {
                 out.push(p)
             }
         }
     }
-    sort_images_by_modified(&mut out, |p| {
-        fs::metadata(p)
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .unwrap_or(UNIX_EPOCH)
-    });
+    sort_images_by_modified(&mut out, modified);
     Ok(out)
+}
+fn image_modified(path: &PathBuf) -> SystemTime {
+    fs::metadata(path).ok().and_then(|m| m.modified().ok()).unwrap_or(UNIX_EPOCH)
+}
+#[cfg(test)]
+fn recursive_images(root: &Path) -> Result<Vec<PathBuf>, String> {
+    recursive_images_matching(root, |_| true, image_modified)
+}
+fn recursive_unseen_images(root: &Path, seen: &HashSet<String>) -> Result<Vec<PathBuf>, String> {
+    recursive_images_matching(root, |path| !seen.contains(path.to_string_lossy().as_ref()), image_modified)
 }
 fn downloads_dir() -> Result<PathBuf, String> {
     let home =
@@ -1076,7 +1085,7 @@ fn spawn_import_watcher(
         let mut final_flush_cycles = 0u8;
         loop {
             let stopping = stop.load(Ordering::SeqCst);
-            let files = match recursive_images(&downloads) {
+            let files = match recursive_unseen_images(&downloads, &seen) {
                 Ok(files) => {
                     last_error = None;
                     files
