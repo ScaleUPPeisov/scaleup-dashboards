@@ -16,7 +16,7 @@ describe('VYRON 4.0.0 API quota / upload allowance separation',()=>{
   expect(publisher).toContain("uploadQuota.remaining==null?'Неизвестно'");
  });
  it('exposes per-channel VYRON limiter separately including explicit unlimited mode',()=>{
-  expect(channels).toContain('Дневной лимит upload VYRON');
+  expect(channels).toContain('Дневной лимит загрузок VYRON');
   expect(channels).toContain('без ограничения VYRON');
   expect(channels).toContain('safeDailyUploadLimit:n<0?undefined:n');
  });

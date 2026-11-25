@@ -47,30 +47,30 @@ export function BatchControl(){
   try{
    if(action==='scan'){
     for(const c of batchChannels)await scanInventoryChannel(c.id,'manual-channel');
-    notifySuccess('Batch: Render проверен',batchChannels.length+' каналов • YouTube API: 0 units.');
+    notifySuccess('Папки рендера проверены',batchChannels.length+' каналов • квота YouTube API: 0.');
    }else if(action==='oauth'){
     const states=await api.youtubeOauthCredentialStates(),map=new Map(states.profiles.map(x=>[x.profileUuid,x.credentialState]));
     const ready=batchChannels.filter(c=>c.youtubeProfileId&&map.get(c.youtubeProfileId)==='READY').length;
     const attention=batchChannels.filter(c=>c.youtubeProfileId&&map.get(c.youtubeProfileId)!=='READY').length;
-    notifyInfo('Batch: OAuth state',`READY: ${ready} • требуют внимания: ${attention} • YouTube API: 0 units.`);
+    notifyInfo('Проверка учётных данных завершена',`Готовы к проверке: ${ready} • требуют внимания: ${attention} • квота YouTube API: 0.`);
    }else if(action==='youtube'){
     const r=await refreshStaleOwnerInventories(batchChannels,true);
-    if(r.failed)notifyWarning('Batch: YouTube sync частично завершён',`Обновлено: ${r.updated} • ошибок: ${r.failed} • запросов каналов: ${r.requested}.`);
-    else notifySuccess('Batch: YouTube sync завершён',`Обновлено каналов: ${r.updated} • estimated preview: ≈${batchSyncUnits} general units.`);
+    if(r.failed)notifyWarning('Синхронизация YouTube завершена частично',`Обновлено: ${r.updated} • ошибок: ${r.failed} • запросов каналов: ${r.requested}.`);
+    else notifySuccess('Синхронизация YouTube завершена',`Обновлено каналов: ${r.updated} • оценка перед запуском: ≈${batchSyncUnits} единиц квоты.`);
    }else if(action==='stats'){
     const r=await refreshYoutubeChannelStatisticsSelection(batchChannels.map(c=>c.id),true);
-    if(r.failed||r.credentialBlocked)notifyWarning('Batch: Statistics частично обновлена',`Обновлено: ${r.updated} • ошибок: ${r.failed} • OAuth blocked: ${r.credentialBlocked} • actual: ${r.quotaUnits} units.`);
-    else notifySuccess('Batch: Statistics обновлена',`${r.updated} каналов • ${r.apiRequests} API requests • actual ${r.quotaUnits} units.`);
+    if(r.failed||r.credentialBlocked)notifyWarning('Статистика обновлена частично',`Обновлено: ${r.updated} • ошибок: ${r.failed} • нет доступа OAuth: ${r.credentialBlocked} • расход: ${r.quotaUnits} единиц квоты.`);
+    else notifySuccess('Статистика обновлена',`${r.updated} каналов • ${r.apiRequests} запросов API • расход: ${r.quotaUnits} единиц квоты.`);
    }else if(action==='metadata'){
     let updated=0,failed=0;
     for(const j of jobs.filter(x=>locked.has(x.channelId)&&Boolean(x.folder)&&x.status!=='UPLOADING'&&x.status!=='SCHEDULED')){
      const c=channels.find(x=>x.id===j.channelId);if(!c||!j.folder)continue;
      try{patchJob(j.id,await api.refreshJob(j.folder,c.minTracks));updated++}catch{failed++}
     }
-    if(failed)notifyWarning('Batch: Metadata обновлена частично',`Проектов обновлено: ${updated} • ошибок: ${failed} • YouTube API: 0.`);
-    else notifySuccess('Batch: Metadata обновлена',`Проектов: ${updated} • YouTube API: 0.`);
+    if(failed)notifyWarning('Метаданные обновлены частично',`Проектов обновлено: ${updated} • ошибок: ${failed} • YouTube API: 0.`);
+    else notifySuccess('Метаданные обновлены',`Проектов: ${updated} • YouTube API: 0.`);
    }else if(action==='queue'){
-    if(!batchReadyJobs.length){notifyWarning('Batch: нечего ставить в очередь','Нужны READY_UPLOAD + final.mp4 + title/description/tags + будущий publishAt + READY OAuth.');return}
+    if(!batchReadyJobs.length){notifyWarning('Нет видео для очереди','Нужны готовое видео, название, описание, теги, будущая дата публикации и подключённый аккаунт.');return}
     configureUploadQueue(settings.youtubeUploadConcurrency||2,settings.youtubeUploadPerChannelConcurrency||1);
     const batchId='batch-control:'+Date.now(),perChannelUsed=new Map<string,number>();let queued=0,blocked=0;
     for(const j of batchReadyJobs.slice(0,Math.max(0,globalRemaining))){
@@ -89,61 +89,61 @@ export function BatchControl(){
         fingerprint:fp.fingerprint,fileSize:fp.size,modifiedAt:fp.modifiedAt,publishAt:j.publishAt,title:j.title,
         description:j.description,tags:[...j.tags],categoryId:settings.youtubeCategoryId||'10',metadataSource:j.metadataSource||'existing',
         quotaProjectKey:project.projectKey||undefined,
-        quotaOperations:[{method:'videos.insert',count:1,label:'Загрузка видео'},{method:'videos.list',count:2,label:'Проверка видео / processing'}],
+        quotaOperations:[{method:'videos.insert',count:1,label:'Загрузка видео'},{method:'videos.list',count:2,label:'Проверка обработки видео'}],
         allowDuplicate:false,submittedAt:new Date().toISOString()
        });
        perChannelUsed.set(c.id,used+1);queued++;
       }catch{blocked++}
     }
-    if(queued)notifySuccess('Batch: добавлено в очередь',`${queued} видео • ${batchChannels.length} выбранных каналов • общий лимит VYRON сохранён.`);
-    if(blocked)notifyWarning('Batch: часть видео не добавлена',`Заблокировано preflight: ${blocked}. Никаких duplicate upload не создано.`);
+    if(queued)notifySuccess('Видео добавлены в очередь',`${queued} видео • ${batchChannels.length} выбранных каналов • общий лимит VYRON сохранён.`);
+    if(blocked)notifyWarning('Часть видео не добавлена',`Не прошли проверку: ${blocked}. Повторные загрузки не созданы.`);
    }
-  }catch(error){notifyError('Batch operation failed',String(error))}
+  }catch(error){notifyError('Массовое действие не выполнено',String(error))}
   finally{setBusy(null)}
   })();
   batchExecutionPromise=task;
   void task.finally(()=>{if(batchExecutionPromise===task)batchExecutionPromise=null});
   return task
  }
- const actionLabel:Record<Action,string>={scan:'Сканировать Render',oauth:'Проверить OAuth',youtube:'Синхронизировать YouTube',stats:'Обновить Statistics',queue:'Добавить в очередь',metadata:'Обновить Metadata'};
+ const actionLabel:Record<Action,string>={scan:'Проверить папки рендера',oauth:'Проверить OAuth',youtube:'Синхронизировать YouTube',stats:'Обновить статистику',queue:'Добавить в очередь',metadata:'Обновить метаданные'};
  const pendingChannels=pending?channels.filter(c=>pending.channelIds.includes(c.id)):[];
  const pendingReadyJobs=pending?readyJobs.filter(j=>pending.channelIds.includes(j.channelId)):[];
  const pendingRenderFolders=pendingChannels.filter(c=>Boolean(c.renderFolderPath)).length;
  const pendingSyncUnits=pendingChannels.reduce((n,c)=>n+ownerSyncEstimate(c.id),0);
  const pendingConnected=pendingChannels.filter(c=>{const p=c.youtubeProfileId?profileById.get(c.youtubeProfileId):undefined;return Boolean(p?.channelId&&c.youtubeChannelId===p.channelId)}).length;
  const pendingProjects=pending?jobs.filter(j=>pending.channelIds.includes(j.channelId)).length:0;
- const pendingQuota=pending?.action==='youtube'?'≈ '+pendingSyncUnits+' general units':pending?.action==='stats'?'≤ '+pendingConnected+' general units':pending?.action==='queue'?'≈ '+(pendingReadyJobs.length*2)+' general + '+pendingReadyJobs.length+' upload calls':'0 YouTube API units';
+ const pendingQuota=pending?.action==='youtube'?'≈ '+pendingSyncUnits+' ед. квоты':pending?.action==='stats'?'≤ '+pendingConnected+' ед. квоты':pending?.action==='queue'?'≈ '+(pendingReadyJobs.length*2)+' ед. квоты + '+pendingReadyJobs.length+' загрузок':'0 ед. квоты YouTube API';
  const request=(action:Action)=>{if(!busy&&selected.length)setPending({action,channelIds:[...selected]})};
  if(!channels.length)return null;
  return <section className="batchControl">
-  <div className="batchControlHead"><div><small>BATCH CONTROL</small><h3>Массовые действия</h3><p>Выберите каналы. Перед сетевыми действиями видна оценка quota; локальные операции стоят 0 API.</p></div><button onClick={()=>setExpanded(x=>!x)}>{expanded?'Скрыть':'Открыть'}</button></div>
-  {expanded&&<>
+  <div className="batchControlHead"><div><h2>Массовые действия</h2><p>Оценка расхода квоты появится перед запуском.</p></div><button aria-expanded={expanded} aria-controls={expanded?'batch-controls':undefined} onClick={()=>setExpanded(x=>!x)}>{expanded?'Скрыть':'Открыть'}</button></div>
+  {expanded&&<div id="batch-controls">
    <div className="batchPreview">
     <span><small>Выбрано</small><b>{selectedChannels.length}</b></span>
-    <span><small>Render folders</small><b>{renderFolders} / {selectedChannels.length}</b></span>
-    <span><small>READY для queue</small><b>{readyJobs.length}</b></span>
-    <span><small>Sync YouTube</small><b>≈ {syncUnits} units</b></span>
-    <span><small>Statistics</small><b>≤ {statsMaxUnits} units</b></span>
-    <span><small>Queue verify</small><b>≈ {queueGeneralUnits} general + {readyJobs.length} uploads</b></span>
+    <span><small>Папки рендера</small><b>{renderFolders} / {selectedChannels.length}</b></span>
+    <span><small>Готово к загрузке</small><b>{readyJobs.length}</b></span>
+    <span><small>Синхронизация YouTube</small><b>≈ {syncUnits} ед.</b></span>
+    <span><small>Статистика</small><b>≤ {statsMaxUnits} ед.</b></span>
+    <span><small>Проверка очереди</small><b>≈ {queueGeneralUnits} ед. + {readyJobs.length} загрузок</b></span>
    </div>
    <div className="batchChannelPicker"><button className="batchAll" onClick={selectAll}>{selected.length===channels.length?'Снять все':'Выбрать все'}</button>{channels.map(c=><label key={c.id} className={selected.includes(c.id)?'selected':''}><input type="checkbox" checked={selected.includes(c.id)} onChange={()=>toggle(c.id)}/><span>{c.name}</span></label>)}</div>
    <div className="batchActions">
-    <button disabled={!selected.length||Boolean(busy)} onClick={()=>request('scan')}>{busy==='scan'?'Сканирую…':'Сканировать Render · 0 API'}</button>
+    <button disabled={!selected.length||Boolean(busy)} onClick={()=>request('scan')}>{busy==='scan'?'Сканирую…':'Проверить рендер · 0 API'}</button>
     <button disabled={!selected.length||Boolean(busy)} onClick={()=>request('oauth')}>{busy==='oauth'?'Проверяю…':'Проверить OAuth · 0 API'}</button>
     <button disabled={!selected.length||Boolean(busy)} onClick={()=>request('youtube')}>{busy==='youtube'?'Синхронизирую…':'Синхронизировать YouTube'}</button>
-    <button disabled={!selected.length||Boolean(busy)} onClick={()=>request('stats')}>{busy==='stats'?'Обновляю…':'Обновить Statistics'}</button>
-    <button disabled={!selected.length||Boolean(busy)} onClick={()=>request('metadata')}>{busy==='metadata'?'Обновляю…':'Обновить Metadata · 0 API'}</button>
+    <button disabled={!selected.length||Boolean(busy)} onClick={()=>request('stats')}>{busy==='stats'?'Обновляю…':'Обновить статистику'}</button>
+    <button disabled={!selected.length||Boolean(busy)} onClick={()=>request('metadata')}>{busy==='metadata'?'Обновляю…':'Обновить метаданные · 0 API'}</button>
     <button className="primary" disabled={!selected.length||!readyJobs.length||Boolean(busy)||globalRemaining<=0} onClick={()=>request('queue')}>{busy==='queue'?'Ставлю…':`Добавить в очередь · ${Math.min(readyJobs.length,globalRemaining)}`}</button>
    </div>
-  </>}
+  </div>}
   {pending&&<ModalPortal onClose={()=>setPending(null)}><section className="confirmModal batchPreviewModal" onMouseDown={e=>e.stopPropagation()}>
-    <small>BATCH PREVIEW</small><h2>{actionLabel[pending.action]}</h2>
+    <small>ПРОВЕРКА ДЕЙСТВИЯ</small><h2>{actionLabel[pending.action]}</h2>
     <p>Набор каналов зафиксирован. Отмена не запускает ни одной операции.</p>
     <div className="settingsInfoGrid">
       <span><small>Будет обработано</small><b>{pendingChannels.length} каналов</b></span>
       <span><small>Видео / задачи</small><b>{pending.action==='queue'?pendingReadyJobs.length:pendingProjects}</b></span>
       <span><small>YouTube API</small><b>{pendingQuota}</b></span>
-      <span><small>Local folders</small><b>{pendingRenderFolders}</b></span>
+      <span><small>Локальных папок</small><b>{pendingRenderFolders}</b></span>
     </div>
     <details><summary>Каналы ({pendingChannels.length})</summary><div className="logs">{pendingChannels.map(c=><div key={c.id}><b>{c.name}</b><small>{c.id}</small></div>)}</div></details>
     <footer><button onClick={()=>setPending(null)}>Отмена</button><button className="primary" onClick={()=>{const x=pending;setPending(null);void run(x.action,x.channelIds)}}>Запустить</button></footer>

@@ -10,7 +10,7 @@ describe('VYRON 5 Batch Control safety contract',()=>{
   expect(source).toContain("channels.filter(c=>locked.has(c.id))");
  });
  it('requires preview confirmation and cancel has zero execution path',()=>{
-  expect(source).toContain('BATCH PREVIEW');
+  expect(source).toContain('ПРОВЕРКА ДЕЙСТВИЯ');
   expect(source).toContain("onClick={()=>setPending(null)}>Отмена");
   expect(source).toContain("void run(x.action,x.channelIds)");
   expect(source).not.toContain("onClick={()=>void run('scan')}");
@@ -20,5 +20,10 @@ describe('VYRON 5 Batch Control safety contract',()=>{
   expect(source).toContain('let batchExecutionPromise:Promise<void>|null=null');
   expect(source).toContain('if(batchExecutionPromise)return batchExecutionPromise');
   expect(source).toContain('batchExecutionPromise=task');
+ });
+ it('labels the expandable controls and keeps the quota estimate explicit',()=>{
+  expect(source).toContain('aria-expanded={expanded}');
+  expect(source).toContain('Оценка расхода квоты появится перед запуском');
+  expect(source).toContain('ед. квоты + ');
  });
 });
