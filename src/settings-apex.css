@@ -1,0 +1,13 @@
+.settingsApex{--settings-surface:#1b1a22;--settings-border:#3b3948;--settings-muted:#c1becd;display:grid;gap:22px;color:#f2f0fa}
+.settingsApexHeader small,.settingsApexContentHead small{font-size:11px;font-weight:650;letter-spacing:.12em;color:#c1aeff}
+.settingsApexHeader h1{font-size:30px;line-height:1.2;margin:7px 0}.settingsApexHeader p{margin:0;color:var(--settings-muted)}
+.settingsApexLayout{display:grid;grid-template-columns:220px minmax(0,1fr);align-items:start;gap:24px}
+.settingsApexNav{display:grid;gap:22px;min-width:0;padding:16px 10px;border:1px solid var(--settings-border);border-radius:14px;background:var(--settings-surface)}
+.settingsApexNav section{display:grid;gap:3px}.settingsApexNav h2{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--settings-muted);margin:0 10px 7px}
+.settingsApexNav button{border:0!important;border-radius:8px;text-align:left;padding:10px 12px;min-height:40px;color:#ddd9eb;background:transparent;font-size:14px}
+.settingsApexNav button:hover{background:#302c3c}.settingsApexNav button.active{background:#403458;color:#f6f2ff;font-weight:650}
+.settingsApexContent{min-width:0;display:grid;gap:16px}.settingsApexContentHead{padding:1px 2px}.settingsApexContentHead h2{margin:5px 0 0;font-size:22px}
+.settingsApexContent .settingsStack{gap:12px}.settingsApexContent .settingsCard{background:var(--settings-surface)!important;border-color:var(--settings-border)!important;border-radius:14px!important;padding:20px!important}
+.settingsApexContent .settingsCard>small{color:#bca8f6}.settingsApexContent .settingsCard h3{font-size:17px;margin:7px 0}.settingsApexContent .settingsCard p{color:var(--settings-muted);line-height:1.55}
+.settingsApexContent .toggleRow{min-height:52px}.settingsApex :is(button,input,select,summary):focus-visible{outline:2px solid #c7b8ff;outline-offset:2px}
+@media(max-width:1000px){.settingsApexLayout{grid-template-columns:1fr;gap:14px}.settingsApexNav{display:flex;overflow:auto;gap:14px}.settingsApexNav section{min-width:150px}}
