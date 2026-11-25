@@ -1406,6 +1406,33 @@ fn select_even_candidates(mut candidates: Vec<(u64, u64, usize)>, count: usize) 
     candidates.into_iter().map(|x| x.2).collect()
 }
 
+// Candidates used more often than the count-th lowest usage cannot be selected,
+// regardless of the hash-based tie break. Avoid hashing those tracks while
+// retaining every candidate on the boundary and the original stable tie order.
+fn select_even_tracks<F>(
+    tracks: &[TrackIndex],
+    history: &MusicHistory,
+    planned: &HashMap<String, u64>,
+    count: usize,
+    mut tie_break: F,
+) -> Vec<usize>
+where F: FnMut(&str) -> u64 {
+    if count == 0 || tracks.is_empty() { return Vec::new(); }
+    let mut usage = tracks.iter().enumerate().map(|(i, track)| {
+        let used = history.tracks.get(&track.track_id).map(|x| x.times_used).unwrap_or(0)
+            + planned.get(&track.track_id).copied().unwrap_or(0);
+        (used, i)
+    }).collect::<Vec<_>>();
+    let threshold = if count < usage.len() {
+        usage.select_nth_unstable_by_key(count - 1, |x| x.0).1.0
+    } else {
+        u64::MAX
+    };
+    let candidates = usage.into_iter().filter(|(used, _)| *used <= threshold)
+        .map(|(used, i)| (used, tie_break(&tracks[i].track_id), i)).collect();
+    select_even_candidates(candidates, count)
+}
+
 fn choose_sequence(
     mode: &str,
     tracks: &[TrackIndex],
@@ -1430,15 +1457,8 @@ fn choose_sequence(
         let mut picked = Vec::new();
         match mode {
             "even" => {
-                let s = (0..tracks.len())
-                    .map(|i| {
-                        let id = &tracks[i].track_id;
-                        let used = history.tracks.get(id).map(|x| x.times_used).unwrap_or(0)
-                            + planned.get(id).copied().unwrap_or(0);
-                        (used, seed64(&format!("{salt}:{id}")), i)
-                    })
-                    .collect::<Vec<_>>();
-                picked = select_even_candidates(s, count);
+                picked = select_even_tracks(tracks, history, planned, count,
+                    |id| seed64(&format!("{salt}:{id}")));
             }
             "alphabetical" => {
                 let mut local = HashSet::new();

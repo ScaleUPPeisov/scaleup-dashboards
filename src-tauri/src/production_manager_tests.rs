@@ -1025,6 +1025,43 @@ fn even_candidate_selection_matches_full_stable_sort_with_ties() {
 }
 
 #[test]
+fn even_track_selection_skips_uncompetitive_hashes_without_changing_order() {
+    for size in [0usize, 1, 2, 13, 100, 1000] {
+        let tracks = (0..size).map(|i| TrackIndex {
+            track_id: format!("track-{}", i % 73), ..Default::default()
+        }).collect::<Vec<_>>();
+        for distribution in 0..4 {
+            let mut history = MusicHistory::default();
+            let mut planned = HashMap::new();
+            for (i, track) in tracks.iter().enumerate() {
+                let used = if distribution == 0 { 0 } else { ((i * 17 + distribution) % 11) as u64 };
+                history.tracks.insert(track.track_id.clone(), TrackUsage { times_used: used, ..Default::default() });
+                planned.insert(track.track_id.clone(), ((i * 7 + distribution) % 3) as u64);
+            }
+            for count in [0, 1, 5, 10, size, size + 1] {
+                let salt = format!("batch:{size}:{distribution}");
+                let mut expected = tracks.iter().enumerate().map(|(i, track)| {
+                    let used = history.tracks[&track.track_id].times_used + planned[&track.track_id];
+                    (used, seed64(&format!("{salt}:{}", track.track_id)), i)
+                }).collect::<Vec<_>>();
+                expected.sort_by_key(|row| (row.0, row.1));
+                let expected = expected.into_iter().take(count).map(|row| row.2).collect::<Vec<_>>();
+                let mut calls = 0;
+                let actual = select_even_tracks(&tracks, &history, &planned, count, |id| {
+                    calls += 1;
+                    seed64(&format!("{salt}:{id}"))
+                });
+                assert_eq!(actual, expected, "size={size}, distribution={distribution}, count={count}");
+                if count == 0 { assert_eq!(calls, 0); }
+                if size == 1000 && distribution > 0 && count == 10 {
+                    assert!(calls < size / 2, "uncompetitive tracks should not be hashed: {calls}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn project_ready_file_check_accepts_only_nonempty_regular_files() {
     let root = std::env::temp_dir().join(format!("vyron-ready-file-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).unwrap();
