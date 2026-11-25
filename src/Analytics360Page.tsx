@@ -13,6 +13,7 @@ import {Analytics360Fleet,type FleetReport} from './Analytics360Fleet';
 import {Analytics360Winners} from './Analytics360Winners';
 import {loadActivePublishChannel,saveActivePublishChannel,subscribeActivePublishChannel} from './publishWorkspaceState';
 import './Analytics360.css';
+import './analytics360-apex.css';
 
 type Tab='overview'|'content'|'audience'|'trends'|'winners';
 type Period='7'|'28'|'90'|'365'|'all'|'custom';
@@ -55,8 +56,9 @@ function patchDeepSync(next:Partial<DeepSyncSnapshot>){
  for(const observer of deepSyncObservers)observer({...deepSyncSnapshot});
 }
 const periodLabels:Record<Period,string>={'7':'7 дней','28':'28 дней','90':'90 дней','365':'365 дней',all:'Всё время',custom:'Свои даты'};
-const tabLabels:Record<Tab,string>={overview:'Обзор',content:'Контент',audience:'Аудитория',trends:'Тренды и выводы',winners:'Winner Engine'};
+const tabLabels:Record<Tab,string>={overview:'Обзор',content:'Контент',audience:'Аудитория',trends:'Динамика',winners:'Лучшие видео'};
 const absent='Недоступно';
+const privacyLabels:Record<string,string>={public:'Открытое',private:'Закрытое',unlisted:'По ссылке'};
 const num=(v:unknown,digits=0):string=>{
  if(v===null||v===undefined||v==='')return '—';
  const n=Number(v);return Number.isFinite(n)?n.toLocaleString('ru-RU',{maximumFractionDigits:digits}):'—';
@@ -80,7 +82,8 @@ function safeSum(items:Day[],key:keyof Day):number|null{
 }
 function deltaFor(finding:Finding|undefined){return finding?.changePercent==null?'Нет сравнимого периода':signed(finding.changePercent)+'% к прошлому периоду'}
 function Availability({status='NOT_PROVIDED_BY_API',message}:{status?:string;message:string}){
- return <div className="a360-unavailable"><span>{status.replaceAll('_',' ')}</span><p>{message}</p></div>;
+ const label:Record<string,string>={NOT_PROVIDED_BY_API:'Нет данных API',NOT_YET_COLLECTED:'Данные ещё не собраны',INSUFFICIENT_DATA:'Недостаточно данных',PARTIAL:'Доступно частично'};
+ return <div className="a360-unavailable" data-status={status}><span>{label[status]||'Нет подтверждённых данных'}</span><p>{message}</p></div>;
 }
 function Graph({days,publications={},metric='views',title}:{days:Day[];publications?:Record<string,number>;metric?:'views'|'watchMinutes'|'subscribers';title:string}){
  // Null is a missing measurement, never an implied zero. Break lines across missing dates.
@@ -370,30 +373,28 @@ export function Analytics360Page(){
  const coverage=ov?.coverage||{};
  // Never convert an API omission into a zero or a fake Studio metric.
  if(!isMac)return <AnalyticsPage/>;
- return <div className="a360">
-  <header className="pageHeader a360-head"><div><small>YOUTUBE ANALYTICS · VYRON MAC</small><h1>Analytics 360°</h1>
-   <p>Настоящие метрики всех каналов, раздельная история каждого видео, никаких выдуманных CTR или первых 48 часов.</p></div>
-   <div className="headerActions"><button disabled={refreshing||!active?.youtubeProfileId} onClick={()=>void quickRefresh()}>{refreshing?'Обновляю…':'↻ Быстрая статистика'}</button>
-    <button disabled={syncing||!eligible} onClick={()=>void syncDeep(false)}>Собрать выбранный канал</button>
-    <button className="primary" disabled={syncing||!connectedSyncChoices.length} onClick={()=>void syncDeep(true)}>{syncing?'Синхронизация…':'Собрать всю историю каналов · '+connectedSyncChoices.length}</button>
+ return <div className="a360 a360-apex">
+  <header className="a360-apex-head"><div><small>YOUTUBE · АНАЛИТИКА</small><h1>Аналитика 360°</h1>
+   <p>Результаты каналов и видео за выбранный период</p></div>
+   <div className="headerActions"><button disabled={refreshing||!active?.youtubeProfileId} onClick={()=>void quickRefresh()}>{refreshing?'Обновление…':'Быстро обновить'}</button>
+    <button className="primary" disabled={syncing||!eligible} onClick={()=>void syncDeep(false)}>{syncing?'Синхронизация…':'Собрать историю канала'}</button>
    </div></header>
-  <FleetSubscriber channels={channels} profiles={profiles}
-   reports={fleetReports} loading={fleetLoading} activeId={active?.id} onChoose={choose}
-   onRefresh={refreshFleet}/>
-  <AiAnalyticsExport channels={channels} profiles={profiles}/>
   <YouTubeChannelBar/>
   <div className="a360-sync"><div><strong>{active?.name||'Канал не выбран'}</strong>
-   <span>Channel ID: {active?.youtubeChannelId||'Не привязан'} · OAuth: {eligible?'профиль совпадает':'нужна проверка'} · Архив: {ov?displayTime(ov.updatedAt):'не собран'}</span>
-   {ov&&<span>История: {ov.summary.createdAt?displayDate(ov.summary.createdAt):'—'} → {ov.summary?.createdAt?'доступные даты API':'—'} · Видео: {channelsShown} · Данные: {String(coverage.daily||'NOT_YET_COLLECTED')}</span>}
-  </div><div className="a360-inline"><label><input type="checkbox" checked={includeRetention} onChange={e=>setIncludeRetention(e.target.checked)} disabled={syncing}/> Кривые удержания</label><label><input type="checkbox" checked={includeReporting} onChange={e=>setIncludeReporting(e.target.checked)} disabled={syncing}/> Отчёты показов / CTR (Reporting API)</label></div></div>
+   <span>{eligible?'Канал подключён':'Проверьте подключение канала'} · {ov?'Обновлено '+displayTime(ov.updatedAt):'История ещё не собрана'}</span>
+  </div><details className="a360-sync-options"><summary>Настройки сбора</summary><div className="a360-inline"><label><input type="checkbox" checked={includeRetention} onChange={e=>setIncludeRetention(e.target.checked)} disabled={syncing}/> Кривые удержания</label><label><input type="checkbox" checked={includeReporting} onChange={e=>setIncludeReporting(e.target.checked)} disabled={syncing}/> Отчёты показов и CTR</label><button disabled={syncing||!connectedSyncChoices.length} onClick={()=>void syncDeep(true)}>{syncing?'Синхронизация…':'Собрать историю всех каналов · '+connectedSyncChoices.length}</button><small>Канал: {active?.youtubeChannelId||'не привязан'} · Видео: {ov?channelsShown:'—'} · Покрытие: {String(coverage.daily||'NOT_YET_COLLECTED')}</small></div></details></div>
+  <details className="a360-apex-aux"><summary><span>Сводка по каналам</span><small>Состояние и локальная аналитика</small></summary><FleetSubscriber channels={channels} profiles={profiles}
+   reports={fleetReports} loading={fleetLoading} activeId={active?.id} onChoose={choose}
+   onRefresh={refreshFleet}/></details>
+  <details className="a360-apex-aux"><summary><span>Экспорт аналитики</span><small>Подготовить данные для анализа</small></summary><AiAnalyticsExport channels={channels} profiles={profiles}/></details>
   {syncing&&<div className="a360-progress" role="status"><div className="a360-spinner"/><span>{progress?progress.name+' · '+progress.stage+' · '+progress.detail+' · '+progress.completed+'/'+progress.total:'Подготовка безопасной синхронизации…'}</span></div>}
   {!syncing&&syncSummary&&<p role="status">{syncSummary}</p>}
   <div className="a360-toolbar"><nav className="a360-tabs" aria-label="Разделы аналитики">{(Object.keys(tabLabels) as Tab[]).map(t=><button key={t} aria-current={tab===t?'page':undefined} className={tab===t?'active':''} onClick={()=>{setTab(t);setVideoId(null)}}>{tabLabels[t]}</button>)}</nav>
-   <div className="a360-periods">{(Object.keys(periodLabels) as Period[]).map(p=><button key={p} className={p===period?'active':''} onClick={()=>{setPeriod(p);setVideoPage(0)}}>{periodLabels[p]}</button>)}</div></div>
+   <div className="a360-periods" aria-label="Период аналитики">{(Object.keys(periodLabels) as Period[]).map(p=><button key={p} className={p===period?'active':''} aria-pressed={p===period} onClick={()=>{setPeriod(p);setVideoPage(0)}}>{periodLabels[p]}</button>)}</div></div>
   {period==='custom'&&<div className="a360-inline"><label>С <input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)}/></label><label>По <input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)}/></label></div>}
   {error&&<div role="alert" className="errorBox">{error}</div>}
   {loading&&<p className="a360-wait">Загрузка сохранённой статистики выбранного канала…</p>}
-  {!loading&&snapshot?.status==='NOT_YET_COLLECTED'&&<div className="panel a360-note"><b>Полная история пока не синхронизирована</b><p>Нажмите «Собрать всю историю канала». Данные сохранятся локально в отдельных файлах; OAuth не будет сброшен. Быстрая аналитика в VYRON останется доступной.</p></div>}
+  {!loading&&snapshot?.status==='NOT_YET_COLLECTED'&&<div className="panel a360-note"><b>История пока не собрана</b><p>Соберите историю выбранного канала, чтобы увидеть подробную аналитику.</p></div>}
   {tab==='winners'&&<Analytics360Winners channels={channels} onOpenVideo={(channelId,chosenVideoId)=>{
     const next=channels.find(c=>c.youtubeChannelId===channelId);
     if(!next)return;
@@ -415,7 +416,7 @@ export function Analytics360Page(){
    <div className="a360-grid two"><Graph days={daily} metric="watchMinutes" title="Время просмотра, минуты" publications={featured}/><Graph days={daily} metric="subscribers" title="Чистый прирост подписчиков" publications={featured}/></div>
    <section className="panel a360-panel"><h3>Самые популярные видео</h3>
     <p>Публичные накопленные просмотры, не просмотры выбранного периода. Для точного ранжирования по периоду нужны дневные данные каждого видео.</p>
-    {snapshot?.videos?.length?<div className="a360-video-grid">{[...snapshot.videos].sort((a,b)=>Number(b.viewsPublic||0)-Number(a.viewsPublic||0)).slice(0,6).map(v=><button key={v.videoId} className="a360-video-card" onClick={()=>{setTab('content');setVideoId(v.videoId)}}>{v.thumbnail?<img src={v.thumbnail} loading="lazy"/>:<span/>}<strong>{v.title||v.videoId}</strong><small>{num(parseN(v.viewsPublic))} просмотров · {displayDate(v.publishedAt)}</small></button>)}</div>:
+    {snapshot?.videos?.length?<div className="a360-video-grid">{[...snapshot.videos].sort((a,b)=>Number(b.viewsPublic||0)-Number(a.viewsPublic||0)).slice(0,6).map(v=><button key={v.videoId} className="a360-video-card" onClick={()=>{setTab('content');setVideoId(v.videoId)}}>{v.thumbnail?<img src={v.thumbnail} alt="" loading="lazy"/>:<span/>}<strong>{v.title||v.videoId}</strong><small>{num(parseN(v.viewsPublic))} просмотров · {displayDate(v.publishedAt)}</small></button>)}</div>:
      <Availability status="NOT_YET_COLLECTED" message="Список роликов станет доступен после глубокой синхронизации."/>}
    </section>
    <div className="a360-grid two"><BreakdownCard title="Источники трафика" values={ov?.traffic?.map(t=>({key:t.sourceType,views:t.views,watchMinutes:t.watchMinutes}))||fallback?.trafficSources||[]}/>
@@ -434,9 +435,9 @@ export function Analytics360Page(){
     <select aria-label="Сортировка видео" value={videoSort} onChange={e=>{setVideoSort(e.target.value);setVideoPage(0)}}><option value="recent">Новые сначала</option><option value="views">Популярные сначала</option></select>
    </div></div>
    <div className="a360-table-wrap"><table><thead><tr><th>Видео</th><th>Опубликовано</th><th>Длительность</th><th>Просмотры всего</th><th>Статус</th></tr></thead><tbody>
-    {(snapshot?.videos||[]).map(v=><tr key={v.videoId} onClick={()=>setVideoId(v.videoId)} tabIndex={0} onKeyDown={e=>{if(e.key==='Enter')setVideoId(v.videoId)}}>
-     <td><div className="a360-video-name">{v.thumbnail?<img src={v.thumbnail} loading="lazy"/>:<span/>}<strong>{v.title||v.videoId}</strong></div></td>
-     <td>{displayDate(v.publishedAt)}</td><td>{duration(v.durationSeconds)}</td><td>{num(parseN(v.viewsPublic))}</td><td>{v.inventoryObservedNow===false?'Нет в последней инвентаризации':(v.privacyStatus||'—')}</td>
+    {(snapshot?.videos||[]).map(v=><tr key={v.videoId} onClick={()=>setVideoId(v.videoId)} tabIndex={0} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();setVideoId(v.videoId)}}}>
+     <td><div className="a360-video-name">{v.thumbnail?<img src={v.thumbnail} alt="" loading="lazy"/>:<span/>}<strong>{v.title||v.videoId}</strong></div></td>
+     <td>{displayDate(v.publishedAt)}</td><td>{duration(v.durationSeconds)}</td><td>{num(parseN(v.viewsPublic))}</td><td>{v.inventoryObservedNow===false?'Нет в последней инвентаризации':(v.privacyStatus?(privacyLabels[v.privacyStatus]||v.privacyStatus):'—')}</td>
     </tr>)}
    </tbody></table>{!snapshot?.videos?.length&&<Availability status="NOT_YET_COLLECTED" message="В этом фильтре нет подтверждённых видео. Shorts без доказательного признака не назначаются автоматически."/>}</div>
    <div className="a360-pagination"><span>Роликов: {snapshot?.filteredVideoCount??0} · Страница {videoPage+1}</span>
@@ -466,7 +467,7 @@ export function Analytics360Page(){
    <div className="a360-grid two">{[7,28].map(window=><section key={window} className="panel a360-panel"><h3>Изменения за {window} дней</h3>
     {observations.find(x=>x.windowDays===window)?(()=>{
      const f=observations.find(x=>x.windowDays===window)!;
-     return <><div className="a360-trend-number">{signed(f.changePercent)}%</div><p>Текущий период: {num(f.currentViews)} · прошлый: {num(f.previousViews)} просмотров. Последняя дата: {f.periodEnd}</p>
+     return <><div className="a360-trend-number">{f.changePercent==null?'—':signed(f.changePercent)+'%'}</div><p>Текущий период: {num(f.currentViews)} · прошлый: {num(f.previousViews)} просмотров. Последняя дата: {f.periodEnd}</p>
        <small>{f.note||'Динамика подтверждена, причина не установлена.'}</small></>;
     })():<Availability status="INSUFFICIENT_DATA" message="Требуются два сопоставимых периода без пропусков в исходных данных."/>}
    </section>)}</div>

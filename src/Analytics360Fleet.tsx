@@ -100,8 +100,8 @@ export function Analytics360Fleet({channels,profiles,jobs,uploads,reports,loadin
  const affected=rows.filter(r=>r.oauth==='NOT_LINKED'||badOAuth.has(r.oauth)).length;
  return <section className="panel a360-fleet">
   <div className="a360-row-head">
-   <div><h3>Fleet Command Center · {channels.length} каналов</h3>
-    <small>Локальное состояние VYRON и последний опубликованный снимок Analytics 360. Никаких новых запросов к Google при открытии таблицы.</small>
+   <div><h3>Состояние каналов · {channels.length}</h3>
+    <small>Локальные задачи и последние сохранённые данные аналитики</small>
    </div>
    <button onClick={onRefresh} disabled={loading} title="Прочитать сохранённую аналитику с диска, без Google API">
     {loading?'Читаю снимки…':'Обновить локальную сводку'}
