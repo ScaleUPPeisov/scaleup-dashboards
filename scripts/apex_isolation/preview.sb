@@ -1,4 +1,5 @@
 ; Offline feasibility profile. Never an authorization to launch APEX.
+; Inherited writable descriptors can bypass these path-based restrictions.
 (version 1)
 (allow default)
 (deny file-write*)

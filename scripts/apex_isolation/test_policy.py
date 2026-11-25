@@ -34,6 +34,15 @@ class PolicyTests(unittest.TestCase):
         self.private.chmod(0o755)
         with self.assertRaises(PolicyError): prepare(self.private, [self.media])
 
+    def test_case_aliases_cannot_hide_overlapping_roots(self):
+        named = self.base / 'MixedCase'; named.mkdir(mode=0o700)
+        inside = named / 'inside'; inside.mkdir(mode=0o700)
+        alias = self.base / 'mIXEDcASE'
+        if not alias.exists(): self.skipTest('filesystem distinguishes case')
+        with self.assertRaises(PolicyError): prepare(named, [alias])
+        with self.assertRaises(PolicyError): prepare(named, [alias / 'inside'])
+        with self.assertRaises(PolicyError): prepare(inside, [alias])
+
     @unittest.skipUnless(sys.platform == 'darwin', 'requires macOS Seatbelt')
     def test_os_blocks_external_writes_and_descendant_network(self):
         code = r'''import errno,json,os,pathlib,socket,subprocess,sys
@@ -41,9 +50,19 @@ root=pathlib.Path(sys.argv[1]); media=pathlib.Path(sys.argv[2]); result={}
 (root/'ok').write_text('ok'); result['inside_write']=True
 try: (media/'sentinel').write_text('changed'); result['outside_denied']=False
 except OSError as e: result['outside_denied']=e.errno in (errno.EPERM, errno.EACCES)
+try: (media/'sentinel').unlink(); result['unlink_denied']=False
+except OSError as e: result['unlink_denied']=e.errno in (errno.EPERM, errno.EACCES)
+try: (media/'sentinel').rename(media/'renamed'); result['rename_denied']=False
+except OSError as e: result['rename_denied']=e.errno in (errno.EPERM, errno.EACCES)
+(root/'media-link').symlink_to(media/'sentinel')
+try: (root/'media-link').write_text('changed'); result['symlink_escape_denied']=False
+except OSError as e: result['symlink_escape_denied']=e.errno in (errno.EPERM, errno.EACCES)
 child="import errno,socket,sys\ns=socket.socket()\ntry: s.connect(('127.0.0.1',1))\nexcept OSError as e: sys.exit(0 if e.errno in (errno.EPERM,errno.EACCES) else 2)\nsys.exit(3)"
 p=subprocess.run([sys.executable,'-I','-c',child],capture_output=True)
 result['child_network_denied']=p.returncode==0
+write_child="import errno,pathlib,sys\ntry: pathlib.Path(sys.argv[1]).write_text('changed')\nexcept OSError as e: sys.exit(0 if e.errno in (errno.EPERM,errno.EACCES) else 2)\nsys.exit(3)"
+p=subprocess.run([sys.executable,'-I','-c',write_child,str(media/'sentinel')],capture_output=True)
+result['child_write_denied']=p.returncode==0
 print(json.dumps(result)); sys.exit(0 if all(result.values()) else 1)
 '''
         command = ['/usr/bin/sandbox-exec', '-f', str(PROFILE), *prepare(self.private, [self.media]), '/usr/bin/python3', '-I', '-c', code, str(self.private), str(self.media)]
@@ -51,6 +70,30 @@ print(json.dumps(result)); sys.exit(0 if all(result.values()) else 1)
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
         self.assertTrue(all(json.loads(result.stdout).values()))
         self.assertEqual((self.media / 'sentinel').read_text(), 'original')
+
+    @unittest.skipUnless(sys.platform == 'darwin', 'requires macOS Seatbelt')
+    def test_fixture_launcher_closes_inherited_writable_descriptors(self):
+        # An already-open descriptor can bypass Seatbelt path checks. This
+        # probe checks the spawn discipline for a synthetic child only; it
+        # does not authorize APEX or establish WebKit/XPC isolation.
+        sentinel = self.media / 'sentinel'
+        fd = os.open(sentinel, os.O_WRONLY)
+        try:
+            st = os.fstat(fd)
+            child = r'''import errno,os,sys
+fd,dev,ino=map(int,sys.argv[1:])
+try:
+    info=os.fstat(fd)
+except OSError as e:
+    sys.exit(0 if e.errno==errno.EBADF else 2)
+sys.exit(1 if (info.st_dev,info.st_ino)==(dev,ino) else 0)
+'''
+            command = ['/usr/bin/sandbox-exec', '-f', str(PROFILE), *prepare(self.private, [self.media]), '/usr/bin/python3', '-I', '-c', child, str(fd), str(st.st_dev), str(st.st_ino)]
+            result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, close_fds=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(sentinel.read_text(), 'original')
+        finally:
+            os.close(fd)
 
 
 if __name__ == '__main__':
