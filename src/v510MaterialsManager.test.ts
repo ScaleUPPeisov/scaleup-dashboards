@@ -38,10 +38,10 @@ describe('VYRON 6.0.1 Materials Manager contract',()=>{
     expect(materialsRust).toContain('pub channel_id: String');
     expect(materialsRust).toContain('pub sha256: String');
     expect(materialsRust).toContain('hash_file(&src)');
-    expect(materialsRust).toContain('x.channel_id == channel_id && x.sha256 == sha');
     expect(materialsRust).toContain('BLOCK: imageAsset.channelId != project.channelId');
     expect(materialsRust).toContain('same_bytes_are_isolated_between_channels');
     expect(materialsRust).toContain('duplicate_import_is_idempotent_per_channel');
+    expect(materialsRust).toContain('duplicate_images_within_one_import_are_not_copied_twice');
   });
 
   it('uses AVAILABLE -> ASSIGNED -> USED and creates only project copies',()=>{
