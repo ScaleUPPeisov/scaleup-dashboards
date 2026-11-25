@@ -22,7 +22,7 @@ describe('VYRON 6.0.2 Materials freeze regression gates',()=>{
 
   it('paints shell before starting Materials filesystem IPC',()=>{
     expect(materials).toContain('requestAnimationFrame(()=>{second=requestAnimationFrame');
-    expect(materials).toContain('Данные читаются в фоне');
+    expect(materials).toContain("loadingRows?'Обновление данных");
   });
 
   it('keeps heavy filesystem work off the UI-sensitive command path',()=>{

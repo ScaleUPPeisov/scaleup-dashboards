@@ -6,6 +6,7 @@ import {useApp} from './store';
 import {notifyError,notifySuccess} from './notificationCenter';
 import {renderChannelFolderPath} from './renderFolderSelection';
 import {clearDeletedProjectWorkspaces} from './globalProjectCleanupState';
+import './materials-apex.css';
 
 function n(value:number|undefined){return (value||0).toLocaleString('ru-RU')}
 function gb(value:number|undefined){return ((value||0)/1024/1024/1024).toFixed(2)}
@@ -32,6 +33,7 @@ export function MaterialsManager(){
   const [loadingRows,setLoadingRows]=useState(true);
   const refreshGeneration=useRef(0);
   const workspace=settings.workspace||'';
+  const sortedChannels=useMemo(()=>channels.slice().sort((a,b)=>a.name.localeCompare(b.name,'ru')),[channels]);
   const channelIdsKey=useMemo(()=>channels.map(x=>x.id).sort().join('|'),[channels]);
   const jobCountersByChannel=useMemo(()=>{
     const out:Record<string,{waiting:number;ready:number}>={};
@@ -283,40 +285,31 @@ export function MaterialsManager(){
     finally{setBusy('')}
   }
 
-  if(!channels.length)return <section className="panel"><b>Нет каналов</b><p>Подключите YouTube-каналы, затем Materials будет вести отдельную библиотеку для каждого channelId.</p></section>;
+  if(!channels.length)return <section className="panel"><b>Нет каналов</b><p>Подключите каналы, чтобы работать с их материалами.</p></section>;
 
-  return <div className="materialsManager">
-    <section className="panel materialsHero">
-      <div><small>PRODUCTION → MATERIALS</small><h2>Материалы по каналам</h2><p>Изображения привязываются к channelId вручную при импорте. Имя файла не используется для определения канала.</p></div>
-      <div className="pmActions"><button className="primary" disabled={!!busy} onClick={openManualAssembly}>+ РУЧНАЯ СБОРКА</button><button disabled={!!busy} onClick={()=>void refresh()}>↻ ОБНОВИТЬ</button></div>
+  return <div className="materialsManager materialsApex">
+    <section className="materialsApexHero">
+      <div><small>ПРОИЗВОДСТВО</small><h2>Материалы</h2><p>Изображения и музыка для каждого канала</p></div>
+      <div className="pmActions"><button className="primary" disabled={!!busy} onClick={openManualAssembly}>Ручная сборка</button><button disabled={!!busy} onClick={()=>void refresh()}>Обновить</button></div>
     </section>
 
-    <section className="panel materialsTablePanel">
-      <div className="materialsTableHead"><div><small>IMAGE + MUSIC LIBRARY</small><h3>Все каналы</h3></div><span>{loadingRows?'Загрузка в фоне • ':''}{channels.length} каналов</span></div>
-      <div className="materialsTable">
-        <div className="materialsRow materialsHeader"><span>Канал</span><span>Музыка</span><span>Изображения</span><span>Назначено</span><span>Использовано</span><span>Нужны изображения</span><span>READY_RENDER</span><span>Действия</span></div>
-        {channels.slice().sort((a,b)=>a.name.localeCompare(b.name,'ru')).map(ch=>{
+    <section className="materialsApexList" aria-labelledby="materials-channels-heading">
+      <div className="materialsApexListHead"><div><h3 id="materials-channels-heading">По каналам</h3><p>Добавляйте материалы и проверяйте готовность проектов</p></div><span role="status">{loadingRows?'Обновление данных · ':''}{channels.length} каналов</span></div>
+      <div className="materialsApexCards">
+        {sortedChannels.map(ch=>{
           const row=rows[ch.id];
           const counters=jobCountersByChannel[ch.id]||{waiting:0,ready:0};
           const waiting=counters.waiting;
           const ready=counters.ready;
-          const available=row?.image.available||0;
-          const need=Math.max(0,waiting-available);
-          return <div className="materialsRow" key={ch.id}>
-            <span className="materialsChannel"><b>{ch.name}</b><small>{ch.id}</small></span>
-            <span><b>{row?n(row.musicTotal):'…'}</b><small>{row?'своб. '+n(row.musicFree)+' • назнач. '+n(row.musicAssigned):'Загрузка…'}</small><small title={row?.musicLibraryPath||''}>{row?(row.musicLibraryPath||'Music Library не выбрана'):'Данные читаются в фоне'}</small></span>
-            <span><b>{row?n(available):'…'}</b><small>{row?'master: '+n(row.image.total):'Загрузка…'}</small></span>
-            <span><b>{n(row?.image.assigned)}</b><small>ASSIGNED</small></span>
-            <span><b>{n(row?.image.used)}</b><small>USED{row?.image.missing?' • missing '+n(row.image.missing):''}</small></span>
-            <span className={need>0?'materialsDanger':''}><b>{need>0?'🔴 '+need:'0'}</b><small>ждут cover: {waiting}</small></span>
-            <span><b>{ready}</b><small>готовы к ENDLUME</small></span>
-            <span className="materialsActions">
-              <button className="primary" disabled={!!busy} onClick={()=>void importImages(ch)}>+ ИЗОБРАЖЕНИЯ</button>
-              <button disabled={!!busy} onClick={()=>void chooseMusic(ch)}>{row?.musicLibraryPath?'МУЗЫКА':'+ МУЗЫКА'}</button>
-              {row?.musicLibraryPath&&<button disabled={!!busy} onClick={()=>void reindexMusic(ch.id)}>↻</button>}
-              {row?.image.rootPath&&<button onClick={()=>void productionManagerApi.openFolder(row.image.rootPath)}>ПАПКА</button>}
-            </span>
-          </div>
+          const need=row?Math.max(0,waiting-row.image.available):undefined;
+          return <article className="materialsApexCard" key={ch.id}>
+            <header><h4>{ch.name}</h4><span>{ready} готовы к ENDLUME</span></header>
+            <dl className="materialsApexFigures"><div><dt>Изображения</dt><dd>{row?n(row.image.available):'—'}</dd><small>{row?'Всего: '+n(row.image.total):'Нет данных'}</small></div>
+              <div><dt>Музыка</dt><dd>{row?n(row.musicTotal):'—'}</dd><small>{row?'Свободно: '+n(row.musicFree):'Нет данных'}</small></div>
+              <div><dt>Нужно изображений</dt><dd>{need==null?'—':n(need)}</dd><small>Ожидают: {waiting}</small></div></dl>
+            <details className="materialsApexDetails"><summary>Подробнее</summary><div><span>Назначено изображений: {row?n(row.image.assigned):'—'}</span><span>Использовано: {row?n(row.image.used):'—'}</span><span>Недоступно: {row?n(row.image.missing):'—'}</span><span>Назначено треков: {row?n(row.musicAssigned):'—'}</span><span title={row?.musicLibraryPath||''}>Папка музыки: {row?(row.musicLibraryPath||'не выбрана'):'—'}</span><span>ID канала: {ch.id}</span></div></details>
+            <footer className="materialsApexActions"><button className="primary" disabled={!!busy} onClick={()=>void importImages(ch)}>Изображения</button><button disabled={!!busy} onClick={()=>void chooseMusic(ch)}>{row?.musicLibraryPath?'Сменить музыку':'Выбрать музыку'}</button>{row?.musicLibraryPath&&<button disabled={!!busy} onClick={()=>void reindexMusic(ch.id)}>Обновить музыку</button>}{row?.image.rootPath&&<button onClick={()=>void productionManagerApi.openFolder(row.image.rootPath)}>Открыть папку</button>}</footer>
+          </article>
         })}
       </div>
     </section>
@@ -347,7 +340,7 @@ export function MaterialsManager(){
 
         <label className="manualField">Канал
           <select value={manualChannelId} disabled={!!manualBusy} onChange={e=>changeManualChannel(e.target.value)}>
-            {channels.slice().sort((a,b)=>a.name.localeCompare(b.name,'ru')).map(ch=><option key={ch.id} value={ch.id}>{ch.name}</option>)}
+            {sortedChannels.map(ch=><option key={ch.id} value={ch.id}>{ch.name}</option>)}
           </select>
           <small>{manualChannel?.id||'—'}</small>
         </label>

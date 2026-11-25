@@ -1,0 +1,14 @@
+.materialsApex{display:grid;gap:18px;color:var(--text,#f1eff8)}
+.materialsApexHero,.materialsApexList{background:#19191f;border:1px solid #34323e;border-radius:16px;padding:24px}
+.materialsApexHero,.materialsApexListHead{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
+.materialsApexHero small{color:#b7a4f6;font-weight:600;letter-spacing:.08em}
+.materialsApexHero h2,.materialsApexListHead h3{margin:6px 0;font-size:24px}
+.materialsApexHero p,.materialsApexListHead p,.materialsApexListHead>span{margin:0;color:#bbb9c8}
+.materialsApexCards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:12px;margin-top:20px}
+.materialsApexCard{min-width:0;background:#222128;border:1px solid #3a3845;border-radius:12px;padding:18px;display:grid;gap:16px}
+.materialsApexCard header{display:flex;justify-content:space-between;align-items:baseline;gap:12px}.materialsApexCard h4{font-size:16px;margin:0}.materialsApexCard header span{font-size:13px;color:#c5b6fc}
+.materialsApexFigures{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0}.materialsApexFigures div{min-width:0}.materialsApexFigures dt,.materialsApexFigures small{color:#bbb9c8;font-size:12px}.materialsApexFigures dd{font-size:22px;font-weight:650;margin:4px 0;font-variant-numeric:tabular-nums}
+.materialsApexDetails summary{cursor:pointer;color:#d0c6f6}.materialsApexDetails>div{display:grid;gap:6px;margin-top:10px;color:#c5c2cf;font-size:13px;overflow-wrap:anywhere}
+.materialsApexActions{display:flex;flex-wrap:wrap;gap:8px}.materialsApexActions button{min-height:38px}
+.materialsApex :is(button,summary,select):focus-visible{outline:2px solid #bcabff;outline-offset:3px}
+@media(max-width:680px){.materialsApexHero,.materialsApexList{padding:16px}.materialsApexFigures{grid-template-columns:repeat(3,minmax(0,1fr))}.materialsApexHero h2{font-size:21px}}

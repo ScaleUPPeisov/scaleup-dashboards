@@ -22,10 +22,10 @@ describe('VYRON 6.0.1 manual assembly additive contract',()=>{
   });
 
   it('adds manual assembly without removing the current Materials controls',()=>{
-    expect(ui).toContain('+ РУЧНАЯ СБОРКА');
-    expect(ui).toContain('+ ИЗОБРАЖЕНИЯ');
-    expect(ui).toContain("row?.musicLibraryPath?'МУЗЫКА':'+ МУЗЫКА'");
-    expect(ui).toContain('ПАПКА');
+    expect(ui).toContain('onClick={openManualAssembly}');
+    expect(ui).toContain('importImages(ch)');
+    expect(ui).toContain('chooseMusic(ch)');
+    expect(ui).toContain('openFolder(row.image.rootPath)');
     expect(ui).toContain('РУЧНАЯ СБОРКА ПРОЕКТОВ');
     expect(css).toContain('.manualAssemblyModal');
   });
