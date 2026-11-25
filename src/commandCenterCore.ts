@@ -167,6 +167,24 @@ export function productionForecast(
   return{channels:active.length,dueNow,next7Days,critical,readyToYoutube,missingSeo};
 }
 
+/** Summary for the command center; does not need to rescan every job. */
+export function productionUrgencySummary(channels:Channel[],runway:Record<string,ChannelRunwayRecord>){
+  let dueNow=0,critical=0;
+  for(const channel of channels){
+    if(!channel?.enabled)continue;
+    const days=runway?.[channel.id]?.runwayDays;
+    if(days!==undefined){if(days<=45)dueNow++;if(days<=14)critical++}
+  }
+  return {dueNow,critical};
+}
+
+export function productionRunwayRecommendation(days:number|undefined){
+  if(days===undefined)return 'Проверить расписание';
+  if(days<=14)return 'Готовить в первую очередь';
+  if(days<=45)return 'Продолжить производство';
+  return 'Запас пока достаточный';
+}
+
 export function recommendedWeeklyLoad(tempoDays:number|undefined){
   if(!tempoDays||!Number.isFinite(tempoDays)||tempoDays<=0)return undefined;
   return Math.round((7/tempoDays)*10)/10;

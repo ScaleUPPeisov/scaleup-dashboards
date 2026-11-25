@@ -6,6 +6,8 @@ import {
   buildAttentionItems,
   buildLocalBatchPlan,
   productionForecast,
+  productionUrgencySummary,
+  productionRunwayRecommendation,
   productionReadiness,
   recommendedWeeklyLoad
 } from './commandCenterCore';
@@ -74,6 +76,20 @@ describe('Command Center local planning',()=>{
     expect(result.dueNow).toBe(1);
     expect(result.critical).toBe(1);
     expect(result.readyToYoutube).toBe(1);
+  });
+
+  it('matches forecast urgency without scanning jobs, including missing data',()=>{
+    const channels=[channel(),channel({id:'other'}),channel({id:'disabled',enabled:false})];
+    const records={neon:runway(10),disabled:runway(1)};
+    const forecast=productionForecast(channels,records,[job(1)],30,new Date('2026-09-02T08:00:00Z'));
+    expect(productionUrgencySummary(channels,records)).toEqual({dueNow:forecast.dueNow,critical:forecast.critical});
+  });
+
+  it('does not describe an unknown reserve as sufficient',()=>{
+    expect(productionRunwayRecommendation(undefined)).toBe('Проверить расписание');
+    expect(productionRunwayRecommendation(14)).toBe('Готовить в первую очередь');
+    expect(productionRunwayRecommendation(45)).toBe('Продолжить производство');
+    expect(productionRunwayRecommendation(46)).toBe('Запас пока достаточный');
   });
 
   it('one channel every 3 days is about 2.3 channels per week',()=>{
