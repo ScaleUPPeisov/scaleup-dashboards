@@ -344,14 +344,26 @@ fn acceptance_existing_downloads_are_collectible_on_start() {
         .join("ChatGPT Image 3 сент. 18_54 (7) — копия 2.png")
         .to_string_lossy()
         .into_owned();
-    let mut startup = HashSet::new();
-    startup.insert(existing.clone());
-    let seen = collector_seen_at_start(&session, &startup);
+    let seen = collector_seen_at_start(&session);
     assert!(
         !seen.contains(&existing),
-        "startup Downloads snapshot must not suppress pre-existing images"
+        "pre-existing Downloads images remain collectible"
     );
     cleanup(&ws);
+}
+
+#[test]
+fn import_reservation_blocks_duplicate_start_until_watcher_finishes() {
+    let channel_id = format!("fixture-{}", Uuid::new_v4());
+    let first = reserve_import(&channel_id).unwrap();
+    assert!(reserve_import(&channel_id).is_err());
+    first.store(true, Ordering::SeqCst);
+    assert!(reserve_import(&channel_id).is_err());
+    release_import(&channel_id, &first);
+    let next = reserve_import(&channel_id).unwrap();
+    release_import(&channel_id, &first);
+    assert!(reserve_import(&channel_id).is_err());
+    release_import(&channel_id, &next);
 }
 
 #[test]

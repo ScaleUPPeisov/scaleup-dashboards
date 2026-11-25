@@ -376,14 +376,6 @@ fn recursive_images(root: &Path) -> Result<Vec<PathBuf>, String> {
     });
     Ok(out)
 }
-fn image_snapshot(dir: &Path) -> HashSet<String> {
-    recursive_images(dir)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|p| p.to_string_lossy().into_owned())
-        .collect()
-}
-
 fn downloads_dir() -> Result<PathBuf, String> {
     let home =
         std::env::var("HOME").map_err(|_| "Не удалось определить домашнюю папку".to_string())?;
@@ -1032,10 +1024,7 @@ fn import_candidate_ready(src: &Path, pending: &mut HashMap<String, ImportProbe>
     }
 }
 
-fn collector_seen_at_start(
-    session: &ImportSession,
-    _startup_snapshot: &HashSet<String>,
-) -> HashSet<String> {
+fn collector_seen_at_start(session: &ImportSession) -> HashSet<String> {
     // Only files already persisted by THIS session are duplicates.
     // Images merely present in Downloads before Start remain valid candidates.
     session
@@ -1045,18 +1034,31 @@ fn collector_seen_at_start(
         .collect()
 }
 
+fn reserve_import(channel_id: &str) -> Result<Arc<AtomicBool>, String> {
+    let mut map = import_stops().lock().map_err(|_| "Import lock".to_string())?;
+    if map.contains_key(channel_id) {
+        return Err("Сбор изображений уже запущен".into());
+    }
+    let stop = Arc::new(AtomicBool::new(false));
+    map.insert(channel_id.to_string(), stop.clone());
+    Ok(stop)
+}
+
+fn release_import(channel_id: &str, stop: &Arc<AtomicBool>) {
+    if let Ok(mut map) = import_stops().lock() {
+        if map.get(channel_id).is_some_and(|current| Arc::ptr_eq(current, stop)) {
+            map.remove(channel_id);
+        }
+    }
+}
+
 fn spawn_import_watcher(
     app: AppHandle,
     workspace: String,
     channel_id: String,
     mut session: ImportSession,
-    baseline: HashSet<String>,
+    stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
-    let stop = Arc::new(AtomicBool::new(false));
-    import_stops()
-        .lock()
-        .map_err(|_| "Import lock".to_string())?
-        .insert(channel_id.clone(), stop.clone());
     let state_path = session_path(&workspace, &channel_id)?;
     let downloads = PathBuf::from(&session.downloads_path);
     let import_dir = PathBuf::from(&session.import_path);
@@ -1068,7 +1070,7 @@ fn spawn_import_watcher(
         session.collected.len()
     );
     thread::spawn(move || {
-        let mut seen = collector_seen_at_start(&session, &baseline);
+        let mut seen = collector_seen_at_start(&session);
         let mut pending = HashMap::<String, ImportProbe>::new();
         let mut last_error: Option<String> = None;
         let mut final_flush_cycles = 0u8;
@@ -1182,43 +1184,41 @@ fn spawn_import_watcher(
         session.active = false;
         session.stopped_at = Some(Utc::now().to_rfc3339());
         let _ = atomic_json(&state_path, &session);
-        if let Ok(mut map) = import_stops().lock() {
-            map.remove(&channel_id);
-        }
+        release_import(&channel_id, &stop);
     });
     Ok(())
 }
 
 #[tauri::command]
-pub fn start_production_import(
+pub async fn start_production_import(
     app: AppHandle,
     workspace: String,
     channel_id: String,
     channel_name: String,
 ) -> Result<ImportSession, String> {
-    if let Ok(map) = import_stops().lock() {
-        if map
-            .get(&channel_id)
-            .map(|x| !x.load(Ordering::SeqCst))
-            .unwrap_or(false)
-        {
-            return Err("Сбор изображений уже запущен".into());
-        }
-    }
+    run_production_worker(move || start_production_import_sync(app, workspace, channel_id, channel_name)).await
+}
+fn start_production_import_sync(
+    app: AppHandle,
+    workspace: String,
+    channel_id: String,
+    channel_name: String,
+) -> Result<ImportSession, String> {
+    let stop = reserve_import(&channel_id)?;
+    let result = (|| {
     let downloads = downloads_dir()?;
     fs::read_dir(&downloads).map_err(|e|format!("VYRON не может читать папку Downloads: {e}. Разрешите VYRON доступ к Downloads в настройках macOS «Конфиденциальность и безопасность → Файлы и папки»."))?;
     let croot = channel_root(&workspace, &channel_id)?;
     let sp = session_path(&workspace, &channel_id)?;
     let old: ImportSession = read_json(&sp);
-    let (session, baseline) =
+    let session =
         if old.active && !old.session_id.is_empty() && Path::new(&old.import_path).is_dir() {
-            (old, image_snapshot(&downloads))
+            old
         } else {
             let sid = Uuid::new_v4().to_string();
             let import_dir = croot.join("Imports").join(&sid);
             fs::create_dir_all(&import_dir).map_err(|e| e.to_string())?;
-            (
-                ImportSession {
+            ImportSession {
                     schema_version: SCHEMA_VERSION,
                     session_id: sid,
                     channel_id: channel_id.clone(),
@@ -1229,20 +1229,27 @@ pub fn start_production_import(
                     downloads_path: downloads.to_string_lossy().into_owned(),
                     import_path: import_dir.to_string_lossy().into_owned(),
                     collected: Vec::new(),
-                },
-                image_snapshot(&downloads),
-            )
+                }
         };
     let mut active = session.clone();
     active.active = true;
     active.stopped_at = None;
     atomic_json(&sp, &active)?;
-    spawn_import_watcher(app, workspace, channel_id, active.clone(), baseline)?;
+    spawn_import_watcher(app, workspace, channel_id.clone(), active.clone(), stop.clone())?;
     Ok(active)
+    })();
+    if result.is_err() { release_import(&channel_id, &stop); }
+    result
 }
 
 #[tauri::command]
-pub fn stop_production_import(
+pub async fn stop_production_import(
+    workspace: String,
+    channel_id: String,
+) -> Result<ImportSession, String> {
+    run_production_worker(move || stop_production_import_sync(workspace, channel_id)).await
+}
+fn stop_production_import_sync(
     workspace: String,
     channel_id: String,
 ) -> Result<ImportSession, String> {
