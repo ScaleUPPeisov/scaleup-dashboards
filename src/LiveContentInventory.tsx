@@ -7,9 +7,11 @@ import {inventoryTotals,scanAllInventories,scanInventoryChannel,useLiveInventory
 import {saveActivePublishChannel} from './publishWorkspaceState';
 import {sortChannelsAlphabetically} from './channelSort';
 import {DailyOperationsCenter} from './DailyOperationsCenter';
+import './inventory-apex.css';
 
-const levelLabel:Record<InventoryLevel,string>={NORMAL:'НОРМА',SOON:'СКОРО НУЖНО',LOW:'МАЛО',EMPTY:'ПУСТО',OFFLINE:'OFFLINE'};
-const levelIcon:Record<InventoryLevel,string>={NORMAL:'🟢',SOON:'🟡',LOW:'🟠',EMPTY:'🔴',OFFLINE:'⚫'};
+const levelLabel:Record<InventoryLevel,string>={NORMAL:'Норма',SOON:'Скоро понадобится',LOW:'Мало',EMPTY:'Пусто',OFFLINE:'Недоступно'};
+const folderLabel:Record<ChannelInventorySnapshot['folderState'],string>={ONLINE:'Папка доступна',OFFLINE:'Папка недоступна',SCANNING:'Проверяется',ERROR:'Ошибка проверки'};
+const hasConfirmedStock=(row:ChannelInventorySnapshot)=>Boolean(row.lastConfirmedAt||row.lastScanAt||row.folderState==='ONLINE');
 const age=(iso:string|undefined,now:number)=>{
   if(!iso)return'—';
   const ms=now-Date.parse(iso);if(!Number.isFinite(ms)||ms<0)return'только что';
@@ -33,6 +35,8 @@ export function LiveContentInventory(){
   const rows=enabled.map(c=>snapshots[c.id]||fallback(c.id,c.name,String(c.renderFolderPath||'')));
   const lastFresh=rows.map(x=>x.lastScanAt).filter((x):x is string=>Boolean(x)).sort().at(-1);
   const channelName=new Map(enabled.map(c=>[c.id,c.name]));
+  const unknownCount=rows.filter(row=>!hasConfirmedStock(row)).length;
+  const staleCount=rows.filter(row=>row.stale&&hasConfirmedStock(row)).length;
   const openPublisher=(channelId:string)=>{saveActivePublishChannel(channelId);setPage('publisher')};
   const chooseAllRenderFolders=async()=>{
     if(rootPicking||globalScanning)return;
@@ -106,59 +110,60 @@ export function LiveContentInventory(){
     }
   };
 
-  return <div className="liveInventoryPage">
-    <div className="pageHeader liveInventoryHeader">
-      <div><small>ЛОКАЛЬНЫЙ ЗАПАС • 0 YOUTUBE API</small><h1>Запас видео</h1><p>Живой физический запас Render-папок. Upload history и trusted fingerprints остаются историческим source of truth.</p></div>
+  return <div className="liveInventoryPage inventoryApex">
+    <header className="inventoryApexHeader">
+      <div><small>ЛОКАЛЬНЫЙ ЗАПАС</small><h1>Запас видео</h1><p>Готовые видео в папках каналов</p></div>
       <div className="inventoryHeaderActions">
-        <button className="secondary" disabled={rootPicking||globalScanning} onClick={()=>void chooseAllRenderFolders()}>{rootPicking?'ВЫБИРАЮ…':'📁 ВЫБРАТЬ ОБЩУЮ ПАПКУ RENDER'}</button>
-        <button className="primary" disabled={globalScanning||rootPicking} onClick={()=>void scanAllInventories('manual-all')}>{globalScanning?'СИНХРОНИЗИРУЮ…':'↻ СИНХРОНИЗИРОВАТЬ ВСЕ ПАПКИ'}</button>
+        <button className="secondary" disabled={rootPicking||globalScanning} onClick={()=>void chooseAllRenderFolders()}>{rootPicking?'Выбираем…':'Общая папка Render'}</button>
+        <button className="primary" disabled={globalScanning||rootPicking} onClick={()=>void scanAllInventories('manual-all')}>{globalScanning?'Проверяем…':'Проверить все папки'}</button>
       </div>
-    </div>
+    </header>
 
     <DailyOperationsCenter snapshots={snapshots} onChooseRender={channelId=>void chooseRenderFolder(channelId)}/>
 
-    <div className="inventoryHeroGrid">
-      <div className="inventoryHero primaryMetric"><small>ВСЕГО ГОТОВО</small><b>{totals.ready}</b><span>{totals.uploading} сейчас загружается</span></div>
-      <div className="inventoryHero"><small>КАНАЛОВ</small><b>{totals.channels}</b><span>скоро нужно: {totals.soon}</span></div>
-      <div className="inventoryHero normal"><small>НОРМА</small><b>{totals.normal}</b><span>&gt; 14 дней</span></div>
-      <div className="inventoryHero low"><small>МАЛО</small><b>{totals.low}</b><span>1–6 дней</span></div>
-      <div className="inventoryHero low"><small>ПУСТО</small><b>{totals.empty}</b><span>0 ready</span></div>
-      <div className="inventoryHero offline"><small>НЕДОСТУПНО</small><b>{totals.offline}</b><span>последний подтверждённый запас сохраняется</span></div>
+    <section className="inventoryApexOverview" aria-label="Сводка запаса">
+      <div className="inventoryApexMetric inventoryApexMetricPrimary"><span>Готово к публикации</span><strong>{unknownCount===rows.length&&rows.length>0?'—':totals.ready}</strong><small>{unknownCount||staleCount?'По доступным и последним сохранённым данным':'Во всех проверенных папках'}</small></div>
+      <div className="inventoryApexMetric"><span>Загружается</span><strong>{totals.uploading}</strong><small>Сейчас в работе</small></div>
+      <div className="inventoryApexMetric"><span>Мало или пусто</span><strong>{totals.low+totals.empty}</strong><small>Каналов требуют внимания</small></div>
+      <div className="inventoryApexMetric"><span>Недоступно</span><strong>{rows.filter(row=>row.folderState==='OFFLINE'||row.folderState==='ERROR').length}</strong><small>Папок каналов</small></div>
+    </section>
+    <details className="inventoryApexBreakdown"><summary>Распределение запаса</summary><div><span>Норма: {totals.normal}</span><span>Скоро понадобится: {totals.soon}</span><span>Мало: {totals.low}</span><span>Пусто: {totals.empty}</span><small>Состояние по последним данным каналов</small></div></details>
+    <div className="inventoryApexStatus" role="status">
+      <span>{lastFresh?'Последняя проверка: '+age(lastFresh,now):'Проверка ещё не завершена'}</span>
+      {staleCount>0&&<span>Устаревшие данные: {staleCount}</span>}
+      {unknownCount>0&&<span>Нет подтверждённых данных: {unknownCount}</span>}
+      <span title="YouTube API requests: 0">Без запросов к YouTube</span>
     </div>
-    <div className="inventoryLiveLine"><b>🟢 АКТУАЛЬНО</b><span>{lastFresh?'проверено '+age(lastFresh,now):'первичное сканирование…'}</span><em>YouTube API requests: 0</em></div>
 
-    <section className="panel liveInventoryTablePanel">
-      <div className="panelHead"><div><small>ЗАПАС ПО КАНАЛАМ</small><h3>Фактический запас по каналам</h3></div><span>{rows.length} каналов</span></div>
-      <div className="liveInventoryTable">
-        <div className="liveInventoryRow head"><span>Канал</span><span>Готово</span><span>Загружается</span><span>Запас дней (1 видео/день)</span><span>Состояние папки</span><span>Последняя проверка</span><span/></div>
-        {rows.map(row=><div role="button" tabIndex={0} className={'liveInventoryRow level-'+row.level.toLowerCase()} key={row.channelId} onClick={()=>openPublisher(row.channelId)} onKeyDown={e=>{if(e.key==='Enter')openPublisher(row.channelId)}}>
-          <span className="liveInventoryChannel"><b>{row.channelName}</b><small title={row.renderFolderPath}>{row.renderFolderPath||'Папка Render не выбрана'}</small></span>
-          <span><b>{row.readyVideos}</b><small>{row.newCandidates} new • {row.newGenerations} gen • {row.knownReady} known</small></span>
-          <span><b>{row.uploadingVideos}</b><small>active</small></span>
-          <span><b>{row.runwayDays}</b><small>{row.folderState==='OFFLINE'?'последние данные • '+row.runwayDays+' дней':String(row.runwayDays)+' дней • 1/день'}</small></span>
-          <span><b>{levelIcon[row.level]} {levelLabel[row.level]}</b><small>{row.folderState}{row.stale?' • STALE':''}{row.uploadedLocalCopies?' • uploaded copies '+row.uploadedLocalCopies:''}{row.verifyRequired?' • verify '+row.verifyRequired:''}</small></span>
-          <span><b>{age(row.lastScanAt||row.lastConfirmedAt,now)}</b><small>{row.folderState==='OFFLINE'&&row.lastConfirmedAt?'последний подтверждённый запас':'локальная проверка'}</small></span>
-          <span className="liveInventoryActions">
-            <button className="mini" disabled={folderPicking===row.channelId} onClick={e=>{e.stopPropagation();void chooseRenderFolder(row.channelId)}}>{folderPicking===row.channelId?'ВЫБИРАЮ…':row.renderFolderPath?'📁 Сменить Render':'📁 Выбрать Render'}</button>
-            <button className="mini" disabled={row.folderState==='SCANNING'||folderPicking===row.channelId||!row.renderFolderPath} onClick={e=>{e.stopPropagation();void scanInventoryChannel(row.channelId,'manual-channel')}}>↻ Пересканировать</button>
-          </span>
-        </div>)}
-      </div>
+    <section className="inventoryApexList" aria-labelledby="inventory-channel-heading">
+      <div className="inventoryApexSectionHead"><div><h2 id="inventory-channel-heading">По каналам</h2><p>Выберите канал, чтобы открыть публикацию</p></div><span>{rows.length} каналов</span></div>
+      {rows.length===0?<p className="inventoryApexEmpty">Нет активных каналов</p>:<div className="inventoryApexRows">
+        {rows.map(row=>{
+          const known=hasConfirmedStock(row);
+          return <article className={'inventoryApexRow inventoryApexRow-'+row.level.toLowerCase()} key={row.channelId} aria-label={row.channelName}>
+            <div className="inventoryApexIdentity"><button className="inventoryApexChannel" onClick={()=>openPublisher(row.channelId)}>{row.channelName}</button><span title={row.renderFolderPath}>{row.renderFolderPath||'Папка Render не выбрана'}</span></div>
+            <dl className="inventoryApexFigures">
+              <div><dt>Готово</dt><dd>{known?row.readyVideos:'—'}</dd></div>
+              <div><dt>Загружается</dt><dd>{row.uploadingVideos}</dd></div>
+              <div><dt>Запас дней</dt><dd>{known?row.runwayDays:'—'}</dd></div>
+            </dl>
+            <div className="inventoryApexRowStatus"><strong>{known?levelLabel[row.level]:'Нет данных'}</strong><span>{folderLabel[row.folderState]}{row.stale&&known?' · данные устарели':''}</span><small>{known?(row.folderState==='OFFLINE'?'Последний подтверждённый запас · ':'Проверено · ')+age(row.lastScanAt||row.lastConfirmedAt,now):'Ожидает первой проверки'}</small></div>
+            <details className="inventoryApexDetails"><summary>Подробнее</summary><div>
+              <span>Новые файлы: {known?row.newCandidates:'—'}</span><span>Обновлённые файлы: {known?row.newGenerations:'—'}</span><span>Известные готовые: {known?row.knownReady:'—'}</span><span>Загруженные копии: {known?row.uploadedLocalCopies:'—'}</span><span>Требуют проверки: {known?row.verifyRequired:'—'}</span><span>Расчёт запаса: 1 видео в день</span>
+            </div></details>
+            <div className="inventoryApexActions">
+              <button className="secondary" disabled={folderPicking===row.channelId} onClick={()=>void chooseRenderFolder(row.channelId)}>{folderPicking===row.channelId?'Выбираем…':row.renderFolderPath?'Сменить папку':'Выбрать папку'}</button>
+              <button className="secondary" disabled={row.folderState==='SCANNING'||folderPicking===row.channelId||!row.renderFolderPath} onClick={()=>void scanInventoryChannel(row.channelId,'manual-channel')}>Проверить</button>
+            </div>
+          </article>
+        })}
+      </div>}
     </section>
 
-    <div className="inventoryBottomGrid">
-      <section className="panel">
-        <div className="panelHead"><div><small>CLASSIFICATION</small><h3>Что считается готовым</h3></div></div>
-        <div className="inventoryRules">
-          <span><b>NEW_CANDIDATE</b><em>новый физический файл</em></span>
-          <span><b>NEW_GENERATION</b><em>новые bytes по старому пути</em></span>
-          <span><b>UPLOADED_LOCAL_COPY</b><em>виден отдельно, не входит в ready</em></span>
-          <span><b>VERIFY_REQUIRED</b><em>не считается новым без доказательства</em></span>
-        </div>
-      </section>
-      <section className="panel">
-        <div className="panelHead"><div><small>OPERATIONAL EVENTS</small><h3>Последние изменения</h3></div><span>{Math.min(audit.length,12)}</span></div>
-        <div className="inventoryAudit">{audit.slice(0,12).map(e=><div key={e.id}><time>{new Date(e.at).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</time><b>{channelName.get(e.channelId)||e.channelId}</b><span>{e.message}</span></div>)}{!audit.length&&<p>События появятся после первого scan или изменения Render-папки.</p>}</div>
+    <div className="inventoryApexBottom">
+      <details className="inventoryApexRules"><summary>Как определяется готовность</summary><div><p><b>Новый файл</b> — найден в папке канала.</p><p><b>Обновлённый файл</b> — содержимое по прежнему пути изменилось.</p><p><b>Загруженная копия</b> показывается отдельно и не входит в готовые.</p><p><b>Требует проверки</b> — недостаточно данных, чтобы считать файл новым.</p></div></details>
+      <section className="inventoryApexAudit" aria-labelledby="inventory-audit-heading"><div className="inventoryApexSectionHead"><h2 id="inventory-audit-heading">Последние изменения</h2><span>{Math.min(audit.length,12)}</span></div>
+        <div className="inventoryApexAuditList">{audit.slice(0,12).map(e=><div key={e.id}><time>{new Date(e.at).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</time><b>{channelName.get(e.channelId)||e.channelId}</b><span>{e.message}</span></div>)}{!audit.length&&<p>Изменения появятся после проверки папок.</p>}</div>
       </section>
     </div>
   </div>
