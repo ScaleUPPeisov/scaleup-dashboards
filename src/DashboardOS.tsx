@@ -1,7 +1,7 @@
 import React,{useEffect,useMemo,useState} from 'react';
 import {api} from './api';
 import {useApp} from './store';
-import type {Channel,Page,YoutubeProfile} from './types';
+import type {Channel,Page,VideoJob,YoutubeProfile} from './types';
 import {humanizeError} from './errorCenter';
 import {isFutureChannel} from './channelIdentity';
 import {buildReadyVideoInventory} from './readyVideoInventory';
@@ -25,6 +25,7 @@ import {planStatisticsProjectBatches} from './youtubeChannelStatsRuntime';
 import {refreshAllChannelData} from './fullChannelRefresh';
 import {classifyYoutubeChannels} from './youtubeStatisticsCenter';
 import {RpmCoverageCard} from './RpmCoverageCard';
+import './dashboard-workspace-apex.css';
 
 const fmt=(n:number)=>new Intl.NumberFormat('ru-RU').format(n);
 const sameLocalDay=(iso:string|undefined,now:Date)=>{if(!iso)return false;const d=new Date(iso);return !Number.isNaN(d.getTime())&&d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()&&d.getDate()===now.getDate()};
@@ -44,8 +45,8 @@ function exactConnectedCount(channels:Channel[],profiles:YoutubeProfile[]){
 
 function OperationsDashboard(){
  const channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),settings=useApp(s=>s.settings),uploadHistory=useApp(s=>s.uploadHistory),projectLifecycle=useApp(s=>s.projectLifecycle),fingerprintCache=useApp(s=>s.fingerprintCache),setPage=useApp(s=>s.setPage),liveSnapshots=useLiveInventory(s=>s.snapshots);
- const [queue,setQueue]=useState(()=>uploadQueueSnapshot()),[telemetry,setTelemetry]=useState(()=>uploadTelemetrySnapshot()),[activeId,setActiveId]=useState(()=>loadActivePublishChannel()),[profiles,setProfiles]=useState<YoutubeProfile[]>([]),[ownerRevision,setOwnerRevision]=useState(0),[globalUploads,setGlobalUploads]=useState(()=>globalDailyUploadStatus()),[statsBusy,setStatsBusy]=useState(false),[statsPreview,setStatsPreview]=useState<{channelIds:string[];eligible:number;workspace:number;projectGroups:number;requests:number;statsUnits:number;ownerUnits:number;units:number}|null>(null),[statsResult,setStatsResult]=useState('');
- useEffect(()=>{const offQueue=subscribeUploadQueue(setQueue),offTelemetry=subscribeUploadTelemetry(setTelemetry),offActive=subscribeActivePublishChannel(setActiveId),offUploads=subscribeGlobalDailyUploadStatus(()=>setGlobalUploads(globalDailyUploadStatus()));return()=>{offQueue();offTelemetry();offActive();offUploads()}},[]);
+ const [queue,setQueue]=useState(()=>uploadQueueSnapshot()),[activeTelemetryIds,setActiveTelemetryIds]=useState(()=>telemetryChannels(uploadTelemetrySnapshot())),[activeId,setActiveId]=useState(()=>loadActivePublishChannel()),[profiles,setProfiles]=useState<YoutubeProfile[]>([]),[ownerRevision,setOwnerRevision]=useState(0),[globalUploads,setGlobalUploads]=useState(()=>globalDailyUploadStatus()),[statsBusy,setStatsBusy]=useState(false),[statsPreview,setStatsPreview]=useState<{channelIds:string[];eligible:number;workspace:number;projectGroups:number;requests:number;statsUnits:number;ownerUnits:number;units:number}|null>(null),[statsResult,setStatsResult]=useState('');
+ useEffect(()=>{const offQueue=subscribeUploadQueue(setQueue),offTelemetry=subscribeUploadTelemetry(snapshot=>{const next=telemetryChannels(snapshot);setActiveTelemetryIds(previous=>previous.length===next.length&&previous.every((id,i)=>id===next[i])?previous:next)}),offActive=subscribeActivePublishChannel(setActiveId),offUploads=subscribeGlobalDailyUploadStatus(()=>setGlobalUploads(globalDailyUploadStatus()));return()=>{offQueue();offTelemetry();offActive();offUploads()}},[]);
  useEffect(()=>{const bump=()=>setOwnerRevision(x=>x+1);window.addEventListener(OWNER_INVENTORY_EVENT,bump);window.addEventListener('vyron-channel-schedule-changed',bump);return()=>{window.removeEventListener(OWNER_INVENTORY_EVENT,bump);window.removeEventListener('vyron-channel-schedule-changed',bump)}},[]);
  const bindingKey=channels.map(c=>c.id+':'+(c.youtubeProfileId||'')+':'+(c.youtubeChannelId||'')).join('|');
  useEffect(()=>{
@@ -85,7 +86,7 @@ function OperationsDashboard(){
  const apiQuota=youtubeQuotaUsage();
  const activeTodayChannels=new Set<string>([
   ...uploadedTodayRows.map(x=>x.channelId),
-  ...telemetry.active.map(x=>x.channelId).filter(Boolean),
+  ...activeTelemetryIds,
   ...enabled.filter(c=>(ownerByChannel.get(c.id)?.publishedToday||0)>0).map(c=>c.id)
  ]).size;
 
@@ -118,7 +119,6 @@ function OperationsDashboard(){
   return rows.slice(0,7)
  },[enabled,liveSnapshots,ownerByChannel,jobErrors,settings.autoUploadYoutube,uploadHistory,dailyOps.unprocessedChannels]);
 
- const primaryUpload=telemetry.active[0],primaryJob=primaryUpload?jobs.find(j=>j.id===primaryUpload.jobId):undefined,primaryChannel=primaryUpload?channels.find(c=>c.id===primaryUpload.channelId):undefined;
  const ownerCoverage=connectedCount?ownerTotals.availableChannels+'/'+connectedCount+' каналов в owner-cache':'нет подключённых каналов';
 
  async function previewAllChannelStatistics(){
@@ -148,21 +148,8 @@ function OperationsDashboard(){
  }
  function openRpmSettings(){try{localStorage.setItem('vyron:settings-target-tab','general');localStorage.setItem('vyron:settings-target-section','rpm')}catch{}setPage('settings');window.setTimeout(()=>window.dispatchEvent(new CustomEvent('vyron:settings-target-section',{detail:'rpm'})),0)}
 
- return <div className="apexDashboard">
-  <section className="opsCard networkStatsCard" data-testid="all-channels-network-stats">
-   <div className="opsCardHead"><div><h2>Статистика всех каналов</h2><details className="dashboardSourceDetails"><summary>Источник данных</summary><p>Автообновление YouTube: <b>ВЫКЛ</b>. Показаны сохранённые локальные данные.</p></details></div><button className="primary" disabled={statsBusy||!connectedCount} onClick={()=>void previewAllChannelStatistics()}>{statsBusy?'Обновление…':'Обновить все каналы'}</button></div>
-   <div className="networkStatsGrid">
-    <span><small>Каналов</small><b>{enabled.length}</b></span>
-    <span><small>Подключено YouTube</small><b>{connectedCount} / {enabled.length}</b></span>
-    <span><small>Подписчики всего</small><b>{aggregate(subscriberValues,subscriberTotal)}</b></span>
-    <span><small>Просмотры всего</small><b>{aggregate(viewValues,viewTotal)}</b></span>
-    <span><small>Видео на YouTube</small><b>{aggregate(videoValues,videoTotal)}</b></span>
-    <span><small>Данные есть</small><b>{statsDataChannels} / {enabled.length}</b></span>
-    <span><small>Последнее обновление</small><b>{statsUpdatedAt?new Date(statsUpdatedAt).toLocaleString('ru-RU'):'—'}</b></span>
-    <span><small>Источник</small><b>СОХРАНЁННЫЕ ДАННЫЕ</b></span>
-   </div>
-   {statsResult&&<p className="opsSourceNote">{statsResult}</p>}
-  </section>
+ return <div className="apexDashboard dashboardWorkspaceApex">
+  <header className="dashboardWorkspaceHeader"><div><small>ОБЗОР</small><h1>Главная</h1><p>Состояние каналов и производства</p></div><button onClick={()=>setPage('autopilot')}>Командный центр</button></header>
   {statsPreview&&<ModalPortal onClose={()=>setStatsPreview(null)}><section className="confirmModal statsRefreshPreview" onMouseDown={e=>e.stopPropagation()}>
    <small>ОБНОВИТЬ СТАТИСТИКУ</small><h2>Обновить все доступные каналы?</h2>
    <div className="settingsInfoGrid">
@@ -188,6 +175,21 @@ function OperationsDashboard(){
    <Kpi label="YOUTUBE API" value={apiQuota.limit?apiQuota.used+' / '+apiQuota.limit:'Нет данных'} hint="единиц квоты"/>
    <Kpi label="ЗАГРУЗКИ VYRON" value={globalUploads.used+' / '+globalUploads.limit} hint={'осталось: '+globalUploads.remaining}/>
   </div>
+
+  <section className="opsCard networkStatsCard" data-testid="all-channels-network-stats">
+   <div className="opsCardHead"><div><h2>Статистика всех каналов</h2><details className="dashboardSourceDetails"><summary>Источник данных</summary><p>Автообновление YouTube: <b>ВЫКЛ</b>. Показаны сохранённые локальные данные.</p></details></div><button className="primary" disabled={statsBusy||!connectedCount} onClick={()=>void previewAllChannelStatistics()}>{statsBusy?'Обновление…':'Обновить все каналы'}</button></div>
+   <div className="networkStatsGrid">
+    <span><small>Каналов</small><b>{enabled.length}</b></span>
+    <span><small>Подключено YouTube</small><b>{connectedCount} / {enabled.length}</b></span>
+    <span><small>Подписчики всего</small><b>{aggregate(subscriberValues,subscriberTotal)}</b></span>
+    <span><small>Просмотры всего</small><b>{aggregate(viewValues,viewTotal)}</b></span>
+    <span><small>Видео на YouTube</small><b>{aggregate(videoValues,videoTotal)}</b></span>
+    <span><small>Данные есть</small><b>{statsDataChannels} / {enabled.length}</b></span>
+    <span><small>Последнее обновление</small><b>{statsUpdatedAt?new Date(statsUpdatedAt).toLocaleString('ru-RU'):'—'}</b></span>
+    <span><small>Источник</small><b>СОХРАНЁННЫЕ ДАННЫЕ</b></span>
+   </div>
+   {statsResult&&<p className="opsSourceNote">{statsResult}</p>}
+  </section>
 
   <SystemHealthPanel profiles={profiles}/>
 
@@ -245,12 +247,7 @@ function OperationsDashboard(){
 
    <RpmCoverageCard channels={enabled} profiles={profiles} rpm={configuredRpm} onSettings={openRpmSettings} onAnalytics={()=>setPage('analytics')}/>
 
-   <section className="opsCard">
-    <div className="opsCardHead"><div><h2>Загрузки YouTube</h2></div></div>
-    <div className="opsStats"><span><small>В очереди</small><b>{queue.queued.length}</b></span><span><small>Активно</small><b>{telemetry.active.length}</b></span><span><small>Загружено сегодня</small><b>{uploadedToday}</b></span><span><small>Ошибок сегодня</small><b>{failedToday}</b></span></div>
-    {primaryUpload?<div className="activeUploadLine"><div><small>{primaryChannel?.name||'Канал'} • {primaryJob?'VIDEO_'+String(primaryJob.number).padStart(3,'0'):'Видео'}</small><b>{primaryUpload.percent==null?'…':Math.round(primaryUpload.percent)+'%'}</b></div><div><span>{formatUploadSpeed(primaryUpload.speedBps)}</span><span>Осталось {formatDuration(primaryUpload.etaSeconds)}</span></div><i><em style={{width:Math.max(0,Math.min(100,primaryUpload.percent||0))+'%'}}/></i></div>:<p className="opsEmpty">Активных загрузок нет</p>}
-    <footer><button onClick={()=>setPage('youtube')}>Центр загрузок</button></footer>
-   </section>
+   <DashboardUploads queued={queue.queued.length} uploadedToday={uploadedToday} failedToday={failedToday} channels={channels} jobs={jobs} onOpen={()=>setPage('youtube')}/>
 
    <section className={'opsCard attention '+(attention.length?'warn':'good')}>
     <div className="opsCardHead"><div><h2>{attention.length?'Требует внимания ('+attention.length+')':'Всё в порядке'}</h2></div></div>
@@ -260,4 +257,16 @@ function OperationsDashboard(){
   </div>
  </div>;
 }
+function telemetryChannels(snapshot:ReturnType<typeof uploadTelemetrySnapshot>):string[]{return [...new Set(snapshot.active.map(x=>x.channelId).filter((x):x is string=>Boolean(x)))].sort()}
+const DashboardUploads=React.memo(function DashboardUploads({queued,uploadedToday,failedToday,channels,jobs,onOpen}:{queued:number;uploadedToday:number;failedToday:number;channels:Channel[];jobs:VideoJob[];onOpen:()=>void}){
+ const [telemetry,setTelemetry]=useState(()=>uploadTelemetrySnapshot());
+ useEffect(()=>subscribeUploadTelemetry(setTelemetry),[]);
+ const current=telemetry.active[0],job=current?jobs.find(j=>j.id===current.jobId):undefined,channel=current?channels.find(c=>c.id===current.channelId):undefined;
+ return <section className="opsCard">
+  <div className="opsCardHead"><div><h2>Загрузки YouTube</h2></div></div>
+  <div className="opsStats"><span><small>В очереди</small><b>{queued}</b></span><span><small>Активно</small><b>{telemetry.active.length}</b></span><span><small>Загружено сегодня</small><b>{uploadedToday}</b></span><span><small>Ошибок сегодня</small><b>{failedToday}</b></span></div>
+  {current?<div className="activeUploadLine"><div><small>{channel?.name||'Канал'} • {job?'VIDEO_'+String(job.number).padStart(3,'0'):'Видео'}</small><b>{current.percent==null?'…':Math.round(current.percent)+'%'}</b></div><div><span>{formatUploadSpeed(current.speedBps)}</span><span>Осталось {formatDuration(current.etaSeconds)}</span></div><i><em style={{width:Math.max(0,Math.min(100,current.percent||0))+'%'}}/></i></div>:<p className="opsEmpty">Активных загрузок нет</p>}
+  <footer><button onClick={onOpen}>Центр загрузок</button></footer>
+ </section>
+});
 function Kpi({label,value,hint,warn=false}:{label:string;value:React.ReactNode;hint?:string;warn?:boolean}){return <div className={'opsKpi '+(warn?'warn':'')}><small>{label}</small><strong>{value}</strong>{hint&&<em>{hint}</em>}</div>}

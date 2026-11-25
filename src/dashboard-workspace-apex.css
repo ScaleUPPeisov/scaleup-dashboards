@@ -1,0 +1,19 @@
+.dashboardWorkspaceApex{display:grid;gap:16px;max-width:1600px;margin:0 auto;padding-bottom:32px}
+.dashboardWorkspaceHeader{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;padding:22px 24px;border:1px solid var(--line);border-radius:16px;background:var(--panel)}
+.dashboardWorkspaceHeader small{display:block;color:#c4b4fa;font-size:11px;letter-spacing:.08em;font-weight:700}
+.dashboardWorkspaceHeader h1{margin:5px 0;font-size:28px;color:var(--text)}
+.dashboardWorkspaceHeader p{margin:0;color:var(--muted);font-size:14px}
+.dashboardWorkspaceHeader button{min-height:40px}
+.dashboardWorkspaceApex .opsKpiGrid.v400{margin:0;gap:10px}
+.dashboardWorkspaceApex .opsKpi,.dashboardWorkspaceApex .opsCard{border-radius:13px}
+.dashboardWorkspaceApex .opsKpi{padding:16px;min-height:104px}
+.dashboardWorkspaceApex .opsKpi strong{font-variant-numeric:tabular-nums}
+.dashboardWorkspaceApex .opsDashboardGrid.v400{gap:14px}
+.dashboardWorkspaceApex .opsCard{padding:18px}
+.dashboardWorkspaceApex .opsCard footer{justify-content:flex-start}
+.dashboardWorkspaceApex .opsCard button:focus-visible,.dashboardWorkspaceApex .dashboardWorkspaceHeader button:focus-visible{outline:2px solid #c4b4fa;outline-offset:3px}
+.dashboardWorkspaceApex .activeUploadLine{background:#24232b;border-color:var(--line)}
+.dashboardWorkspaceApex .activeUploadLine small,.dashboardWorkspaceApex .activeUploadLine span{font-size:12px;color:var(--muted)}
+.dashboardWorkspaceApex .activeUploadLine b{color:var(--text)}
+.dashboardWorkspaceApex .opsAllGood{background:#222a28;border-color:#496356;color:#b9e7ce;font-size:13px}
+@media(max-width:700px){.dashboardWorkspaceHeader,.dashboardWorkspaceApex .opsCard{padding:16px}.dashboardWorkspaceHeader h1{font-size:23px}.dashboardWorkspaceApex .opsKpi{min-height:90px;padding:13px}}
