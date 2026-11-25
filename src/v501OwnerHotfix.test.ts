@@ -86,7 +86,7 @@ describe('VYRON 5.0.1 owner hotfix contract',()=>{
  it('provides RPM configuration and direct dashboard focus',()=>{
   expect(settings).toContain('id="vyron-rpm-settings"');
   expect(settings).toContain('estimatedRpmUsd');
-  expect(settings).toContain('views ÷ 1000 × configured RPM');
+  expect(settings).toContain('просмотры ÷ 1000 × заданный RPM');
   expect(settings).toContain('Не является подтверждённым доходом YouTube');
   expect(dashboard).toContain("vyron:settings-target-section");
  });
