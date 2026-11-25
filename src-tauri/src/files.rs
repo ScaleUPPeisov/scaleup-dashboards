@@ -3,9 +3,11 @@ use tauri::Manager;
 use chrono::Utc;
 use serde_json::{json, Value};
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     process::Command,
+    sync::{Arc, Mutex, OnceLock, Weak},
 };
 use uuid::Uuid;
 
@@ -19,6 +21,30 @@ where
     tauri::async_runtime::spawn_blocking(work)
         .await
         .map_err(|e| format!("FILESYSTEM_TASK_FAILED: {e}"))?
+}
+
+// One lock per existing project, shared by all manifest read-modify-write
+// operations. Resolve aliases before looking up the lock. Weak references keep
+// the registry bounded by currently active projects.
+static PROJECT_LOCKS: OnceLock<Mutex<HashMap<String, Weak<Mutex<()>>>>> = OnceLock::new();
+fn project_lock(folder: &Path) -> Result<Arc<Mutex<()>>, String> {
+    let resolved = fs::canonicalize(folder).map_err(|e| e.to_string())?;
+    let fallback = resolved.to_string_lossy().to_lowercase();
+    #[cfg(unix)]
+    let key = {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = fs::metadata(&resolved).map_err(|e| e.to_string())?;
+        if metadata.ino() == 0 { fallback } else { format!("{}:{}", metadata.dev(), metadata.ino()) }
+    };
+    #[cfg(not(unix))]
+    let key = fallback;
+    let mut locks = PROJECT_LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
+        .lock().map_err(|_| "PROJECT_LOCK_FAILED".to_string())?;
+    locks.retain(|_, value| value.strong_count() > 0);
+    if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) { return Ok(lock); }
+    let lock = Arc::new(Mutex::new(()));
+    locks.insert(key, Arc::downgrade(&lock));
+    Ok(lock)
 }
 
 fn safe_name(s: &str) -> String {
@@ -205,7 +231,12 @@ pub fn store_profile_avatar(
 }
 
 #[tauri::command]
-pub fn prepare_job_folder(
+pub async fn prepare_job_folder(
+    workspace: String, channel_id: String, channel_name: String, number: u32, min_tracks: usize,
+) -> Result<Value, String> {
+    run_filesystem_task(move || prepare_job_folder_impl(workspace, channel_id, channel_name, number, min_tracks)).await
+}
+fn prepare_job_folder_impl(
     workspace: String,
     channel_id: String,
     channel_name: String,
@@ -220,6 +251,8 @@ pub fn prepare_job_folder(
         .join(format!("Video_{:03}", number));
     fs::create_dir_all(folder.join("tracks"))
         .map_err(|e| format!("Не удалось создать проект: {e}"))?;
+    let lock = project_lock(&folder)?;
+    let _guard = lock.lock().map_err(|_| "PROJECT_LOCK_FAILED".to_string())?;
 
     let manifest = folder.join("manifest.json");
     if !manifest.exists() {
@@ -313,7 +346,12 @@ pub async fn scan_channel_inbox(workspace: String, channel_name: String) -> Resu
 }
 
 #[tauri::command]
-pub fn ingest_tracks(
+pub async fn ingest_tracks(
+    job_folder: String, files: Vec<String>, min_tracks: usize,
+) -> Result<Value, String> {
+    run_filesystem_task(move || ingest_tracks_impl(job_folder, files, min_tracks)).await
+}
+fn ingest_tracks_impl(
     job_folder: String,
     files: Vec<String>,
     min_tracks: usize,
@@ -322,6 +360,8 @@ pub fn ingest_tracks(
     if !folder.is_dir() {
         return Err("Папка проекта не найдена".into());
     }
+    let lock = project_lock(&folder)?;
+    let _guard = lock.lock().map_err(|_| "PROJECT_LOCK_FAILED".to_string())?;
     let tracks = folder.join("tracks");
     fs::create_dir_all(&tracks).map_err(|e| e.to_string())?;
     let mut idx = track_count(&folder) + 1;
@@ -349,7 +389,12 @@ pub fn ingest_tracks(
 }
 
 #[tauri::command]
-pub fn ingest_cover(
+pub async fn ingest_cover(
+    job_folder: String, file: String, min_tracks: usize,
+) -> Result<Value, String> {
+    run_filesystem_task(move || ingest_cover_impl(job_folder, file, min_tracks)).await
+}
+fn ingest_cover_impl(
     job_folder: String,
     file: String,
     min_tracks: usize,
@@ -358,6 +403,8 @@ pub fn ingest_cover(
     if !folder.is_dir() {
         return Err("Папка проекта не найдена".into());
     }
+    let lock = project_lock(&folder)?;
+    let _guard = lock.lock().map_err(|_| "PROJECT_LOCK_FAILED".to_string())?;
     let src = PathBuf::from(file);
     if !src.is_file() {
         return Err("Изображение не найдено".into());
@@ -382,7 +429,12 @@ pub fn ingest_cover(
 }
 
 #[tauri::command]
-pub fn write_job_metadata(
+pub async fn write_job_metadata(
+    job_folder: String, title: String, description: String, tags: Vec<String>, publish_at: Option<String>, source: String,
+) -> Result<(), String> {
+    run_filesystem_task(move || write_job_metadata_impl(job_folder, title, description, tags, publish_at, source)).await
+}
+fn write_job_metadata_impl(
     job_folder: String,
     title: String,
     description: String,
@@ -394,6 +446,8 @@ pub fn write_job_metadata(
     if !folder.is_dir() {
         return Err("Папка проекта не найдена".into());
     }
+    let lock = project_lock(&folder)?;
+    let _guard = lock.lock().map_err(|_| "PROJECT_LOCK_FAILED".to_string())?;
     let p = folder.join("manifest.json");
     let mut v = fs::read(&p)
         .ok()
@@ -414,7 +468,10 @@ pub fn write_job_metadata(
 }
 
 #[tauri::command]
-pub fn enqueue_render(workspace: String, job_folder: String) -> Result<Value, String> {
+pub async fn enqueue_render(workspace: String, job_folder: String) -> Result<Value, String> {
+    run_filesystem_task(move || enqueue_render_impl(workspace, job_folder)).await
+}
+fn enqueue_render_impl(workspace: String, job_folder: String) -> Result<Value, String> {
     let folder = PathBuf::from(&job_folder);
     if !folder.is_dir() {
         return Err("Папка проекта не найдена".into());
@@ -440,7 +497,12 @@ pub fn enqueue_render(workspace: String, job_folder: String) -> Result<Value, St
 }
 
 #[tauri::command]
-pub fn import_images(
+pub async fn import_images(
+    workspace: String, channel_id: String, channel_name: String, files: Vec<String>, min_tracks: usize, target_numbers: Vec<u32>,
+) -> Result<Vec<Value>, String> {
+    run_filesystem_task(move || import_images_impl(workspace, channel_id, channel_name, files, min_tracks, target_numbers)).await
+}
+fn import_images_impl(
     workspace: String,
     channel_id: String,
     channel_name: String,
@@ -451,7 +513,7 @@ pub fn import_images(
     let mut result = Vec::new();
     for (i, raw) in files.into_iter().enumerate() {
         let number = target_numbers.get(i).copied().unwrap_or((i + 1) as u32);
-        let prep = prepare_job_folder(
+        let prep = prepare_job_folder_impl(
             workspace.clone(),
             channel_id.clone(),
             channel_name.clone(),
@@ -463,7 +525,7 @@ pub fn import_images(
             .and_then(|x| x.as_str())
             .unwrap_or("")
             .to_string();
-        let r = ingest_cover(folder.clone(), raw, min_tracks)?;
+        let r = ingest_cover_impl(folder.clone(), raw, min_tracks)?;
         result.push(json!({
             "id": Uuid::new_v4().to_string(),
             "channelId": channel_id,
@@ -483,7 +545,12 @@ pub fn import_images(
 }
 
 #[tauri::command]
-pub fn add_tracks(
+pub async fn add_tracks(
+    job_folder: String, files: Vec<String>, min_tracks: usize,
+) -> Result<Value, String> {
+    run_filesystem_task(move || add_tracks_impl(job_folder, files, min_tracks)).await
+}
+fn add_tracks_impl(
     job_folder: String,
     files: Vec<String>,
     min_tracks: usize,
@@ -492,7 +559,8 @@ pub fn add_tracks(
     if !folder.is_dir() {
         return Err("Папка проекта не найдена".into());
     }
-    let temp = folder.join(".manual-inbox");
+    // Concurrent imports must never remove each other's temporary copies.
+    let temp = folder.join(format!(".manual-inbox-{}", Uuid::new_v4()));
     fs::create_dir_all(&temp).map_err(|e| e.to_string())?;
     let mut moved = Vec::new();
     for raw in files {
@@ -505,17 +573,22 @@ pub fn add_tracks(
         fs::copy(&src, &dst).map_err(|e| e.to_string())?;
         moved.push(dst.display().to_string());
     }
-    let r = ingest_tracks(job_folder, moved, min_tracks);
+    let r = ingest_tracks_impl(job_folder, moved, min_tracks);
     let _ = fs::remove_dir_all(temp);
     r
 }
 
 #[tauri::command]
-pub fn refresh_job(job_folder: String, min_tracks: usize) -> Result<Value, String> {
+pub async fn refresh_job(job_folder: String, min_tracks: usize) -> Result<Value, String> {
+    run_filesystem_task(move || refresh_job_impl(job_folder, min_tracks)).await
+}
+fn refresh_job_impl(job_folder: String, min_tracks: usize) -> Result<Value, String> {
     let folder = PathBuf::from(job_folder);
     if !folder.is_dir() {
         return Ok(json!({"status":"ERROR","error":"Папка проекта не найдена"}));
     }
+    let lock = project_lock(&folder)?;
+    let _guard = lock.lock().map_err(|_| "PROJECT_LOCK_FAILED".to_string())?;
     let (status, count, cover, final_path) = job_status(&folder, min_tracks);
     patch_manifest(&folder, status, count)?;
     Ok(json!({
@@ -567,6 +640,41 @@ pub async fn reveal_path(path: String) -> Result<(), String> {
 #[cfg(test)]
 mod filesystem_task_tests {
     use super::*;
+
+    #[test]
+    fn concurrent_refresh_and_metadata_preserve_project_manifest() {
+        struct TempDir(PathBuf);
+        impl Drop for TempDir { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
+        let dir = TempDir(std::env::temp_dir().join(format!("vyron-project-lock-{}", Uuid::new_v4())));
+        fs::create_dir_all(dir.0.join("tracks")).unwrap();
+        fs::write(dir.0.join("tracks/01.mp3"), b"fixture").unwrap();
+        fs::write(dir.0.join("cover.jpg"), b"fixture").unwrap();
+        fs::write(dir.0.join("manifest.json"), br#"{"unknownField":"preserved"}"#).unwrap();
+        let path = dir.0.to_string_lossy().into_owned();
+        std::thread::scope(|scope| {
+            let first = scope.spawn(|| {
+                for _ in 0..40 {
+                    refresh_job_impl(path.clone(), 1).unwrap();
+                }
+            });
+            let second = scope.spawn(|| {
+                for _ in 0..40 {
+                    write_job_metadata_impl(path.clone(), "fixture title".into(), "fixture description".into(), vec!["fixture".into()], None, "test".into()).unwrap();
+                }
+            });
+            first.join().unwrap();
+            second.join().unwrap();
+        });
+        let manifest: Value = serde_json::from_slice(&fs::read(dir.0.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(manifest["unknownField"], "preserved");
+        assert_eq!(manifest["title"], "fixture title");
+        assert_eq!(manifest["description"], "fixture description");
+        assert_eq!(manifest["status"], "READY_RENDER");
+        assert_eq!(manifest["tracksCount"], 1);
+        let actual = tauri::async_runtime::block_on(refresh_job(path, 1)).unwrap();
+        assert_eq!(actual["status"], "READY_RENDER");
+        assert_eq!(actual["tracksCount"], 1);
+    }
 
     #[test]
     fn task_runs_blocking_work_off_caller_thread_and_preserves_errors() {
