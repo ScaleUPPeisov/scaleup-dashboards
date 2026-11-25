@@ -295,6 +295,10 @@ pub fn import_images(
         lib.channel_name = channel_name.to_string();
     }
     let mut out = ImageImportResult::default();
+    let mut known_hashes: HashSet<String> = lib.assets.iter()
+        .filter(|asset| asset.channel_id == channel_id && asset.status != "MISSING")
+        .map(|asset| asset.sha256.clone())
+        .collect();
     for raw in files {
         let src = PathBuf::from(&raw);
         if !src.is_file() || !is_supported_image(&src) {
@@ -302,7 +306,7 @@ pub fn import_images(
             continue;
         }
         let sha = hash_file(&src)?;
-        if lib.assets.iter().any(|x| x.channel_id == channel_id && x.sha256 == sha && x.status != "MISSING") {
+        if known_hashes.contains(&sha) {
             out.duplicates += 1;
             continue;
         }
@@ -319,6 +323,7 @@ pub fn import_images(
             return Err("Копия изображения не прошла проверку размера".into());
         }
         fs::rename(&tmp, &dst).map_err(|e| format!("Не удалось завершить импорт изображения: {e}"))?;
+        known_hashes.insert(sha.clone());
         lib.assets.push(ImageAsset {
             asset_id,
             channel_id: channel_id.to_string(),
@@ -346,12 +351,14 @@ pub fn mark_assigned(
     let lock = image_library_lock(workspace, channel_id)?;
     let _guard = lock.lock().map_err(|_| "Materials library lock poisoned".to_string())?;
     let mut lib = load_library(workspace, channel_id)?;
+    let mut indexes = HashMap::with_capacity(lib.assets.len());
+    for (index, asset) in lib.assets.iter().enumerate() {
+        indexes.entry(asset.asset_id.clone()).or_insert(index);
+    }
     let now = Utc::now().to_rfc3339();
     for row in assignments {
-        let asset = lib
-            .assets
-            .iter_mut()
-            .find(|x| x.asset_id == row.asset_id)
+        let asset = indexes.get(&row.asset_id)
+            .and_then(|index| lib.assets.get_mut(*index))
             .ok_or_else(|| format!("Image asset {} не найден", row.asset_id))?;
         if asset.channel_id != channel_id {
             return Err("BLOCK: imageAsset.channelId != project.channelId".into());
@@ -379,9 +386,13 @@ pub fn mark_rendered_used(
     let lock = image_library_lock(workspace, channel_id)?;
     let _guard = lock.lock().map_err(|_| "Materials library lock poisoned".to_string())?;
     let mut lib = load_library(workspace, channel_id)?;
+    let mut indexes = HashMap::with_capacity(lib.assets.len());
+    for (index, asset) in lib.assets.iter().enumerate() {
+        indexes.entry(asset.asset_id.clone()).or_insert(index);
+    }
     let mut changed = false;
     for row in rows {
-        let Some(asset) = lib.assets.iter_mut().find(|x| x.asset_id == row.asset_id) else { continue };
+        let Some(asset) = indexes.get(&row.asset_id).and_then(|index| lib.assets.get_mut(*index)) else { continue };
         if asset.channel_id != channel_id {
             return Err("BLOCK: imageAsset.channelId != render channelId".into());
         }
@@ -640,6 +651,20 @@ mod tests {
         assert_eq!(b.added, 0);
         assert_eq!(b.duplicates, 1);
         assert_eq!(b.available, 1);
+        let _ = fs::remove_dir_all(w);
+    }
+
+    #[test]
+    fn duplicate_images_within_one_import_are_not_copied_twice() {
+        let w = temp_workspace("batch-dedupe");
+        let first = w.join("first.jpg");
+        let second = w.join("second.jpg");
+        write_image(&first, b"same-image");
+        write_image(&second, b"same-image");
+        let result = import_images(w.to_str().unwrap(), "neon", "Neon", vec![
+            first.to_string_lossy().into_owned(), second.to_string_lossy().into_owned(),
+        ]).unwrap();
+        assert_eq!((result.added, result.duplicates, result.available), (1, 1, 1));
         let _ = fs::remove_dir_all(w);
     }
 
