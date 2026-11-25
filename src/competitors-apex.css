@@ -1,0 +1,20 @@
+/* APEX competitor workspace: compact hierarchy, no decorative motion. */
+.competitorsV31 { color: var(--text); }
+.competitorsV31 .pageHeader { gap: 20px; align-items: start; }
+.competitorsV31 .pageHeader p { color: var(--muted); }
+.competitorsV31 .quotaPreflight { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+.competitorsV31 .competitorAdd,.competitorsV31 .competitorCompare,.competitorsV31 .competitorCard { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: none; }
+.competitorsV31 .competitorAdd { gap: 12px; align-items: end; }
+.competitorsV31 .competitorAdd h2 { margin: 0; font-size: 16px; }
+.competitorsV31 input { min-height: 40px; color: var(--text); background: #111218; border: 1px solid var(--line); }
+.competitorsV31 .competitorGrid { gap: 12px; }
+.competitorsV31 .competitorCard { padding: 16px; }
+.competitorsV31 .competitorCard header { gap: 12px; }
+.competitorsV31 .competitorMetrics { gap: 10px; }
+.competitorsV31 .competitorMetrics span { background: transparent; box-shadow: none; border-color: var(--line); }
+.competitorsV31 .competitorMetrics small,.competitorsV31 .competitorMeta { color: var(--muted); }
+.competitorsV31 .competitorMore { border-top: 1px solid var(--line); margin-top: 12px; }
+.competitorsV31 .competitorMore summary { cursor: pointer; padding: 12px 0; color: #c7bfff; }
+.competitorsV31 .competitorMore summary:focus-visible,.competitorsV31 button:focus-visible,.competitorsV31 input:focus-visible { outline: 2px solid #c1b6ff; outline-offset: 2px; }
+.competitorsV31 .competitorVideos img,.competitorsV31 .competitorCard header img { object-fit: cover; }
+@media (max-width: 1100px) { .competitorsV31 .competitorAdd { display: flex; flex-wrap: wrap; } .competitorsV31 .competitorAdd input { flex: 1 1 200px; } }
