@@ -10,6 +10,8 @@ import {journal} from './activityJournalRuntime';
 import {resolveOAuthKeychainErrors} from './errorHistory';
 import {humanizeError} from './errorCenter';
 import {notifyYoutubeOauthStateChanged} from './youtubeOauthState';
+import {accountAccessLabel} from './accountApexStatus';
+import './accounts-apex.css';
 
 type BrowserOption={id:string;label:string;available:boolean};
 type DuplicateChannel={profileId:string;channelId?:string;title?:string};
@@ -360,14 +362,15 @@ export function AccountsPage(){
  const oauthNotChecked=Math.max(0,profiles.length-oauthOperational-keychainBlocked-reconnectRequired);
 
  return <>
-  <div className="pageHeader">
-   <div><small>ACCOUNT CENTER</small><h1>Аккаунты YouTube</h1><p>GLOBAL OAuth Client настраивается один раз. «+ Добавить канал» открывает браузер, а Finder используется только для отдельного импорта credentials.json.</p></div>
+  <div className="accountsApex">
+  <header className="accountsApexHeader">
+   <div><small>YOUTUBE</small><h1>Аккаунты</h1><p>Подключение каналов и состояние доступа</p></div>
    <div className="headerActions">
     <button disabled={checking||!profiles.length} onClick={checkAll}>{checking?'Проверяю OAuth…':'✓ Проверить OAuth'}</button>
     <button disabled={allStats.running||!profiles.length} onClick={()=>void refreshAllStats(true)}>{allStats.running?`↻ ${allStats.done} / ${allStats.total}`:'↻ Обновить все'}</button>
     <button className="primary compactAction" disabled={busy} onClick={()=>void askBrowser('')}>+ Добавить канал</button>
    </div>
-  </div>
+  </header>
 
   {allStats.running&&<div className="statsRefreshProgress"><b>Обновление каналов</b><span>{allStats.done} / {allStats.total}</span><i style={{width:`${allStats.total?Math.round(allStats.done/allStats.total*100):0}%`}}/></div>}
   {recovery?.running&&<div className="statsRefreshProgress"><b>Восстановление подключений без повторного входа</b><span>{recovery.done} / {recovery.total}</span><i style={{width:`${recovery.total?Math.round(recovery.done/recovery.total*100):0}%`}}/></div>}
@@ -375,7 +378,7 @@ export function AccountsPage(){
 
   <input ref={file} hidden type="file" accept=".json,application/json" onChange={e=>{void importCredentials(e.target.files);e.currentTarget.value=''}}/>
 
-  <section className="panel googleConfigCard">
+  <details className="accountsApexConfig"><summary><span>Настройки подключения Google</span><small>{!config?'Нет данных':oauthReady?'Настроено':'Требует внимания'}</small></summary><section className="panel googleConfigCard">
    <div><small>GLOBAL GOOGLE CONFIG</small><h3>Одна конфигурация для всех каналов</h3><p>credentials.json нужен один раз на весь VYRON. После этого каждый канал подключается только через выбор браузера и нужного Google-аккаунта.</p></div>
    <div className="configChecks">
     <span className={config?.configured?'good':''}>OAuth Client ID <b>{config?.configured?'✓':'—'}</b></span>
@@ -388,10 +391,10 @@ export function AccountsPage(){
    {oauthRepairRequired&&<div className="publisherNotice"><b>Нужно восстановить сохранённый OAuth Client</b><p>Сначала попробуйте локальное восстановление старой защищённой записи. Повторный credentials.json остаётся аварийным fallback только если сохранённого secret действительно больше нет.</p>{config?.secureStorageErrorCode&&<details><summary>Технические сведения</summary><small>{config.secureStorageErrorCode}</small></details>}<button className="primary" disabled={busy} onClick={()=>void recoverSavedGlobalOauth()}>Восстановить сохранённый доступ</button></div>}
    {!oauthReady&&!oauthRepairRequired&&!oauthKeychainBlocked&&<div className="publisherNotice"><b>OAuth Client настроен не полностью</b><p>Нужен один credentials.json текущего OAuth Client VYRON. Finder откроется только после явного нажатия кнопки импорта ниже.</p></div>}
    <div className="googleConfigActions"><button className="primary" disabled={busy} onClick={()=>void recoverSavedGlobalOauth()}>Восстановить сохранённый доступ</button><button disabled={busy} onClick={()=>file.current?.click()}>{oauthReady?'Заменить credentials.json':'Загрузить credentials.json'}</button><label>Public API Key<input type="password" placeholder="опционально" value={settings.youtubeApiKey} onChange={e=>patchSettings({youtubeApiKey:e.target.value.trim()})}/></label></div>
-  </section>
+  </section></details>
 
   <section className="panel accountsPanel">
-   <div className="panelHead"><div><small>YOUTUBE ACCOUNTS</small><h3>{profiles.length?`${profiles.length} OAuth profiles`:orphanMappings.length?`Профили требуют восстановления • ${orphanMappings.length} mappings`:'Аккаунтов пока нет'}</h3>{reconciliation&&<p>Каналов: {reconciliation.channelsTotal} • profiles: {reconciliation.profilesTotal} • mappings: {reconciliation.channelsWithYoutubeProfileId}</p>}{profiles.length>0&&<p>OAuth operational: <b>{oauthOperational}</b> • Keychain blocked: <b>{keychainBlocked}</b> • Reconnect required: <b>{reconnectRequired}</b> • Not checked: <b>{oauthNotChecked}</b></p>}</div>{keychainBlocked>0&&<button disabled={checking} onClick={checkAll}>Повторить безопасную проверку</button>}</div>
+   <div className="panelHead"><div><small>КАНАЛЫ</small><h2>{profiles.length?`Профили · ${profiles.length}`:orphanMappings.length?`Требуют восстановления · ${orphanMappings.length}`:'Аккаунтов пока нет'}</h2>{reconciliation&&<details><summary>Данные привязки</summary><p>Каналов: {reconciliation.channelsTotal} · профилей: {reconciliation.profilesTotal} · привязок: {reconciliation.channelsWithYoutubeProfileId}</p></details>}{profiles.length>0&&<p>Доступны: <b>{oauthOperational}</b> · Доступ к Keychain заблокирован: <b>{keychainBlocked}</b> · Нужен вход: <b>{reconnectRequired}</b> · Не проверено: <b>{oauthNotChecked}</b></p>}</div>{keychainBlocked>0&&<button disabled={checking} onClick={checkAll}>Повторить безопасную проверку</button>}</div>
    {profiles.length>0&&<details className="advancedPanel"><summary>OAuth credential diagnostics • без secret values</summary><div className="logs">{profiles.map(p=>{const x=credentialStates[p.id],denial=x?.keychainDenial,meta=x?.canonicalRefreshMetadata;return <div key={p.id}><b>{p.channelTitle||p.channelId||p.id}</b><small>Profile UUID: {p.id} • Channel ID: {p.channelId||'—'}</small><small>Canonical refresh: {x?.canonicalRefreshPresent?'PRESENT':'ABSENT'} • current read: {x?.canonicalRefreshAccessibleThisProcess?'ACCESSIBLE':denial?'DENIED':'NOT CHECKED'} • state: {x?.credentialState||'NOT_CHECKED'}</small><small>Metadata: {meta?.metadataEnumeration||'NOT CHECKED'} • generation: {x?.credentialGeneration??0} • OSStatus: {typeof denial?.currentOsstatus==='number'?denial.currentOsstatus:'unknown'} • root: {denial?.originalErrorCode||'—'} • legacy blocked: {x?.legacyBlockedAccounts?.length||0} • last validation: {x?.lastValidationResult||'NOT_RUN'} • {x?.lastValidatedAt?new Date(x.lastValidatedAt).toLocaleString('ru-RU'):'—'}</small></div>})}</div></details>}
    {!profiles.length
     ?<div className="empty">{orphanMappings.length?<><b>Метаданные OAuth-профилей не найдены, но каналы сохранены</b><p>Ничего не удалено автоматически. Исправьте GLOBAL OAuth и проверьте OAuth metadata; массовое переподключение не запускается.</p>{orphanMappings.slice(0,31).map(x=><p key={x.channelId}><b>{x.channelName}</b> • ORPHAN_MAPPING • {x.youtubeProfileId}</p>)}</>:<><b>Подключи первый YouTube-канал</b><p>Настройте GLOBAL OAuth Client один раз, затем нажмите «+ Добавить канал», выберите браузер и нужный Google-аккаунт.</p></>}</div>
@@ -400,19 +403,19 @@ export function AccountsPage(){
       const oauthOk=!!h?.ok||credentialState==='READY'||p.credentialStatus==='WORKING',oauthNeedsGlobal=oauthRepairRequired&&!h?.ok;
       const syncOk=!!(stats?.statisticsUpdatedAt||stats?.updatedAt)&&!stats?.syncWarning;
       return <article id={`oauth-profile-${p.id}`} className="accountRow accountRowStats" key={p.id}>
-       {(h?.thumbnail||stats?.thumbnail)?<img src={h?.thumbnail||stats?.thumbnail} loading="lazy"/>:<div className="accountAvatar">YT</div>}
+       {(h?.thumbnail||stats?.thumbnail)?<img src={h?.thumbnail||stats?.thumbnail} alt="" loading="lazy"/>:<div className="accountAvatar" aria-hidden="true">YT</div>}
        <div className="accountMain">
         <b>{h?.channelTitle||p.channelTitle||stats?.channelTitle||'YouTube канал'}</b>
         <small>{stats?.handle?`${stats.handle} • `:''}{p.channelId||'Channel ID ещё не определён'}</small>{p.googleEmail&&<small>Google: {p.googleEmail}</small>}
         <div className="accountBadges">
-         <span className={oauthOk?'good':credentialState==='KEYCHAIN_BLOCKED'?'warn':''}>OAuth: {oauthOk?'READY':oauthNeedsGlobal?'GLOBAL REPAIR':credentialState==='KEYCHAIN_BLOCKED'?'KEYCHAIN BLOCKED':credentialState==='RECONNECT_REQUIRED'||credentialState==='MISSING'?'RECONNECT REQUIRED':credentialState==='WRONG_CHANNEL'?'WRONG CHANNEL':'NOT CHECKED'}</span>
-         <span className={syncOk?'good':stats?.syncWarning?'warn':''}>YouTube API: {syncOk?'OK':stats?.syncWarning?'WARNING':'CACHE'}</span>
-         {p.googleEmail&&<span>Google: {p.googleEmail}</span>}{p.preferredBrowser&&<span>Браузер: {p.preferredBrowser}</span>}
+         <span className={oauthOk?'good':credentialState==='KEYCHAIN_BLOCKED'?'warn':''}>Доступ: {accountAccessLabel(oauthOk,oauthNeedsGlobal,credentialState)}</span>
+         <span className={syncOk?'good':stats?.syncWarning?'warn':''}>Статистика: {syncOk?'обновлена':stats?.syncWarning?'есть предупреждение':'сохранённые данные'}</span>
+         {p.preferredBrowser&&<span>Браузер: {p.preferredBrowser}</span>}
         </div>
         <div className="accountStatsGrid">
-         <span><small>👥 Подписчики</small><b title={stats?.hiddenSubscriberCount?'Подписчики скрыты владельцем канала':exactChannelStat(stats?.subscriberCount??stats?.subscribers)}>{subscriberStatLabel(stats)}</b></span>
-         <span><small>👁 Всего просмотров</small><b title={exactChannelStat(stats?.viewCount??stats?.views)}>{compactChannelStat(stats?.viewCount??stats?.views)}</b></span>
-         <span><small>🎬 Видео</small><b title={exactChannelStat(stats?.videoCount??stats?.videos)}>{compactChannelStat(stats?.videoCount??stats?.videos)}</b></span>
+         <span><small>Подписчики</small><b title={stats?.hiddenSubscriberCount?'Подписчики скрыты владельцем канала':exactChannelStat(stats?.subscriberCount??stats?.subscribers)}>{subscriberStatLabel(stats)}</b></span>
+         <span><small>Всего просмотров</small><b title={exactChannelStat(stats?.viewCount??stats?.views)}>{compactChannelStat(stats?.viewCount??stats?.views)}</b></span>
+         <span><small>Видео</small><b title={exactChannelStat(stats?.videoCount??stats?.videos)}>{compactChannelStat(stats?.videoCount??stats?.videos)}</b></span>
         </div>
         <div className={stats?.syncWarning?'statsState warn':'statsState'}>{channelStatsStatusLabel(stats,!!refreshingStats[p.id])}</div>
        </div>
@@ -431,6 +434,7 @@ export function AccountsPage(){
      })}</div>
    }
   </section>
+  </div>
 
   {oauthSetupOpen&&<ModalPortal onClose={()=>{setOauthSetupOpen(false);setPendingAddAfterGlobalRepair(false)}}>
    <section className="confirmModal oauthSetupModal" onMouseDown={e=>e.stopPropagation()}>

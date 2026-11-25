@@ -6,7 +6,7 @@ const read=(p:string)=>readFileSync(p,'utf8');
 describe('VYRON 2.1.13 existing channel rebind',()=>{
  it('accounts page does not call a profile count connected',()=>{
   const ui=read('src/AccountsPage.tsx');
-  expect(ui).toContain('OAuth profiles');
+  expect(ui).toContain('Профили · ${profiles.length}');
   expect(ui).not.toContain("${profiles.length} подключено");
  });
  it('new channel OAuth is gated by complete GLOBAL OAuth config without hiding Add Channel',()=>{

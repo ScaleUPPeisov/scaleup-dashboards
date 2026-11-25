@@ -137,9 +137,9 @@ describe('VYRON 2.1.15 RC1 Add Channel and channel statistics regression',()=>{
     expect(bar).toContain('Подписчики');
     expect(bar).toContain('<small>Просмотры</small>');
     expect(bar).toContain('Видео');
-    expect(accounts).toContain('👥 Подписчики');
-    expect(accounts).toContain('👁 Всего просмотров');
-    expect(accounts).toContain('🎬 Видео');
+    expect(accounts).toContain('<small>Подписчики</small>');
+    expect(accounts).toContain('<small>Всего просмотров</small>');
+    expect(accounts).toContain('<small>Видео</small>');
     expect(css).toContain('.channelContextBar');
   });
 
