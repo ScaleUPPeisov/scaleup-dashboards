@@ -2,6 +2,7 @@
 import AppKit
 import WebKit
 import Foundation
+import Darwin
 
 final class Probe: NSObject, WKScriptMessageHandler {
     private(set) var webView: WKWebView!
@@ -40,8 +41,9 @@ final class Probe: NSObject, WKScriptMessageHandler {
         print(status); fflush(stdout)
         webView.stopLoading()
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "probe")
-        NSApplication.shared.stop(nil)
-        CFRunLoopStop(CFRunLoopGetMain())
+        // Fixture-only process; don't rely on an invisible AppKit run loop
+        // exiting after stop while preserving the captured evidence.
+        exit(0)
     }
 }
 
