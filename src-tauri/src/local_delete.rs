@@ -161,9 +161,21 @@ pub fn vyron_filesystem_preview_impl(root:&str,channel_names:&[String])->Result<
         mappings,legacy_folders,conflicts,will_delete:0,render_changed:false
     })
 }
+async fn run_filesystem_preview_task<T, F>(work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|e| format!("VYRON_FILESYSTEM_PREVIEW_TASK_FAILED: {e}"))?
+}
+
 #[tauri::command]
-pub fn vyron_filesystem_preview(root:String,channel_names:Vec<String>)->Result<VyronFilesystemPreview,String>{
-    vyron_filesystem_preview_impl(&root,&channel_names)
+pub async fn vyron_filesystem_preview(root:String,channel_names:Vec<String>)->Result<VyronFilesystemPreview,String>{
+    // A recursive count can wait on an external disk. The apply path still
+    // calls the synchronous helper itself and revalidates before any writes.
+    run_filesystem_preview_task(move || vyron_filesystem_preview_impl(&root,&channel_names)).await
 }
 pub fn vyron_filesystem_apply_impl(root:&str,channel_names:&[String])->Result<VyronFilesystemApplyResult,String>{
     let preview=vyron_filesystem_preview_impl(root,channel_names)?;
@@ -440,6 +452,36 @@ mod tests {
         let p = std::env::temp_dir().join(format!("vyron-ready-delete-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&p).unwrap();
         p
+    }
+    #[test]
+    fn filesystem_preview_worker_is_off_thread_and_propagates_panics() {
+        let caller = std::thread::current().id();
+        let worker = tauri::async_runtime::block_on(run_filesystem_preview_task(|| Ok(std::thread::current().id()))).unwrap();
+        assert_ne!(caller, worker);
+        let error = tauri::async_runtime::block_on(run_filesystem_preview_task::<(), _>(|| panic!("fixture panic"))).unwrap_err();
+        assert!(error.starts_with("VYRON_FILESYSTEM_PREVIEW_TASK_FAILED:"));
+    }
+    #[test]
+    fn filesystem_preview_async_matches_synchronous_read_only_preview() {
+        struct Fixture(PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
+        }
+        let root = Fixture(temp_root());
+        let legacy = root.0.join("Fixture Channel");
+        fs::create_dir_all(legacy.join("nested")).unwrap();
+        fs::write(legacy.join("a.mp3"), b"audio fixture").unwrap();
+        fs::write(legacy.join("nested").join("b.jpg"), b"image fixture").unwrap();
+        let names = vec!["Fixture Channel".to_string(), "Other Channel".to_string()];
+        let path = root.0.to_string_lossy().into_owned();
+        let expected = vyron_filesystem_preview_impl(&path, &names).unwrap();
+        let actual = tauri::async_runtime::block_on(vyron_filesystem_preview(path, names)).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(actual.mappings[0].source_files, 2);
+        assert_eq!(fs::read(legacy.join("a.mp3")).unwrap(), b"audio fixture");
+        assert_eq!(fs::read(legacy.join("nested").join("b.jpg")).unwrap(), b"image fixture");
+        assert!(!root.0.join("Projects").exists());
+        assert!(!root.0.join("Render").exists());
     }
     #[test]
     fn discovers_sibling_render_and_projects_by_exact_normalized_channel_name(){
