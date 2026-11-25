@@ -676,6 +676,20 @@ mod filesystem_task_tests {
         assert_eq!(actual["tracksCount"], 1);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn project_lock_unifies_symlink_aliases() {
+        use std::os::unix::fs::symlink;
+        struct TempDir(PathBuf);
+        impl Drop for TempDir { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
+        let dir = TempDir(std::env::temp_dir().join(format!("vyron-project-alias-{}", Uuid::new_v4())));
+        fs::create_dir_all(dir.0.join("project")).unwrap();
+        symlink(dir.0.join("project"), dir.0.join("alias")).unwrap();
+        let direct = project_lock(&dir.0.join("project")).unwrap();
+        let alias = project_lock(&dir.0.join("alias")).unwrap();
+        assert!(Arc::ptr_eq(&direct, &alias));
+    }
+
     #[test]
     fn task_runs_blocking_work_off_caller_thread_and_preserves_errors() {
         let caller = std::thread::current().id();
