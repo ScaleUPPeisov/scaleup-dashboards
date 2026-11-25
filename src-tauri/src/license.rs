@@ -31,7 +31,7 @@ struct WindowsLicenseCache {
 }
 
 fn root_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let d = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let d = crate::apex_paths::data_dir(app)?;
     fs::create_dir_all(&d).map_err(|e| e.to_string())?;
     Ok(d)
 }

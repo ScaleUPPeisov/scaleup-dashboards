@@ -1453,7 +1453,7 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
         }
         let destination=PathBuf::from(&request.destination);
         if !destination.is_dir(){return Err("Выбранная папка не существует".into())}
-        let root=app.path().app_data_dir().map_err(|e|e.to_string())?.join("AIAnalytics");
+        let root=crate::apex_paths::data_dir(&app)?.join("AIAnalytics");
         let cache_root=root.join("cache");
         if offline {
             if !cache_root.is_dir(){return Err("AI_OFFLINE_CACHE_NOT_FOUND".into())}
@@ -2060,7 +2060,7 @@ pub async fn analytics360_winners(app:AppHandle,channel_ids:Vec<String>)->Result
                 return Err("WINNER_INVALID_OR_DUPLICATE_CHANNEL_ID".into())
             }
         }
-        let cache_root=app.path().app_data_dir().map_err(|e|e.to_string())?
+        let cache_root=crate::apex_paths::data_dir(&app)?
             .join("AIAnalytics").join("cache");
         tauri::async_runtime::spawn_blocking(move||{
             let mut summaries=Vec::new();
@@ -2146,7 +2146,7 @@ pub async fn youtube_ai_sync(app:AppHandle,request:AiExportRequest)->Result<Valu
                 return Err("Некорректный или дублирующийся YouTube Channel ID".into())
             }
         }
-        let root=app.path().app_data_dir().map_err(|e|e.to_string())?.join("AIAnalytics").join("cache");
+        let root=crate::apex_paths::data_dir(&app)?.join("AIAnalytics").join("cache");
         fs::create_dir_all(&root).map_err(|e|e.to_string())?;
         let client=reqwest::Client::builder().timeout(Duration::from_secs(60)).build().map_err(|e|e.to_string())?;
         let run=Uuid::new_v4().to_string();

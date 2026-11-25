@@ -173,10 +173,7 @@ pub fn store_profile_avatar(
         return Err("AVATAR_UNSUPPORTED_FORMAT".into());
     }
     let safe_profile = safe_name(&profile_id);
-    let root = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("AVATAR_APP_DATA_DIR: {e}"))?
+    let root = crate::apex_paths::data_dir(&app)?
         .join("UserProfiles")
         .join(safe_profile);
     fs::create_dir_all(&root).map_err(|e| format!("AVATAR_CREATE_DIR: {e}"))?;

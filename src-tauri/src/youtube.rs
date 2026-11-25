@@ -78,7 +78,7 @@ fn now_ts() -> i64 {
         .as_secs() as i64
 }
 fn store_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let dir = crate::apex_paths::data_dir(app)?;
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir.join("youtube-oauth.json"))
 }
@@ -138,7 +138,7 @@ impl Default for KeychainMigrationV2State{
  }}
 }
 fn keychain_migration_v2_path(app:&AppHandle)->Result<PathBuf,String>{
- let dir=app.path().app_data_dir().map_err(|e|e.to_string())?;
+ let dir=crate::apex_paths::data_dir(app)?;
  fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
  Ok(dir.join("keychain-migration-v2.json"))
 }
@@ -881,7 +881,7 @@ struct GoogleConfig {
     api_key_present: bool,
 }
 fn google_config_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let dir = crate::apex_paths::data_dir(app)?;
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir.join("google-config.json"))
 }
@@ -1412,10 +1412,8 @@ pub async fn youtube_cache_thumbnail(
     if id.is_empty() {
         return Err("Video ID пуст".into());
     }
-    let dir = app
-        .path()
-        .app_cache_dir()
-        .map_err(|e| e.to_string())?
+    let dir = crate::apex_paths::data_dir(&app)?
+        .join("cache")
         .join("thumbnails");
     fs::create_dir_all(&dir).map_err(|e| format!("Thumbnail cache: {e}"))?;
     let safe = id
@@ -1628,7 +1626,7 @@ pub fn youtube_oauth_reconciliation_diagnostics(app:AppHandle)->Result<Value,Str
     let store=load_store_metadata(&app)?;
     let profile_ids=store.profiles.iter().map(|p|p.id.clone()).collect::<std::collections::HashSet<_>>();
     let profile_channels=store.profiles.iter().filter_map(|p|p.channel_id.clone().map(|c|(p.id.clone(),c))).collect::<Vec<_>>();
-    let state_path=app.path().app_data_dir().map_err(|e|e.to_string())?.join("state.json");
+    let state_path=crate::apex_paths::data_dir(&app)?.join("state.json");
     let state:Value=if state_path.exists(){
       let b=fs::read(&state_path).map_err(|e|format!("STATE_DIAGNOSTIC_READ: {e}"))?;
       serde_json::from_slice(&b).unwrap_or_else(|_|json!({}))
@@ -2996,7 +2994,7 @@ struct PersistedUploadSessions {
     sessions: Vec<PersistedUploadSession>,
 }
 fn upload_sessions_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let dir = crate::apex_paths::data_dir(app)?;
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir.join("youtube-upload-sessions.json"))
 }
@@ -4311,10 +4309,7 @@ pub async fn youtube_backup_existing_videos(
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
         .collect::<String>();
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
+    let dir = crate::apex_paths::data_dir(&app)?
         .join("Backup")
         .join("Youtube")
         .join(safe);
