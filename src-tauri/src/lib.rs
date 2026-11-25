@@ -8,6 +8,8 @@ mod license;
 mod storage;
 mod security;
 mod oauth_vault;
+#[cfg(all(test, target_os = "macos"))]
+mod oauth_snapshot_transaction;
 mod files;
 mod system;
 mod youtube;
