@@ -36,6 +36,16 @@ export type BatchPlan={
 
 export type AttentionSeverity='critical'|'warning'|'info';
 export type AttentionItem={channelId:string;channelName:string;severity:AttentionSeverity;title:string;detail:string};
+/** Group once while preserving the original channel coercion and job order. */
+export function indexJobsByChannel(jobs:VideoJob[]){
+  const result=new Map<string,VideoJob[]>();
+  for(const job of Array.isArray(jobs)?jobs:[]){
+    if(!isRecord(job))continue;
+    const id=String(job.channelId||''),rows=result.get(id);
+    if(rows)rows.push(job);else result.set(id,[job]);
+  }
+  return result;
+}
 
 export function addCalendarDays(dateKey:string,days:number){
   const m=dateKey.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -104,9 +114,10 @@ export function buildAttentionItems(
   batchSize:number
 ){
   const items:AttentionItem[]=[];
+  const indexed=indexJobsByChannel(jobs);
   for(const channel of (Array.isArray(channels)?channels:[]).filter(c=>c&&c.enabled)){
     const r=runway&&typeof runway==='object'?runway[channel.id]:undefined;
-    const p=productionReadiness(channel,jobs,batchSize);
+    const p=productionReadiness(channel,indexed.get(channel.id)||[],batchSize);
     const channelName=typeof channel.name==='string'&&channel.name.trim()?channel.name:'Канал без названия';
     if(!r||r.runwayDays===undefined){
       items.push({channelId:channel.id,channelName,severity:'warning',title:'Нет подтверждённого расписания',detail:'Нужна ручная синхронизация расписания внутри YouTube.'});
@@ -136,6 +147,7 @@ export function productionForecast(
   now=new Date()
 ){
   const active=(Array.isArray(channels)?channels:[]).filter(c=>c&&c.enabled);
+  const indexed=indexJobsByChannel(jobs);
   const today=krasnoyarskClock(now).dateKey;
   let dueNow=0,next7Days=0,critical=0,readyToYoutube=0,missingSeo=0;
   for(const channel of active){
@@ -148,7 +160,7 @@ export function productionForecast(
         if(days!==undefined&&days>=0&&days<=7)next7Days++;
       }
     }
-    const p=productionReadiness(channel,jobs,batchSize);
+    const p=productionReadiness(channel,indexed.get(channel.id)||[],batchSize);
     readyToYoutube+=p.readyToYoutube;
     missingSeo+=Math.max(0,p.videos-p.seo);
   }
