@@ -3,6 +3,7 @@ import {api} from './api';
 import {metadataQueuePublishAtIsFuture,metadataQueueRowAsImported} from './metadataQueue';
 import {notifyWarning} from './notificationCenter';
 import {useApp} from './store';
+import {metadataAssignmentInputsChanged,metadataAssignmentKey,metadataChannelsNeedingAssignment,needsMetadataAssignment} from './metadataAssignmentCandidates';
 
 const CHANGE_EVENT='vyron:metadata-queue-changed';
 
@@ -11,12 +12,11 @@ export function notifyMetadataQueueChanged(){
 }
 
 export function MetadataQueueAssignmentBridge(){
-  const channels=useApp(s=>s.channels);
-  const jobs=useApp(s=>s.jobs);
   const running=useRef(false);
   const rerun=useRef(false);
   const attempted=useRef(new Set<string>());
   const timer=useRef<number|undefined>(undefined);
+  const wake=useRef<(()=>void)|undefined>(undefined);
 
   useEffect(()=>{
     let alive=true;
@@ -26,11 +26,9 @@ export function MetadataQueueAssignmentBridge(){
       running.current=true;
       try{
         const state=useApp.getState();
-        const candidateChannelIds=new Set(
-          state.jobs
-            .filter(j=>Boolean(j.folder)&&!j.youtubeVideoId&&j.metadataSource!=='queue'&&j.metadataSource!=='import'&&j.metadataSource!=='ai'&&!j.metadataLocked)
-            .map(j=>j.channelId)
-        );
+        // Avoid entering the synchronous queue IPC for a channel whose jobs
+        // were already attempted. Queue-change events clear this set.
+        const candidateChannelIds=metadataChannelsNeedingAssignment(state.jobs,attempted.current);
         for(const channelId of candidateChannelIds){
           if(!alive)return;
           const channel=useApp.getState().channels.find(c=>c.id===channelId);
@@ -38,12 +36,12 @@ export function MetadataQueueAssignmentBridge(){
           const summary=await api.metadataQueueSummary(channel.id,channel.name).catch(()=>null);
           if(!summary||summary.available<=0)continue;
           const candidates=useApp.getState().jobs
-            .filter(j=>j.channelId===channel.id&&Boolean(j.folder)&&!j.youtubeVideoId&&j.metadataSource!=='queue'&&j.metadataSource!=='import'&&j.metadataSource!=='ai'&&!j.metadataLocked)
+            .filter(j=>j.channelId===channel.id&&needsMetadataAssignment(j))
             .sort((a,b)=>a.number-b.number)
-            .filter(j=>!attempted.current.has(channel.id+':'+j.id+':'+j.folder))
+            .filter(j=>!attempted.current.has(metadataAssignmentKey(j)))
             .slice(0,summary.available);
           if(!candidates.length)continue;
-          for(const job of candidates)attempted.current.add(channel.id+':'+job.id+':'+job.folder);
+          for(const job of candidates)attempted.current.add(metadataAssignmentKey(job));
           const reserved=await api.metadataQueueReserveBatch(channel.id,channel.name,candidates.map(job=>({
             jobId:job.id,videoNumber:job.number,projectFolder:job.folder||undefined
           }))).catch(error=>{
@@ -72,25 +70,33 @@ export function MetadataQueueAssignmentBridge(){
         }
       }finally{
         running.current=false;
-        if(rerun.current){rerun.current=false;window.setTimeout(()=>void execute(),80)}
+        if(rerun.current){rerun.current=false;wake.current?.()}
       }
     };
-    const schedule=()=>{
-      if(timer.current)window.clearTimeout(timer.current);
-      timer.current=window.setTimeout(()=>void execute(),220);
+    const schedule=(delay=220)=>{
+      if(!alive)return;
+      if(timer.current!==undefined)window.clearTimeout(timer.current);
+      timer.current=window.setTimeout(()=>{timer.current=undefined;void execute()},delay);
     };
+    const wakeCurrent=()=>schedule(80);
+    wake.current=wakeCurrent;
     const onChanged=()=>{attempted.current.clear();schedule()};
     window.addEventListener(CHANGE_EVENT,onChanged);
+    // Keep this global bridge outside React's jobs subscription: most job
+    // patches do not affect assignment and should not rerender or rescan it.
+    const unsubscribe=useApp.subscribe((next,previous)=>{
+      if(metadataAssignmentInputsChanged(previous,next))schedule();
+    });
     schedule();
     return()=>{
       alive=false;
-      if(timer.current)window.clearTimeout(timer.current);
+      if(timer.current!==undefined)window.clearTimeout(timer.current);
+      timer.current=undefined;
+      if(wake.current===wakeCurrent)wake.current=undefined;
+      unsubscribe();
       window.removeEventListener(CHANGE_EVENT,onChanged);
     };
-  },[
-    channels.map(c=>c.id+':'+c.name).join('|'),
-    jobs.map(j=>j.id+':'+j.channelId+':'+j.number+':'+j.folder+':'+(j.metadataSource||'')+':'+String(j.metadataLocked||false)+':'+(j.youtubeVideoId||'')).join('|')
-  ]);
+  },[]);
 
   return null;
 }
