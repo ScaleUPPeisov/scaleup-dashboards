@@ -2661,7 +2661,13 @@ fn validate_manifest_projects(
     }
 }
 #[tauri::command]
-pub fn validate_production_batch(
+pub async fn validate_production_batch(
+    manifest_path: String,
+    endlume_path: String,
+) -> Result<Validation, String> {
+    run_production_worker(move || validate_production_batch_sync(manifest_path, endlume_path)).await
+}
+fn validate_production_batch_sync(
     manifest_path: String,
     endlume_path: String,
 ) -> Result<Validation, String> {
@@ -2669,7 +2675,14 @@ pub fn validate_production_batch(
     Ok(validate_manifest_projects(&m, &endlume_path, None))
 }
 #[tauri::command]
-pub fn validate_production_projects(
+pub async fn validate_production_projects(
+    manifest_path: String,
+    endlume_path: String,
+    project_ids: Vec<String>,
+) -> Result<Validation, String> {
+    run_production_worker(move || validate_production_projects_sync(manifest_path, endlume_path, project_ids)).await
+}
+fn validate_production_projects_sync(
     manifest_path: String,
     endlume_path: String,
     project_ids: Vec<String>,

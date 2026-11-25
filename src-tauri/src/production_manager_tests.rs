@@ -132,7 +132,7 @@ fn acceptance_30_images_500_tracks_30x15_flat_450() {
     }
     let fake = ws.parent().unwrap().join("ENDLUME Studio.app");
     fs::create_dir_all(&fake).unwrap();
-    let v = validate_production_batch(summary.manifest_path, fake.to_string_lossy().into_owned())
+    let v = tauri::async_runtime::block_on(validate_production_batch(summary.manifest_path, fake.to_string_lossy().into_owned()))
         .unwrap();
     assert_eq!(v.ready, 30);
     assert_eq!(v.errors, 0);
@@ -1115,6 +1115,49 @@ fn cached_music_name_sort_matches_original_comparator_and_stable_ties() {
         assert_eq!(tracks.iter().map(|t| (&t.track_id, &t.path)).collect::<Vec<_>>(),
             expected.iter().map(|t| (&t.track_id, &t.path)).collect::<Vec<_>>(), "size={size}");
     }
+}
+
+#[test]
+fn production_validation_worker_matches_sync_results_and_preserves_files() {
+    let caller = std::thread::current().id();
+    let worker = tauri::async_runtime::block_on(run_production_worker(|| Ok(std::thread::current().id()))).unwrap();
+    assert_ne!(caller, worker);
+    let root = std::env::temp_dir().join(format!("vyron-validation-worker-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let image = root.join("cover.jpg");
+    let audio = root.join("audio.mp3");
+    fs::write(&image, b"image-fixture").unwrap();
+    fs::write(&audio, b"audio-fixture").unwrap();
+    let manifest = BatchManifest {
+        batch_id: "batch".into(), tracks_per_project: 1,
+        projects: vec![
+            ManifestProject { project_id: "good".into(), folder_path: root.to_string_lossy().into_owned(),
+                image_path: image.to_string_lossy().into_owned(), sequence_fingerprint: "good".into(),
+                tracks: vec![ManifestTrack { path: audio.to_string_lossy().into_owned(), ..Default::default() }],
+                ..Default::default() },
+            ManifestProject { project_id: "bad".into(), folder_path: root.join("missing").to_string_lossy().into_owned(),
+                image_path: root.join("missing.jpg").to_string_lossy().into_owned(), sequence_fingerprint: "bad".into(),
+                ..Default::default() },
+        ], ..Default::default()
+    };
+    let path = root.join("batch.json");
+    atomic_json(&path, &manifest).unwrap();
+    let manifest_path = path.to_string_lossy().into_owned();
+    let endlume = root.join("fixture-endlume").to_string_lossy().into_owned();
+    let sync = validate_production_batch_sync(manifest_path.clone(), endlume.clone()).unwrap();
+    let actual = tauri::async_runtime::block_on(validate_production_batch(manifest_path.clone(), endlume.clone())).unwrap();
+    assert_eq!(serde_json::to_value(actual).unwrap(), serde_json::to_value(sync).unwrap());
+    let selected = vec!["good".to_string()];
+    let sync = validate_production_projects_sync(manifest_path.clone(), endlume.clone(), selected.clone()).unwrap();
+    let actual = tauri::async_runtime::block_on(validate_production_projects(manifest_path.clone(), endlume.clone(), selected)).unwrap();
+    assert_eq!(serde_json::to_value(actual).unwrap(), serde_json::to_value(sync).unwrap());
+    let missing = vec!["absent".to_string()];
+    let sync_err = validate_production_projects_sync(manifest_path.clone(), endlume.clone(), missing.clone()).unwrap_err();
+    let async_err = tauri::async_runtime::block_on(validate_production_projects(manifest_path, endlume, missing)).unwrap_err();
+    assert_eq!(async_err, sync_err);
+    assert_eq!(fs::read(image).unwrap(), b"image-fixture");
+    assert_eq!(fs::read(audio).unwrap(), b"audio-fixture");
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
