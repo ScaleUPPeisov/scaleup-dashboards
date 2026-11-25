@@ -41,7 +41,6 @@ export type OwnerYoutubeInventoryTotals={
   nextScheduledAt?:string;
 };
 
-const isFuture=(iso:string|undefined,now:number)=>Boolean(iso&&Number.isFinite(Date.parse(iso))&&Date.parse(iso)>now);
 const sameLocalDay=(iso:string|undefined,now:Date)=>{
   if(!iso)return false;
   const d=new Date(iso);
@@ -51,12 +50,18 @@ const sameLocalDay=(iso:string|undefined,now:Date)=>{
 export function ownerInventoryFromVideos(channelId:string,videos:YoutubeExistingVideo[],updatedAt?:string,syncInfo?:unknown,nowMs=Date.now()):OwnerYoutubeInventorySnapshot{
   const now=new Date(nowMs);
   let publicCount=0,privateCount=0,scheduled=0,unlisted=0,publishedToday=0;
-  const future:string[]=[];
+  let firstTime=Infinity,lastTime=-Infinity,nextScheduledAt:string|undefined,lastScheduledAt:string|undefined;
   for(const video of videos){
     const privacy=String(video.privacyStatus||'').toLowerCase();
     if(privacy==='private'){
-      if(isFuture(video.publishAt,nowMs)){scheduled++;future.push(video.publishAt!)}
-      else privateCount++;
+      const publishedAt=video.publishAt,at=publishedAt?Date.parse(publishedAt):NaN;
+      if(Number.isFinite(at)&&at>nowMs){
+        scheduled++;
+        // Stable sorting used the first equal earliest date and the last equal
+        // latest date. Preserve those exact source strings, including offsets.
+        if(at<firstTime){firstTime=at;nextScheduledAt=publishedAt}
+        if(at>=lastTime){lastTime=at;lastScheduledAt=publishedAt}
+      }else privateCount++;
       continue
     }
     if(privacy==='public'){
@@ -69,7 +74,6 @@ export function ownerInventoryFromVideos(channelId:string,videos:YoutubeExisting
       if(sameLocalDay(video.publishedAt,now))publishedToday++
     }
   }
-  future.sort((a,b)=>Date.parse(a)-Date.parse(b));
   return{
     channelId,
     available:true,
@@ -81,8 +85,8 @@ export function ownerInventoryFromVideos(channelId:string,videos:YoutubeExisting
     scheduled,
     unlisted,
     published:publicCount+unlisted,
-    nextScheduledAt:future[0],
-    lastScheduledAt:future.at(-1),
+    nextScheduledAt,
+    lastScheduledAt,
     publishedToday
   }
 }
