@@ -1,0 +1,19 @@
+/* Compact batch table derived from the owner-supplied design; scoped to the existing live workspace. */
+.apexBatchToolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0 8px}
+.apexBatchToolbar>span{margin-left:auto;color:#9c9faa;font-size:12px}
+.apexBatchToolbar input[type=search]{min-width:0;width:210px}
+.apexBatchTable{max-width:100%;max-height:440px;overflow:auto;border:1px solid #2c2e35;border-radius:9px;background:#15171b}
+.apexBatchTable table{width:100%;border-collapse:collapse;text-align:left;font-variant-numeric:tabular-nums}
+.apexBatchTable th{position:sticky;top:0;z-index:1;background:#1b1d22;color:#9c9faa;font-size:11px;font-weight:500;white-space:nowrap}
+.apexBatchTable th,.apexBatchTable td{padding:8px 10px}
+.apexBatchTable td{border-top:1px solid #2c2e35;font-size:12px;vertical-align:top}
+.apexBatchTable input[type=number]{width:72px;min-width:60px}
+.apexBatchTable input[type=checkbox]{accent-color:#a78bfa}
+.apexBatchTable input:focus-visible,.apexBatchTable summary:focus-visible{outline:2px solid #a78bfa;outline-offset:2px}
+.apexBatchLinked,.apexBatchBlocked{display:inline-block;padding:3px 7px;border-radius:5px;white-space:nowrap}
+.apexBatchLinked{background:#1d322a;color:#46d598}.apexBatchBlocked{background:#382d20;color:#efb85a}
+.apexBatchTable summary{cursor:pointer;color:#cbb5f8;white-space:nowrap}
+.apexBatchVideos{display:grid;gap:8px;min-width:180px;max-width:340px;max-height:230px;overflow:auto;padding:8px 0}
+.apexBatchVideos label{display:flex;align-items:flex-start;gap:7px;white-space:normal}
+.apexBatchVideos small{display:block;color:#9c9faa;font-size:10px;overflow-wrap:anywhere}
+.apexBatchEmpty{padding:18px;color:#9c9faa;text-align:center}
