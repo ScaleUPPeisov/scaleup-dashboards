@@ -10,6 +10,10 @@ const color=(name:string)=>{
 const luminance=(name:string)=>{const [r,g,b]=color(name);return .2126*r+.7152*g+.0722*b};
 const contrast=(a:string,b:string)=>{const values=[luminance(a),luminance(b)].sort((x,y)=>x-y);return (values[1]+.05)/(values[0]+.05)};
 describe('APEX design tokens',()=>{
+ it('uses the approved palette',()=>{
+  const approved={background:'101114',surface:'181a1f','surface-raised':'202228',border:'2c2e35',accent:'a78bfa',success:'46d598',warning:'efb85a',danger:'f07685'};
+  for(const [name,value] of Object.entries(approved))expect(css.toLowerCase()).toContain(`--apex-${name}:#${value}`);
+ });
  it('keeps primary, muted and accent text readable on both dark surfaces',()=>{
   for(const text of ['text','text-muted','accent'])for(const surface of ['surface','surface-raised'])expect(contrast(text,surface)).toBeGreaterThanOrEqual(4.5);
  });
