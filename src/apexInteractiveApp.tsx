@@ -4,6 +4,7 @@ import {EMPTY_STATE,enterPerformanceProbeMode,useApp} from './store';
 import {useLiveInventory,type ChannelInventorySnapshot} from './renderInventoryRuntime';
 import {DashboardOS} from './DashboardOS';
 import {ChannelsOS} from './ChannelsOS';
+import {BatchControl} from './BatchControl';
 import {ProductionOS} from './ProductionOS';
 import {LiveContentInventory} from './LiveContentInventory';
 import {HistoryPage} from './HistoryPage';
@@ -36,13 +37,14 @@ import './apex-reference-shell.css';
 
 const groups:ReadonlyArray<[string,ReadonlyArray<[Page,string]>]>=[
  ['РАБОЧАЯ СРЕДА',[['dashboard','Главная'],['channels','Каналы'],['production','Производство'],['inventory','Запас видео']]],
- ['YOUTUBE',[['publisher','Публикатор'],['metadata','Метаданные'],['existing','Загруженные']]],
+ ['YOUTUBE',[['publisher','Публикатор'],['batch','Массовая публикация'],['metadata','Метаданные'],['existing','Загруженные']]],
  ['АНАЛИЗ И МАТЕРИАЛЫ',[['analytics','Аналитика 360°'],['competitors','Конкуренты']]],
  ['СИСТЕМА',[['autopilot','Командный центр'],['history','История'],['accounts','Аккаунты'],['settings','Настройки']]]
 ];
 function Screen({page}:{page:Page}){
  switch(page){
  case 'channels':return <ChannelsOS/>;
+ case 'batch':return <BatchControl standalone/>;
  case 'production':case 'content':return <ProductionOS/>;
  case 'inventory':return <LiveContentInventory/>;
  case 'history':return <HistoryPage/>;

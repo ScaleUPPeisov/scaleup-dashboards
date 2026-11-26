@@ -13,7 +13,7 @@ import {OWNER_INVENTORY_EVENT,ownerInventoryForChannel} from './youtubeOwnerInve
 import {safeDailyStatus} from './youtubePublishSafety';
 import {ChannelAvatar} from './ChannelAvatar';
 import {ChannelPassport} from './ChannelPassport';
-import {BatchControl} from './BatchControl';
+
 
 type Filter='all'|'connected'|'disconnected'|'attention'|'queue'|'noqueue';
 const OPEN_TAB_KEY='vyron:youtube-open-tab:v1';
@@ -34,7 +34,7 @@ export function ChannelsOS(){
  function createFuture(){const n=futureName.trim().replace(/\s+/g,' ');if(!n)return;if(hasChannelNameConflict(channels,n)){toast('Канал с таким названием уже есть в VYRON');return}const c=addChannel({name:n});setCreating(false);setFutureName('');setEditing(c.id);toast('Будущий канал '+n+' создан')}
  return <div className="channelsFleetPage"><div className="pageHeader"><div><h1>Каналы</h1></div><div className="headerActions"><button className="primary" onClick={()=>setCreating(true)}>+ Будущий канал</button></div></div>
   <div className="fleetToolbar"><input value={query} onChange={e=>setQuery(e.target.value)} aria-label="Поиск каналов" placeholder="Название, адрес, ID канала или почта Google"/><div className="filterChips">{([['all','Все'],['connected','Подключены'],['disconnected','Не подключены'],['attention','Требуют внимания'],['queue','Есть очередь'],['noqueue','Нет очереди']] as [Filter,string][]).map(([id,label])=><button key={id} className={filter===id?'active':''} aria-pressed={filter===id} onClick={()=>setFilter(id)}>{label}</button>)}</div></div>
-  <BatchControl/>
+  <div className="headerActions"><button onClick={()=>setPage('batch')}>Массовая публикация и действия</button></div>
   {!rows.length?<div className="empty"><b>Каналы не найдены</b><p>Измените фильтр или добавьте будущий канал.</p></div>:<div className="channelFleetGrid">{rows.map(c=>{const cj=jobsByChannel.get(c.id)||[],p=c.youtubeProfileId?profilesById.get(c.youtubeProfileId):undefined,state=c.youtubeProfileId?oauthStates[c.youtubeProfileId]?.credentialState||'NOT_CHECKED':'NOT_CHECKED',connected=Boolean(c.youtubeProfileId),scheduledJobs=cj.filter(j=>Boolean(j.publishAt)&&new Date(j.publishAt!).getTime()>Date.now()).sort((a,b)=>String(a.publishAt).localeCompare(String(b.publishAt))),owner=ownerInventoryForChannel(c.id),ownerPrefix=owner.available&&owner.complete?'':'≥',daily=safeDailyStatus(c.id,c.safeDailyUploadLimit),reserve=bufferDays(c,cj),errors=activeErrorCount(cj),last=c.stats?.statisticsUpdatedAt||c.stats?.updatedAt||c.analytics?.updatedAt;return <article className={'channelFleetCard '+(editing===c.id?'editing':'')} key={c.id} aria-labelledby={`channel-title-${c.id}`}><header><div className="fleetIdentity"><ChannelAvatar channel={c} size="lg"/><span><h2 id={`channel-title-${c.id}`}>{c.name}</h2><small>{c.stats?.handle||c.youtubeChannelId||'Локальный канал'}</small><em className={connected&&state==='READY'?'good':'warn'}>{connected?channelOauthStateLabel(state):isFutureChannel(c)?'Будущий канал':'YouTube не подключён'}</em></span></div></header>
     <div className="fleetMetrics fleetMetricsPrimary">
       <span><small>Подписчики</small><b>{c.stats?.hiddenSubscriberCount?'—':c.stats?.subscriberCount??c.stats?.subscribers??'—'}</b></span>

@@ -11,6 +11,7 @@ const pages:Array<{page:Page;title:string;subtitle:string;keywords:string}>=[
  {page:'dashboard',title:'Главная',subtitle:'Control Center',keywords:'главная dashboard control'},
  {page:'channels',title:'Каналы',subtitle:'Fleet / Account registry',keywords:'каналы accounts fleet профили'},
  {page:'production',title:'Производство',subtitle:'Render / Projects / ENDLUME',keywords:'production render projects endlume'},
+ {page:'batch',title:'Массовая публикация',subtitle:'Пакетный отбор и проверка видео',keywords:'batch массовая публикация очередь'},
  {page:'youtube',title:'YouTube',subtitle:'Публикация / Загруженные / Метаданные',keywords:'youtube publisher publish existing metadata'},
  {page:'analytics',title:'Аналитика',subtitle:'Статистика каналов',keywords:'analytics statistics статистика'},
  {page:'competitors',title:'Конкуренты',subtitle:'Competitor radar',keywords:'competitors конкуренты'},

@@ -34,6 +34,16 @@ async function confirm(){
 describe('mass upload confirmation',()=>{
  beforeEach(()=>{vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);vi.clearAllMocks();h.profiles=[{id:'p1',channelId:'yt1'}];h.state={channels:[{id:'c1',name:'Test',enabled:true,youtubeProfileId:'p1',youtubeChannelId:'yt1'}],jobs:[{...job,tags:[...job.tags]}],settings:{},fingerprintCache:{},patchJob:vi.fn()};h.evidence.mockReturnValue(undefined);h.occupied.mockReturnValue([]);h.sessions.mockResolvedValue([]);h.status.mockResolvedValue({exists:true,isFile:true});h.fingerprint.mockResolvedValue({fingerprint:'a'.repeat(64),size:100,modifiedAt:1})});
  afterEach(async()=>{if(view)await act(async()=>view.unmount());view=undefined;vi.unstubAllGlobals()});
+ it('renders standalone batch workspace expanded with a real channel inspector',async()=>{
+  // @ts-expect-error react-test-renderer has no bundled type declarations
+  const renderer=await import('react-test-renderer');act=renderer.act;
+  await act(async()=>{view=renderer.create(<BatchControl standalone/>)});
+  expect(button('Открыть')).toBeUndefined();
+  expect(view.root.findAllByProps({'aria-label':'Инспектор канала'})).toHaveLength(1);
+  await act(async()=>button('Выбрать все').props.onClick());
+  expect(button('Добавить в очередь ·').props.disabled).toBe(false);
+  expect(h.enqueue).not.toHaveBeenCalled();
+ });
  it('only reads local file facts and never enqueues after cancellation or unchecked confirmation',async()=>{
   await setup();const submit=button('Подтвердить загрузку');expect(submit.props.disabled).toBe(true);
   await act(async()=>submit.props.onClick());expect(h.status).toHaveBeenCalledTimes(1);expect(h.enqueue).not.toHaveBeenCalled();

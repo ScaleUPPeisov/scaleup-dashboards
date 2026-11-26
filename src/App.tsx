@@ -17,6 +17,7 @@ const CompetitorsPage = React.lazy(()=>import('./CompetitorsPage').then(m=>({def
 import { AccountsPage } from './AccountsPage';
 import { DashboardOS } from './DashboardOS';
 import { ChannelsOS } from './ChannelsOS';
+import {BatchControl} from './BatchControl';
 const ProductionOS = React.lazy(()=>import('./ProductionOS').then(m=>({default:m.ProductionOS})));
 const HistoryPage = React.lazy(()=>import('./HistoryPage').then(m=>({default:m.HistoryPage})));
 import { YouTubeCenter } from './YouTubeCenter';
@@ -110,7 +111,8 @@ const nav:{id:string;page:Page;icon:SidebarIconName;label:string;youtubeTab?:'hi
   {id:'production',page:'production',icon:'production',label:'Производство'},
   {id:'inventory',page:'inventory',icon:'inventory',label:'Запас видео'},
   {id:'history',page:'history',icon:'youtube',label:'История'},
-  {id:'youtube',page:'youtube',icon:'youtube',label:'YouTube'},
+  {id:'youtube',page:'youtube',icon:'youtube',label:'Публикатор'},
+  {id:'batch',page:'batch',icon:'youtube',label:'Массовая публикация'},
   {id:'analytics',page:'analytics',icon:'analytics',label:'Аналитика'},
   {id:'competitors',page:'competitors',icon:'competitors',label:'Конкуренты'},
   {id:'settings',page:'settings',icon:'settings',label:'Настройки'}
@@ -293,6 +295,7 @@ function PageRouter({license}:{license:LicenseStatus}){
 
   const transient=canonical==='dashboard'?<><DashboardUploadSummary/><DashboardOS/></>
     :canonical==='channels'?<ChannelsOS/>
+    :canonical==='batch'?<BatchControl standalone/>
     :canonical==='production'||canonical==='content'?<ProductionOS/>
     :canonical==='history'?<HistoryPage/>
     :canonical==='inventory'?<LiveContentInventory/>
