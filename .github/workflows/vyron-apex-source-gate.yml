@@ -1,0 +1,35 @@
+name: VYRON APEX isolated source gate
+on:
+  push:
+    branches:
+      - feature/vyron-7-apex
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: vyron-apex-source-gate-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source-gate:
+    if: github.ref == 'refs/heads/feature/vyron-7-apex'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Exact source revision
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - run: npm ci --no-audit --no-fund
+      - name: P0 batch and recovery tests
+        run: npx --no-install vitest run src/batchUploadSafety.test.ts src/batchControlSafety.test.tsx src/uploadQueueRuntimeSafety.test.ts src/inventoryApex.test.tsx src/apex-ui.test.tsx
+      - name: Full Vitest suite
+        if: success() || failure()
+        run: npm test
+      - name: TypeScript and frontend bundle
+        if: success() || failure()
+        run: npm run build
