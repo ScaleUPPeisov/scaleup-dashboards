@@ -1,0 +1,97 @@
+name: VYRON APEX desktop preview ARM64
+on:
+  push:
+    branches: [feature/vyron-7-apex]
+    paths:
+      - 'scripts/apex_desktop_fixture/**'
+      - '.github/workflows/vyron-apex-desktop-fixture.yml'
+      - 'vite.apex-interactive.config.ts'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: apex-desktop-fixture-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  desktop:
+    runs-on: macos-15
+    timeout-minutes: 25
+    if: github.ref == 'refs/heads/feature/vyron-7-apex'
+    env:
+      ELECTRON_VERSION: 45.5.0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Download exact official Electron distribution and verify checksum
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          mkdir -p "$RUNNER_TEMP/apex-runtime"
+          cd "$RUNNER_TEMP/apex-runtime"
+          filename="electron-v$ELECTRON_VERSION-darwin-arm64.zip"
+          base="https://github.com/electron/electron/releases/download/v$ELECTRON_VERSION"
+          curl --fail --location --retry 3 --output SHASUMS256.txt "$base/SHASUMS256.txt"
+          curl --fail --location --retry 3 --output "$filename" "$base/$filename"
+          grep "  $filename$" SHASUMS256.txt > verified.sha256
+          shasum -a 256 -c verified.sha256
+          ditto -x -k "$filename" "$RUNNER_TEMP/apex-runtime"
+      - name: Build isolated desktop test package
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/VYRON APEX Desktop Preview.app"
+          mv "$RUNNER_TEMP/apex-runtime/Electron.app" "$app"
+          resources="$app/Contents/Resources"
+          rm -f "$resources/default_app.asar"
+          mkdir -p "$resources/app/preview"
+          cp scripts/apex_desktop_fixture/main.cjs scripts/apex_desktop_fixture/package.json "$resources/app/"
+          npx --no-install vite build --config vite.apex-interactive.config.ts --outDir "$resources/app/preview"
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier studio.channelflow.apex.desktoppreview' "$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleName VYRON APEX Desktop Preview' "$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName VYRON APEX Desktop Preview' "$app/Contents/Info.plist" || /usr/libexec/PlistBuddy -c 'Add :CFBundleDisplayName string VYRON APEX Desktop Preview' "$app/Contents/Info.plist"
+          codesign --force --deep --sign - --preserve-metadata=entitlements "$app"
+          codesign --verify --deep --strict "$app"
+          test "$(lipo -archs "$app/Contents/MacOS/Electron")" = arm64
+      - name: Verify sandboxed Chromium desktop navigation (no production data)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/apex-desktop-evidence"
+          app="$RUNNER_TEMP/VYRON APEX Desktop Preview.app"
+          python3 - "$app" "$RUNNER_TEMP/apex-desktop-evidence" <<'PY'
+          import pathlib, subprocess, sys
+          app, evidence = map(pathlib.Path,sys.argv[1:])
+          exe=app/'Contents/MacOS/Electron'
+          proc=subprocess.run([str(exe),'--self-test'],capture_output=True,text=True,timeout=115)
+          report=proc.stdout+'\n'+proc.stderr
+          (evidence/'smoke.txt').write_text(report)
+          print(report)
+          assert proc.returncode==0, proc.returncode
+          assert 'DESKTOP_FIXTURE_ROUTES=21/21' in proc.stdout
+          PY
+      - name: Package desktop preview after verified smoke
+        run: |
+          set -euo pipefail
+          ditto -c -k --keepParent "$RUNNER_TEMP/VYRON APEX Desktop Preview.app" "$RUNNER_TEMP/VYRON-APEX-Desktop-Preview-arm64.zip"
+          cd "$RUNNER_TEMP"
+          shasum -a 256 VYRON-APEX-Desktop-Preview-arm64.zip > VYRON-APEX-Desktop-Preview-arm64.sha256
+          printf '%s\n' "$GITHUB_SHA" > VYRON-APEX-Desktop-Preview-revision.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-APEX-Desktop-Preview-arm64-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/VYRON-APEX-Desktop-Preview-arm64.zip
+            ${{ runner.temp }}/VYRON-APEX-Desktop-Preview-arm64.sha256
+            ${{ runner.temp }}/VYRON-APEX-Desktop-Preview-revision.txt
+          retention-days: 14
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-APEX-Desktop-Preview-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/apex-desktop-evidence
+          if-no-files-found: warn

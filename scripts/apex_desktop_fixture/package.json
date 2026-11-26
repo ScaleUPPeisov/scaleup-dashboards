@@ -1,0 +1,6 @@
+{
+  "name": "vyron-apex-desktop-fixture",
+  "version": "7.0.0-dev.1",
+  "private": true,
+  "main": "main.cjs"
+}
