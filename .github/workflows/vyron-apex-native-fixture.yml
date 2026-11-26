@@ -1,0 +1,79 @@
+name: VYRON APEX separate sandboxed native fixture
+on:
+  push:
+    branches: [feature/vyron-7-apex]
+    paths:
+      - 'scripts/apex_native_fixture/**'
+      - 'src/apexInteractiveMain.tsx'
+      - '.github/workflows/vyron-apex-native-fixture.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: apex-native-fixture-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native-fixture:
+    if: github.ref == 'refs/heads/feature/vyron-7-apex'
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Build standalone Swift fixture (not VYRON executable)
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          app="$RUNNER_TEMP/VYRON APEX Fixture.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/preview"
+          cp scripts/apex_native_fixture/Info.plist "$app/Contents/"
+          npx --no-install vite build --config vite.apex-interactive.config.ts --outDir "$app/Contents/Resources/preview"
+          xcrun swiftc -O -target arm64-apple-macos13.0 -framework AppKit -framework WebKit scripts/apex_native_fixture/main.swift -o "$app/Contents/MacOS/APEXFixture"
+          codesign --force --sign - --entitlements scripts/apex_native_fixture/entitlements.plist "$app"
+          codesign --verify --strict --verbose=2 "$app"
+          test "$(lipo -archs "$app/Contents/MacOS/APEXFixture")" = arm64
+          codesign -d --entitlements :- "$app" > "$RUNNER_TEMP/fixture-entitlements.plist"
+          python3 - "$RUNNER_TEMP/fixture-entitlements.plist" <<'PY'
+          import plistlib,sys
+          with open(sys.argv[1],'rb') as f: actual=plistlib.load(f)
+          assert actual == {'com.apple.security.app-sandbox':True}, actual
+          PY
+      - name: Native WebKit route smoke (no production data)
+        run: |
+          mkdir -p "$RUNNER_TEMP/apex-native-evidence"
+          python3 - <<'PY'
+          import os,subprocess,pathlib
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])
+          exe=root/'VYRON APEX Fixture.app/Contents/MacOS/APEXFixture'
+          proc=subprocess.run([str(exe),'--self-test'],capture_output=True,text=True,timeout=95)
+          report=proc.stdout+'\n'+proc.stderr
+          (root/'apex-native-evidence/native-smoke.txt').write_text(report)
+          print(report)
+          assert proc.returncode==0, proc.returncode
+          assert 'NATIVE_FIXTURE_ROUTES=21/21' in proc.stdout
+          PY
+      - name: Package verified fixture only
+        run: |
+          ditto -c -k --keepParent "$RUNNER_TEMP/VYRON APEX Fixture.app" "$RUNNER_TEMP/VYRON-APEX-native-fixture.zip"
+          shasum -a 256 "$RUNNER_TEMP/VYRON-APEX-native-fixture.zip" > "$RUNNER_TEMP/VYRON-APEX-native-fixture.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-APEX-native-fixture-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/VYRON-APEX-native-fixture.zip
+            ${{ runner.temp }}/VYRON-APEX-native-fixture.sha256
+          retention-days: 14
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-APEX-native-fixture-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/apex-native-evidence
+          if-no-files-found: warn
+          retention-days: 14
