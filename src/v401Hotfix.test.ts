@@ -75,7 +75,10 @@ describe('VYRON 4.0.1 hotfix contract',()=>{
 
   it('keeps the 4.0 artwork safe when its image cannot load',()=>{
     expect(read('src/SafeArtwork.tsx')).toContain('safeArtworkFallback');
-    expect(read('src/App.tsx')).toContain('<SafeArtwork className="sidebarBrandArtwork"');
+    // APEX replaces the sidebar image with the approved inline SVG; retain
+    // the resilient image fallback for the legacy celebration artwork.
+    expect(read('src/App.tsx')).toContain('brand apexReferenceBrand');
+    expect(read('src/App.tsx')).toContain('<svg viewBox="0 0 40 40"');
     expect(read('src/MajorUpdateCelebration.tsx')).toContain('<SafeArtwork className="majorCelebrationArtwork"');
   });
 });

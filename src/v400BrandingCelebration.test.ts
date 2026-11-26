@@ -9,9 +9,10 @@ const celebrationCss=fs.readFileSync('src/v400-celebration.css','utf8');
 const conf=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));
 
 describe('VYRON update branding + one-time celebration',()=>{
-  it('uses the owner artwork in sidebar without replacing system app icons',()=>{
-    expect(app).toContain('sidebarBrandArtwork');
-    expect(app).toContain('VYRON_5_ARTWORK');
+  it('uses the approved inline APEX mark without replacing system app icons',()=>{
+    expect(app).toContain('brand apexReferenceBrand');
+    expect(app).toContain('M2 5h10l8 14L28 5h10L20 36');
+    expect(app).not.toContain('sidebarBrandArtwork');
     expect(conf.bundle.icon).toEqual(['icons/32x32.png','icons/128x128.png','icons/128x128@2x.png','icons/icon.icns','icons/icon.ico']);
     expect(updateExperience).toContain('VYRON_5_ARTWORK')
   });

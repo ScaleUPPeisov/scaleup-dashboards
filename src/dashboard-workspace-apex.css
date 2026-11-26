@@ -17,3 +17,41 @@
 .dashboardWorkspaceApex .activeUploadLine b{color:var(--text)}
 .dashboardWorkspaceApex .opsAllGood{background:#222a28;border-color:#496356;color:#b9e7ce;font-size:13px}
 @media(max-width:700px){.dashboardWorkspaceHeader,.dashboardWorkspaceApex .opsCard{padding:16px}.dashboardWorkspaceHeader h1{font-size:23px}.dashboardWorkspaceApex .opsKpi{min-height:90px;padding:13px}}
+
+/* Reference home layout: compact heading, flat KPI strip, two-column overview, table, pipeline. */
+.dashboardWorkspaceApex{max-width:none;gap:16px}
+.dashboardWorkspaceApex .dashboardWorkspaceHeader{padding:0;border:0;border-radius:0;background:none;box-shadow:none;margin-bottom:0}
+.dashboardWorkspaceApex .dashboardWorkspaceHeader h1{font-size:30px;line-height:1.2;letter-spacing:-.9px;margin:0}
+.dashboardWorkspaceApex .dashboardWorkspaceHeader p{font-size:12px;color:#9c9faa;margin-top:6px}
+.dashboardWorkspaceApex .dashboardWorkspaceHeader button{min-height:34px}
+.apexNetworkKpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-bottom:1px solid #2c2e35;padding-bottom:15px}
+.dashboardWorkspaceApex .apexNetworkKpis .opsKpi{padding:0 20px;border:0;border-right:1px solid #2c2e35;border-radius:0;background:none;box-shadow:none;min-height:0}
+.dashboardWorkspaceApex .apexNetworkKpis .opsKpi:first-child{padding-left:0}
+.dashboardWorkspaceApex .apexNetworkKpis .opsKpi:last-child{border:0}
+.apexNetworkKpis .opsKpi small{font-size:12px;color:#9c9faa;text-transform:none;letter-spacing:0}
+.dashboardWorkspaceApex .apexNetworkKpis .opsKpi strong{font-size:30px;color:#f2f2f6;line-height:1.2;letter-spacing:-.7px;margin:5px 0;overflow-wrap:anywhere}
+.apexNetworkKpis .opsKpi em{font-size:11px;color:#9c9faa;font-style:normal}
+.apexNetworkOverview{display:grid;grid-template-columns:minmax(0,1.75fr) minmax(0,1fr);gap:16px}
+.dashboardWorkspaceApex .apexNetworkOverview .opsCard,.dashboardWorkspaceApex .apexNetworkPipeline{border:1px solid #2c2e35;background:#181a1f;border-radius:10px;box-shadow:none;padding:13px}
+.apexNetworkOverview .opsCardHead h2,.apexNetworkFleet h2,.apexNetworkPipeline h2{font-size:16px;color:#f2f2f6}
+.apexNetworkChart svg{width:100%;height:190px;display:block}
+.apexNetworkChart svg text{fill:#9c9faa;font-size:10px}
+.apexNetworkChartNote{font-size:11px;color:#9c9faa}
+.apexNetworkChart .apexNetworkChartTotal{font-size:27px;font-variant-numeric:tabular-nums;letter-spacing:-.7px}
+.apexNetworkTable{overflow:auto;background:#15171b;border:1px solid #2c2e35;border-radius:9px}
+.apexNetworkTable table{width:100%;border-collapse:collapse;text-align:left;font-variant-numeric:tabular-nums;white-space:nowrap}
+.apexNetworkTable th{background:#1b1d22;color:#9c9faa;font-weight:500;font-size:11px}
+.apexNetworkTable th,.apexNetworkTable td{padding:8px 12px;border-bottom:1px solid #2c2e35}
+.apexNetworkTable tr:last-child td{border-bottom:0}
+.apexNetworkName{display:flex;align-items:center;gap:9px}
+.apexNetworkGood,.apexNetworkWarn{display:inline-block;border-radius:5px;padding:3px 7px;font-size:11px}
+.apexNetworkGood{background:#1d322a;color:#46d598}.apexNetworkWarn{background:#382d20;color:#efb85a}
+.apexNetworkSteps{display:flex;gap:12px;flex-wrap:wrap;padding:8px 0}
+.apexNetworkSteps>div{display:flex;gap:8px;align-items:center;flex:1;min-width:110px}
+.apexNetworkSteps b,.apexNetworkSteps small{display:block}
+.apexNetworkSteps small{color:#9c9faa;font-size:12px}
+.apexNetworkStepNo{width:30px;height:30px;display:grid;place-items:center;background:#292136;color:#a78bfa;border:1px solid #594379;border-radius:50%;flex:none}
+.apexNetworkDetails>summary{cursor:pointer;color:#cbb5f8;padding:10px 0;font-weight:600}
+.apexNetworkDetails[open]>section,.apexNetworkDetails[open]>.opsDashboardGrid,.apexNetworkDetails[open]>.opsKpiGrid{margin-top:14px}
+@media(max-width:1000px){.apexNetworkOverview{grid-template-columns:1fr}.dashboardWorkspaceApex .apexNetworkKpis .opsKpi strong{font-size:24px}}
+@media(max-width:700px){.apexNetworkKpis{grid-template-columns:1fr 1fr;gap:12px}.dashboardWorkspaceApex .apexNetworkKpis .opsKpi:nth-child(3){padding-left:0}.dashboardWorkspaceApex .apexNetworkKpis .opsKpi:nth-child(2){border:0}}

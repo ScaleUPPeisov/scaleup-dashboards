@@ -25,6 +25,7 @@ import {planStatisticsProjectBatches} from './youtubeChannelStatsRuntime';
 import {refreshAllChannelData} from './fullChannelRefresh';
 import {classifyYoutubeChannels} from './youtubeStatisticsCenter';
 import {RpmCoverageCard} from './RpmCoverageCard';
+import {ApexNetworkViews} from './ApexNetworkViews';
 import './dashboard-workspace-apex.css';
 
 const fmt=(n:number)=>new Intl.NumberFormat('ru-RU').format(n);
@@ -149,7 +150,7 @@ function OperationsDashboard(){
  function openRpmSettings(){try{localStorage.setItem('vyron:settings-target-tab','general');localStorage.setItem('vyron:settings-target-section','rpm')}catch{}setPage('settings');window.setTimeout(()=>window.dispatchEvent(new CustomEvent('vyron:settings-target-section',{detail:'rpm'})),0)}
 
  return <div className="apexDashboard dashboardWorkspaceApex">
-  <header className="dashboardWorkspaceHeader"><div><small>ОБЗОР</small><h1>Главная</h1><p>Состояние каналов и производства</p></div><button onClick={()=>setPage('autopilot')}>Командный центр</button></header>
+  <header className="dashboardWorkspaceHeader"><div><h1>Обзор сети</h1><p>Состояние каналов, производства и публикаций</p></div><div className="headerActions"><button className="primary" onClick={()=>setPage('batch')}>Массовая публикация</button><button disabled={statsBusy||!connectedCount} onClick={()=>void previewAllChannelStatistics()}>{statsBusy?'Обновление…':'Обновить'}</button><button onClick={()=>setPage('autopilot')}>Командный центр</button></div></header>
   {statsPreview&&<ModalPortal onClose={()=>setStatsPreview(null)}><section className="confirmModal statsRefreshPreview" onMouseDown={e=>e.stopPropagation()}>
    <small>ОБНОВИТЬ СТАТИСТИКУ</small><h2>Обновить все доступные каналы?</h2>
    <div className="settingsInfoGrid">
@@ -165,6 +166,33 @@ function OperationsDashboard(){
    <p>Обновятся статистика, подтверждённое расписание YouTube и локальный запас. Проверка Render не расходует квоту API. Расход на расписание зависит от числа видео; итог появится после обновления.</p>
    <footer><button onClick={()=>setStatsPreview(null)}>ОТМЕНА</button><button className="primary" onClick={()=>void refreshAllChannelStatistics()}>ОБНОВИТЬ</button></footer>
   </section></ModalPortal>}
+  <div className="apexNetworkKpis" data-testid="apex-network-kpis">
+   <Kpi label="Каналы" value={enabled.length} hint={'YouTube подключено: '+connectedCount}/>
+   <Kpi label="Просмотры всего" value={aggregate(viewValues,viewTotal)} hint="Сохранённая статистика"/>
+   <Kpi label="Подписчики" value={aggregate(subscriberValues,subscriberTotal)} hint="Сохранённая статистика"/>
+   <Kpi label="Локальные видео" value={localTotalValue} hint={localTotalNote}/>
+  </div>
+  <div className="apexNetworkOverview">
+   <ApexNetworkViews channels={enabled}/>
+   <section className={'opsCard attention '+(attention.length?'warn':'good')}>
+    <div className="opsCardHead"><div><h2>{attention.length?'Требует внимания ('+attention.length+')':'Всё в порядке'}</h2></div></div>
+    {attention.length?<div className="opsAttentionRows">{attention.map(x=><button key={x.key} onClick={()=>setPage(x.page)}><span><b>{x.label}</b><small>{x.text}</small></span><em>→</em></button>)}</div>:<div className="opsAllGood">✓ Активных ошибок нет</div>}
+    <footer><button onClick={()=>setPage(attention[0]?.page||'youtube')}>{attention.length?'Показать':'Открыть YouTube'}</button></footer>
+   </section>
+  </div>
+  <section className="apexNetworkFleet">
+   <div className="opsCardHead"><h2>Каналы</h2><button onClick={()=>setPage('channels')}>Все {enabled.length} каналов</button></div>
+   <div className="apexNetworkTable"><table><thead><tr><th>Канал</th><th>Локально</th><th>Запланировано</th><th>До последней публикации</th><th>Подписчики</th><th>Данные YouTube</th></tr></thead><tbody>{enabled.slice(0,4).map(c=>{
+    const local=dashboardLocalInventory(liveSnapshots[c.id]),owner=ownerByChannel.get(c.id),sub=c.stats?.hiddenSubscriberCount?undefined:(c.stats?.subscriberCount??c.stats?.subscribers);
+    const last=Date.parse(owner?.lastScheduledAt||'');const days=owner?.available&&owner.complete&&Number.isFinite(last)?Math.max(0,Math.ceil((last-now.getTime())/86400000)):null;
+    return <tr key={c.id}><td><span className="apexNetworkName"><ChannelAvatar channel={c} size="sm"/><b>{c.name}</b></span></td><td>{local.ready??'—'}{local.state==='stale'&&<small> · устарело</small>}</td><td>{owner?.available?(owner.complete?'':'≥ ')+fmt(owner.scheduled):'—'}</td><td>{days==null?'—':days+' дн.'}</td><td>{numeric(sub)?fmt(sub):'—'}</td><td><span className={owner?.available&&owner.complete?'apexNetworkGood':'apexNetworkWarn'}>{owner?.available?(owner.complete?'Полные':'Частичные'):'Нет данных'}</span></td></tr>
+   })}</tbody></table>{!enabled.length&&<p className="opsEmpty">Добавьте канал для обзора сети.</p>}</div>
+  </section>
+  <section className="opsCard apexNetworkPipeline"><div className="opsCardHead"><h2>Конвейер производства</h2><button onClick={()=>setPage('production')}>Открыть</button></div><div className="apexNetworkSteps">{[
+   ['Материалы',jobs.filter(j=>j.status==='NEED_IMAGE'||j.status==='WAITING_MUSIC').length],
+   ['Готово к рендеру',readyEndlume],['Рендер',rendering],['Локально готово',localTotalValue],['В очереди',queue.queued.length]
+  ].map(([label,value],i)=><div key={label}><span className="apexNetworkStepNo">{i+1}</span><span><b>{label}</b><small>{value}</small></span></div>)}</div></section>
+  <details className="apexNetworkDetails" open={undefined}><summary>Подробная статистика и оперативное управление</summary>
   <div className="opsKpiGrid v400" data-testid="dashboard-kpis">
    <Kpi label="КАНАЛЫ" value={enabled.length} hint={'YouTube подключено: '+connectedCount}/>
    <Kpi label="ОБРАБОТАНО СЕГОДНЯ" value={dailyOps.processedChannels+' / '+enabled.length} hint={'загружено: '+dailyOps.uploadedToday}/>
@@ -249,12 +277,9 @@ function OperationsDashboard(){
 
    <DashboardUploads queued={queue.queued.length} uploadedToday={uploadedToday} failedToday={failedToday} channels={channels} jobs={jobs} onOpen={()=>setPage('youtube')}/>
 
-   <section className={'opsCard attention '+(attention.length?'warn':'good')}>
-    <div className="opsCardHead"><div><h2>{attention.length?'Требует внимания ('+attention.length+')':'Всё в порядке'}</h2></div></div>
-    {attention.length?<div className="opsAttentionRows">{attention.map(x=><button key={x.key} onClick={()=>setPage(x.page)}><span><b>{x.label}</b><small>{x.text}</small></span><em>→</em></button>)}</div>:<div className="opsAllGood">✓ Активных ошибок нет</div>}
-    <footer><button onClick={()=>setPage(attention[0]?.page||'youtube')}>{attention.length?'Показать':'Открыть YouTube'}</button></footer>
-   </section>
+
   </div>
+  </details>
  </div>;
 }
 function telemetryChannels(snapshot:ReturnType<typeof uploadTelemetrySnapshot>):string[]{return [...new Set(snapshot.active.map(x=>x.channelId).filter((x):x is string=>Boolean(x)))].sort()}
