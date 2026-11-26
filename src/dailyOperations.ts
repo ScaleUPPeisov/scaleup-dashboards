@@ -63,7 +63,10 @@ export function buildDailyOperations(channels:Channel[],history:UploadHistoryRec
       folderState:state,nextAction:nextAction(channel,snapshot,uploadedToday,dailyTarget,state),events
     } satisfies DailyChannelOperation
   });
-  const last=today.slice().sort((a,b)=>Date.parse(b.uploadedAt)-Date.parse(a.uploadedAt))[0]?.uploadedAt;
+  // `today` is already stably sorted. Keep the first representation of an
+  // equal latest instant, as the previous stable descending sort did.
+  let last:string|undefined,lastMs=-Infinity;
+  for(const event of today){const at=Date.parse(event.uploadedAt);if(at>lastMs){lastMs=at;last=event.uploadedAt}}
   return{
     uploadedToday:today.length,
     processedChannels:rows.filter(x=>x.processedToday).length,
