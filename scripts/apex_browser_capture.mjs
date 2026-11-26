@@ -4,7 +4,7 @@ import {mkdir,readFile,writeFile,mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {once} from 'node:events';
-const [packageDir,evidenceDir]=process.argv.slice(2).map(resolve);
+const [packageDir,evidenceDir]=process.argv.slice(2).map(path=>resolve(path));
 await mkdir(evidenceDir,{recursive:true});
 const temp=await mkdtemp(join(tmpdir(),'apex-chrome-'));
 const routes=['dashboard','channels','production','inventory','publisher','batch','metadata','uploads','schedule','existing','runway','analytics','winners','competitors','images','music','autopilot','history','accounts','settings','design'];
@@ -46,7 +46,7 @@ try{
 finally{
  if(ws)ws.close();
  for(const child of [chrome,server])if(child&&child.exitCode===null){child.kill();await Promise.race([once(child,'exit'),sleep(2000)]).catch(()=>{})}
- await rm(temp,{recursive:true,force:true});
+ await rm(temp,{recursive:true,force:true,maxRetries:3,retryDelay:100}).catch(()=>{});
  const ok=results.length===routes.length&&results.every(r=>r.pass)&&external.length===0&&uncaught.length===0;
  await writeFile(join(evidenceDir,'report.json'),JSON.stringify({ok,scope:'hosted Chromium synthetic navigation only',results,external,uncaught},null,2));
  if(!ok)process.exitCode=1;
