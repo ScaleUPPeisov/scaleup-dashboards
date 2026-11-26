@@ -41,3 +41,33 @@ jobs:
       - name: TypeScript and frontend bundle
         if: success() || failure()
         run: npm run build
+      - name: Build standalone interactive preview
+        run: |
+          mkdir -p "$RUNNER_TEMP/apex-package/preview" "$RUNNER_TEMP/apex-package/scripts"
+          npx --no-install vite build --config vite.apex-interactive.config.ts --outDir "$RUNNER_TEMP/apex-package/preview"
+          cp scripts/apex_interactive_preview.py "$RUNNER_TEMP/apex-package/scripts/"
+          cp scripts/apex_preview_package/START_PREVIEW.command scripts/apex_preview_package/README.txt "$RUNNER_TEMP/apex-package/"
+          chmod +x "$RUNNER_TEMP/apex-package/START_PREVIEW.command"
+          printf '%s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/apex-package/REVISION.txt"
+          test -f "$RUNNER_TEMP/apex-package/preview/apex-interactive.html"
+          (cd "$RUNNER_TEMP/apex-package" && zip -q -r "$RUNNER_TEMP/VYRON-APEX-browser-preview.zip" .)
+          sha256sum "$RUNNER_TEMP/VYRON-APEX-browser-preview.zip" > "$RUNNER_TEMP/VYRON-APEX-browser-preview.sha256"
+      - name: Upload downloadable test-only preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-APEX-browser-preview-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/VYRON-APEX-browser-preview.zip
+            ${{ runner.temp }}/VYRON-APEX-browser-preview.sha256
+          if-no-files-found: error
+          retention-days: 14
+      - name: Browser navigation and screenshot evidence
+        run: node scripts/apex_browser_capture.mjs "$RUNNER_TEMP/apex-package" "$RUNNER_TEMP/apex-screenshots"
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-APEX-browser-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/apex-screenshots
+          if-no-files-found: warn
+          retention-days: 14
