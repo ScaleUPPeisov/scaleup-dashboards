@@ -47,17 +47,7 @@ jobs:
       - name: Native WebKit route smoke (no production data)
         run: |
           mkdir -p "$RUNNER_TEMP/apex-native-evidence"
-          python3 - <<'PY'
-          import os,subprocess,pathlib
-          root=pathlib.Path(os.environ['RUNNER_TEMP'])
-          exe=root/'VYRON APEX Fixture.app/Contents/MacOS/APEXFixture'
-          proc=subprocess.run([str(exe),'--self-test'],capture_output=True,text=True,timeout=95)
-          report=proc.stdout+'\n'+proc.stderr
-          (root/'apex-native-evidence/native-smoke.txt').write_text(report)
-          print(report)
-          assert proc.returncode==0, proc.returncode
-          assert 'NATIVE_FIXTURE_ROUTES=21/21' in proc.stdout
-          PY
+          python3 scripts/apex_native_fixture/launch_smoke.py "$RUNNER_TEMP/VYRON APEX Fixture.app" "$RUNNER_TEMP/apex-native-evidence"
       - name: Package verified fixture only
         run: |
           ditto -c -k --keepParent "$RUNNER_TEMP/VYRON APEX Fixture.app" "$RUNNER_TEMP/VYRON-APEX-native-fixture.zip"

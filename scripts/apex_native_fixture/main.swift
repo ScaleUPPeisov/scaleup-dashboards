@@ -63,6 +63,8 @@ final class FixtureApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
     private let selfTest = CommandLine.arguments.contains("--self-test")
     private let routes = ["dashboard","channels","production","inventory","publisher","batch","metadata","uploads","schedule","existing","runway","analytics","winners","competitors","images","music","autopilot","history","accounts","settings","design"]
     private var tested = false
+    private let basicTest = CommandLine.arguments.contains("--basic-test")
+    private var phase = "startup"
     func applicationDidFinishLaunching(_ notification: Notification) {
         if selfTest { DispatchQueue.main.asyncAfter(deadline: .now() + 80) { self.finish(1, "NATIVE_FIXTURE_TIMEOUT") } }
         guard let root = Bundle.main.resourceURL?.appendingPathComponent("preview", isDirectory: true),
@@ -85,25 +87,37 @@ final class FixtureApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
         }
     }
     private func open(_ configuration: WKWebViewConfiguration) {
+        phase = basicTest ? "basic" : "fixture"
+        print("WEBKIT_START \(phase)"); fflush(stdout)
         let view = WKWebView(frame: .init(x: 0, y: 0, width: 1360, height: 880), configuration: configuration)
         view.navigationDelegate = self; view.uiDelegate = self
         self.view = view
         let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 1360, height: 880), styleMask: [.titled,.closable,.resizable,.miniaturizable], backing: .buffered, defer: false)
         window.title = "VYRON APEX — TEST ONLY"
         window.contentView = view; window.center(); self.window = window
-        if !selfTest { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
-        view.load(URLRequest(url: URL(string: "apex-fixture://preview/apex-interactive.html")!))
+        window.makeKeyAndOrderFront(nil)
+        if !selfTest { NSApp.activate(ignoringOtherApps: true) }
+        if basicTest { view.loadHTMLString("<!doctype html><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'\"><h1 id=\"basic\">Synthetic WebKit check</h1>", baseURL: nil) }
+        else { view.load(URLRequest(url: URL(string: "apex-fixture://preview/apex-interactive.html")!)) }
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         let u = action.request.url
+        if basicTest && u?.absoluteString == "about:blank" { decisionHandler(.allow); return }
         decisionHandler(u?.scheme == "apex-fixture" && u?.host == "preview" && u?.path == "/apex-interactive.html" && action.targetFrame?.isMainFrame == true ? .allow : .cancel)
     }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? { nil }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        if selfTest && !tested { tested = true; waitForRoot(attempt: 0) }
+        if selfTest && !tested {
+            tested = true
+            if basicTest {
+                webView.evaluateJavaScript("document.querySelector('#basic')?.textContent") { result, error in
+                    self.finish((result as? String) == "Synthetic WebKit check" && error == nil ? 0 : 1, (result as? String) == "Synthetic WebKit check" && error == nil ? "BASIC_WEBKIT=PASS" : "BASIC_WEBKIT=FAIL")
+                }
+            } else { waitForRoot(attempt: 0) }
+        }
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { if selfTest { finish(1, "NAVIGATION_FAILED") } }
-    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { finish(1, "WEB_PROCESS_TERMINATED") }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { finish(1, "WEB_PROCESS_TERMINATED \(phase)") }
     private func waitForRoot(attempt: Int) {
         guard attempt < 60 else { finish(1, "ROOT_MISSING"); return }
         view?.evaluateJavaScript("!!document.querySelector('[data-apex-page]')") { result, error in
@@ -130,5 +144,5 @@ final class FixtureApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
 let app = NSApplication.shared
 let delegate = FixtureApp()
 app.delegate = delegate
-app.setActivationPolicy(CommandLine.arguments.contains("--self-test") ? .prohibited : .regular)
+app.setActivationPolicy(.regular)
 app.run()
