@@ -38,6 +38,29 @@ describe('mass upload confirmation',()=>{
   await act(async()=>submit.props.onClick());expect(h.status).toHaveBeenCalledTimes(1);expect(h.enqueue).not.toHaveBeenCalled();
   await act(async()=>button('Отмена').props.onClick());expect(h.status).toHaveBeenCalledTimes(1);expect(h.enqueue).not.toHaveBeenCalled();
  });
+ it('cancels an in-flight preflight without reopening the preview or enqueueing',async()=>{
+  let release!:(value:any)=>void;
+  h.fingerprint.mockImplementationOnce(()=>new Promise(resolve=>{release=resolve}));
+  await setup();
+  expect(button('Подтвердить загрузку').props.disabled).toBe(true);
+  await act(async()=>button('Отмена').props.onClick());
+  await act(async()=>{release({fingerprint:'a'.repeat(64),size:100,modifiedAt:1});await Promise.resolve()});
+  expect(button('Подтвердить загрузку')).toBeUndefined();
+  expect(h.enqueue).not.toHaveBeenCalled();
+ });
+ it('keeps only the original selection when another channel is selected after preview',async()=>{
+  h.profiles.push({id:'p2',channelId:'yt2'});
+  h.state.channels.push({id:'c2',name:'Second',enabled:true,youtubeProfileId:'p2',youtubeChannelId:'yt2'});
+  h.state.jobs.push({...job,id:'j2',channelId:'c2',finalPath:'/test/other.mp4'});
+  await setup(false);
+  const select=(name:string)=>view.root.findAllByType('input').find((x:any)=>x.props['aria-label']===name);
+  await act(async()=>select('Выбрать Second').props.onChange());
+  await act(async()=>button('Добавить в очередь ·').props.onClick());
+  await act(async()=>select('Выбрать Second').props.onChange());
+  await confirm();
+  expect(h.enqueue).toHaveBeenCalledTimes(1);
+  expect(h.enqueue.mock.calls[0][0].jobId).toBe('j1');
+ });
  it('enqueues the confirmed synthetic job exactly once',async()=>{
   await setup();await confirm();expect(h.enqueue).toHaveBeenCalledTimes(1);expect(h.enqueue.mock.calls[0][0]).toMatchObject({jobId:'j1',channelId:'c1',profileId:'p1',filePath:'/test/video.mp4'});
  });
