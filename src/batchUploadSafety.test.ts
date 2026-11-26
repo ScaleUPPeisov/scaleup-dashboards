@@ -21,10 +21,14 @@ describe('batch upload safety',()=>{
  it('fails closed on unknown session store responses',()=>{
   for(const sessions of [undefined,null,{},[null],[{}],[{jobId:''}]])expect(pendingSessionCheck(sessions,job.id)).toBe('UNAVAILABLE');
   expect(pendingSessionCheck([],'')).toBe('UNAVAILABLE');
+  expect(pendingSessionCheck([{jobId:' job-1 '}],job.id)).toBe('UNAVAILABLE');
+  expect(pendingSessionCheck([{jobId:'other '}],job.id)).toBe('UNAVAILABLE');
+  expect(pendingSessionCheck([],' job-1 ')).toBe('UNAVAILABLE');
  });
  it('revalidates the exact job and all identity and metadata after awaiting',()=>{
   expect(matches()).toBe(true);
   for(const patch of [{id:'other'},{channelId:'other'},{status:'ERROR'},{finalPath:'/test/other.mp4'},{youtubeVideoId:'already-uploaded'},{title:'other'},{description:'other'},{tags:['other']},{publishAt:'2026-11-25T00:00:00Z'}])expect(matches({...job,...patch} as VideoJob)).toBe(false);
+  expect(matches(job,{...channel,enabled:false})).toBe(false);
   expect(matches(job,{...channel,youtubeProfileId:'different'})).toBe(false);
   expect(matches(job,channel,{...profile,channelId:'different'})).toBe(false);
   expect(matches(job,channel,profile,true)).toBe(false);

@@ -9,9 +9,9 @@ export function isFuturePublishAt(value:string|undefined,nowMs:number=Date.now()
 
 /** The native store exposes resumable records, not a completed-state flag. */
 export function pendingSessionCheck(value:unknown,jobId:string):'CLEAR'|'RECOVERY_REQUIRED'|'UNAVAILABLE'{
- if(!Array.isArray(value)||!jobId)return 'UNAVAILABLE';
+ if(!Array.isArray(value)||!jobId||jobId!==jobId.trim())return 'UNAVAILABLE';
  for(const entry of value){
-  if(!entry||typeof entry!=='object'||typeof entry.jobId!=='string'||!entry.jobId.trim())return 'UNAVAILABLE';
+  if(!entry||typeof entry!=='object'||typeof entry.jobId!=='string'||!entry.jobId.trim()||entry.jobId!==entry.jobId.trim())return 'UNAVAILABLE';
   if(entry.jobId===jobId)return 'RECOVERY_REQUIRED';
  }
  return 'CLEAR';
@@ -19,7 +19,7 @@ export function pendingSessionCheck(value:unknown,jobId:string):'CLEAR'|'RECOVER
 
 /** Do not queue a stale confirmation after awaiting filesystem or fingerprint work. */
 export function batchJobStillMatches(confirmed:VideoJob,current:VideoJob|undefined,channel:Channel|undefined,profile:YoutubeProfile|undefined,active:boolean,nowMs:number=Date.now()):boolean{
- if(!current||!channel||!profile||active||current.id!==confirmed.id||current.channelId!==confirmed.channelId||channel.id!==confirmed.channelId)return false;
+ if(!current||!channel||channel.enabled===false||!profile||active||current.id!==confirmed.id||current.channelId!==confirmed.channelId||channel.id!==confirmed.channelId)return false;
  if(current.status!=='READY_UPLOAD'||!current.finalPath||current.finalPath!==confirmed.finalPath||current.youtubeVideoId)return false;
  if(!channel.youtubeProfileId||channel.youtubeProfileId!==profile.id||!channel.youtubeChannelId||channel.youtubeChannelId!==profile.channelId)return false;
  if(current.title!==confirmed.title||current.description!==confirmed.description||current.publishAt!==confirmed.publishAt||!isFuturePublishAt(current.publishAt,nowMs))return false;

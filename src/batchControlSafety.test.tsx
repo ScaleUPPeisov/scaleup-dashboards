@@ -45,6 +45,12 @@ describe('mass upload confirmation',()=>{
   await setup();h.state.jobs=[...h.state.jobs,{...job,id:'j2',number:2,finalPath:'/test/other.mp4'}];await act(async()=>view.update(<BatchControl/>));
   await confirm();expect(h.enqueue).toHaveBeenCalledTimes(1);expect(h.enqueue.mock.calls[0][0].jobId).toBe('j1');
  });
+ it('refuses a channel disabled during asynchronous fingerprinting',async()=>{
+  let release!:(value:any)=>void;h.fingerprint.mockImplementation(()=>new Promise(resolve=>{release=resolve}));
+  await setup();await confirm();h.state.channels=[{...h.state.channels[0],enabled:false}];
+  await act(async()=>{release({fingerprint:'a'.repeat(64),size:100,modifiedAt:1});await Promise.resolve();await Promise.resolve()});
+  expect(h.enqueue).not.toHaveBeenCalled();expect(h.warn).toHaveBeenCalled();
+ });
  it('refuses a changed channel mapping after asynchronous fingerprinting',async()=>{
   let release!:(value:any)=>void;h.fingerprint.mockImplementation(()=>new Promise(resolve=>{release=resolve}));
   await setup();await confirm();h.state.channels=[{...h.state.channels[0],youtubeChannelId:'changed'}];
