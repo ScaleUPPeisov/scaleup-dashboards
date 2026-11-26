@@ -15,7 +15,6 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 70
     env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/vyron-apex-target
       CARGO_INCREMENTAL: '0'
     steps:
       - uses: actions/checkout@v4
@@ -26,6 +25,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$(uname -m)" = arm64
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/vyron-apex-target" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
