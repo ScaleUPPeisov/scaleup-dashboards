@@ -40,4 +40,20 @@ describe('APEX inventory workspace',()=>{
   expect(html).toContain('YouTube API requests: 0');
   expect(html).not.toContain('role="button"');
  });
+ it('opens the channel from its row without intercepting nested controls',async()=>{
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);
+  vi.stubGlobal('window',{setInterval:()=>1,clearInterval:()=>{}});
+  // @ts-expect-error react-test-renderer has no bundled TypeScript declarations.
+  const {act,create}=await import('react-test-renderer');
+  let view:any;
+  await act(async()=>{view=create(<LiveContentInventory/>)});
+  const row=view.root.findAllByType('article').find((node:any)=>node.props['aria-label']==='Актуальный');
+  await act(async()=>row.props.onClick({target:{closest:()=>null}}));
+  expect(fixture.app.setPage).toHaveBeenCalledWith('publisher');
+  vi.mocked(fixture.app.setPage as any).mockClear();
+  await act(async()=>row.props.onClick({target:{closest:()=>({})}}));
+  expect(fixture.app.setPage).not.toHaveBeenCalled();
+  await act(async()=>view.unmount());
+  vi.unstubAllGlobals();
+ });
 });

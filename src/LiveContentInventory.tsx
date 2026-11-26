@@ -140,7 +140,12 @@ export function LiveContentInventory(){
       {rows.length===0?<p className="inventoryApexEmpty">Нет активных каналов</p>:<div className="inventoryApexRows">
         {rows.map(row=>{
           const known=hasConfirmedStock(row);
-          return <article className={'inventoryApexRow inventoryApexRow-'+row.level.toLowerCase()} key={row.channelId} aria-label={row.channelName}>
+          return <article className={'inventoryApexRow inventoryApexRow-'+row.level.toLowerCase()} key={row.channelId} aria-label={row.channelName} onClick={event=>{
+            // Buttons and disclosure controls keep their own actions. Other
+            // parts of the row retain the original shortcut to publication.
+            if((event.target as Element).closest('button,a,input,select,textarea,details,[role="button"],[contenteditable="true"]'))return;
+            openPublisher(row.channelId);
+          }}>
             <div className="inventoryApexIdentity"><button className="inventoryApexChannel" onClick={()=>openPublisher(row.channelId)}>{row.channelName}</button><span title={row.renderFolderPath}>{row.renderFolderPath||'Папка Render не выбрана'}</span></div>
             <dl className="inventoryApexFigures">
               <div><dt>Готово</dt><dd>{known?row.readyVideos:'—'}</dd></div>

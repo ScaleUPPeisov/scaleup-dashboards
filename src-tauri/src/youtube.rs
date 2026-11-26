@@ -2993,6 +2993,10 @@ struct PersistedUploadSession {
 struct PersistedUploadSessions {
     sessions: Vec<PersistedUploadSession>,
 }
+fn parse_upload_sessions_store(bytes: &[u8]) -> Result<PersistedUploadSessions, String> {
+    serde_json::from_slice(bytes)
+        .map_err(|e| format!("UPLOAD_RECOVERY_CORRUPT: сохранённые сессии недоступны для чтения: {e}"))
+}
 fn upload_sessions_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = crate::apex_paths::data_dir(app)?;
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -3000,20 +3004,42 @@ fn upload_sessions_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 fn load_upload_sessions_store(app: &AppHandle) -> Result<PersistedUploadSessions, String> {
     let p = upload_sessions_path(app)?;
-    if !p.exists() {
-        return Ok(PersistedUploadSessions::default());
+    load_upload_sessions_file(&p)
+}
+fn load_upload_sessions_file(p: &Path) -> Result<PersistedUploadSessions, String> {
+    let b = match fs::read(p) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(PersistedUploadSessions::default()),
+        Err(error) => return Err(format!("Upload recovery read: {error}")),
+    };
+    // A corrupt store is not evidence that no resumable uploads exist. Keep
+    // the original bytes in place and stop before creating a new session.
+    parse_upload_sessions_store(&b)
+}
+#[cfg(test)]
+mod upload_sessions_store_safety_tests {
+    use super::{load_upload_sessions_file, parse_upload_sessions_store};
+
+    #[test]
+    fn rejects_corrupt_store_instead_of_treating_it_as_empty() {
+        assert!(parse_upload_sessions_store(br#"{"sessions":["#)
+            .unwrap_err().contains("UPLOAD_RECOVERY_CORRUPT"));
+        assert!(parse_upload_sessions_store(br#"{"sessions":[]}"#)
+            .unwrap().sessions.is_empty());
     }
-    let b = fs::read(&p).map_err(|e| format!("Upload recovery read: {e}"))?;
-    match serde_json::from_slice(&b) {
-        Ok(x) => Ok(x),
-        Err(_) => {
-            let backup = p.with_extension(format!(
-                "corrupt-{}.json",
-                Utc::now().format("%Y%m%d%H%M%S")
-            ));
-            let _ = fs::rename(&p, backup);
-            Ok(PersistedUploadSessions::default())
-        }
+    #[test]
+    fn read_errors_and_corruption_do_not_become_empty_or_change_original() {
+        let base = std::env::temp_dir().join(format!("vyron-session-safety-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir(&base).unwrap();
+        let file = base.join("sessions.json");
+        let original = b"{broken-session-store";
+        std::fs::write(&file, original).unwrap();
+        assert!(load_upload_sessions_file(&file).unwrap_err().contains("UPLOAD_RECOVERY_CORRUPT"));
+        assert_eq!(std::fs::read(&file).unwrap(), original);
+        assert!(load_upload_sessions_file(&base).is_err());
+        assert!(load_upload_sessions_file(&base.join("missing.json")).unwrap().sessions.is_empty());
+        std::fs::remove_file(file).unwrap();
+        std::fs::remove_dir(base).unwrap();
     }
 }
 fn save_upload_sessions_store(
@@ -3399,6 +3425,20 @@ pub fn youtube_active_uploads() -> Value {
 const YOUTUBE_UPLOAD_CHUNK_BYTES: usize = 8 * 1024 * 1024;
 const YOUTUBE_UPLOAD_CONNECT_TIMEOUT_SECS: u64 = 20;
 const YOUTUBE_UPLOAD_REQUEST_TIMEOUT_SECS: u64 = 120;
+fn upload_response_has_video_id(value: &Value) -> bool {
+    value.get("id").and_then(Value::as_str).is_some_and(|id| !id.trim().is_empty())
+}
+#[cfg(test)]
+mod upload_completion_safety_tests {
+    use super::{upload_response_has_video_id, json};
+    #[test]
+    fn only_a_nonempty_video_id_proves_completion() {
+        assert!(!upload_response_has_video_id(&json!({})));
+        assert!(!upload_response_has_video_id(&json!({"id": "  "})));
+        assert!(!upload_response_has_video_id(&json!({"id": null})));
+        assert!(upload_response_has_video_id(&json!({"id": "synthetic-video"})));
+    }
+}
 fn youtube_upload_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(YOUTUBE_UPLOAD_CONNECT_TIMEOUT_SECS))
@@ -3428,18 +3468,16 @@ async fn continue_persisted_upload(
     let (mut offset, already) = if probe_first {
         match resumable_status(&client, &session.session_url, token, session.total).await {
             Ok(x) => x,
-            Err(e) => {
-                if e.starts_with("UPLOAD_SESSION_EXPIRED:") {
-                    let _ = remove_upload_session(app, &session.job_id);
-                }
-                return Err(e);
-            }
+            Err(e) => return Err(e),
         }
     } else {
         (session.offset, None)
     };
     let _active_guard = ActiveUploadGuard::start(app, session, offset);
     if let Some(v) = already {
+        if !upload_response_has_video_id(&v) {
+            return Err("UPLOAD_NEEDS_VERIFICATION: YouTube подтвердил завершение без video ID; сохранённая сессия оставлена для проверки".into());
+        }
         let _ = remove_upload_session(app, &session.job_id);
         emit_upload_progress(app, session, session.total);
         return Ok(v);
@@ -3517,7 +3555,6 @@ async fn continue_persisted_upload(
                         continue;
                     }
                     let text = r.text().await.unwrap_or_default();
-                    let _ = remove_upload_session(app, &session.job_id);
                     return Err(format!(
                         "YouTube upload {st}: {}",
                         text.chars().take(500).collect::<String>()
@@ -3547,6 +3584,9 @@ async fn continue_persisted_upload(
         if !completed {
             return Err("UPLOAD_INTERRUPTED: YouTube upload не удалось продолжить".into());
         }
+    }
+    if !upload_response_has_video_id(&final_json) {
+        return Err("UPLOAD_NEEDS_VERIFICATION: YouTube не вернул video ID; сохранённая сессия оставлена для проверки".into());
     }
     let _ = remove_upload_session(app, &session.job_id);
     emit_upload_progress(app, session, session.total);
