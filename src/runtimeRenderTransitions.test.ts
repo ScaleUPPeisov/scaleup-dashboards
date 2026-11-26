@@ -25,6 +25,13 @@ describe('background render transitions',()=>{
   expect(observeRuntimeRenderTransitions([completed,completed],ledger)).toEqual([]);
   expect(observeRuntimeRenderTransitions([completed],createProductionRenderLedger(disk))).toEqual([]);
  });
+ it('returns the completed observation rather than an earlier duplicate rendering row',()=>{
+  const ledger=createProductionRenderLedger(storage());
+  const rendering=row('Rendering'),completed=row('Completed','/fixture/video.mp4');
+  observeRuntimeRenderTransitions([rendering],ledger);
+  expect(observeRuntimeRenderTransitions([rendering,completed],ledger)).toEqual([completed]);
+  expect(observeRuntimeRenderTransitions([rendering,completed],ledger)).toEqual([]);
+ });
  it('does not replay a transition already observed by the production page',()=>{
   const ledger=createProductionRenderLedger(storage());
   observeRuntimeRenderTransitions([row('Rendering')],ledger);

@@ -9,7 +9,7 @@ import {isRenderReadyTransitionAllowed} from './storageLifecycle';
 import {scanFactualRenderRuntime} from './renderRuntimeEvidence';
 import {replaceFactualActiveRenders,setRenderMonitoringExpected,invalidateRenderFacts} from './activeOperationFacts';
 import {createRenderScanScheduler} from './renderScanScheduler';
-import {applyStaleOperationPatches,buildStaleOperationPatches} from './staleOperationReconciliation';
+import {buildStaleOperationPatches} from './staleOperationReconciliation';
 import {productionRenderLedger} from './productionRenderTransitions';
 import {observeRuntimeRenderTransitions,runtimeRenderIdentity} from './runtimeRenderTransitions';
 import {createProductionScanLookup} from './productionScanLookup';
@@ -79,7 +79,7 @@ export function ProductionStatusBridge(){
         if(evidence.reliable){
           replaceFactualActiveRenders(evidence.activeJobIds,evidence.observedAtMs);
           const patches=buildStaleOperationPatches(useApp.getState().jobs,{uploadsKnown:false,rendersKnown:true,activeUploadIds:new Set(),activeRenderIds:evidence.activeJobIds,uploadSessionIds:new Set(),now:new Date(evidence.observedAtMs).toISOString()});
-          applyStaleOperationPatches(patches,useApp.getState().patchJob);
+          if(patches.length)useApp.getState().patchJobsBatch(patches.map(({jobId,patch})=>({id:jobId,patch})));
         }
     };
     const current=createRenderScanScheduler({scan:run,isVisible:()=>document.visibilityState==='visible',onError:error=>{invalidateRenderFacts();console.warn('[VYRON_RENDER_MONITOR]',error)}});

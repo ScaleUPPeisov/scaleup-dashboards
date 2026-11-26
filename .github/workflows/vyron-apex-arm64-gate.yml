@@ -8,7 +8,7 @@ permissions:
   contents: read
 concurrency:
   group: vyron-apex-arm64-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 jobs:
   arm64-build:
     if: github.ref == 'refs/heads/feature/vyron-7-apex'
