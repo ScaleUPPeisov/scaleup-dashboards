@@ -1,0 +1,87 @@
+name: VYRON APEX isolated ARM64 build gate
+on:
+  push:
+    branches:
+      - feature/vyron-7-apex
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: vyron-apex-arm64-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  arm64-build:
+    if: github.ref == 'refs/heads/feature/vyron-7-apex'
+    runs-on: macos-15
+    timeout-minutes: 70
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/vyron-apex-target
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify isolated source and runner architecture
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(uname -m)" = arm64
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> ${{ runner.temp }}/vyron-apex-target
+          key: apex-arm64-guarded-v1
+      - name: Verify DEV config (no updater or production publication)
+        run: |
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const config=JSON.parse(fs.readFileSync('src-tauri/tauri.apex.conf.json','utf8'));
+          assert.equal(config.identifier,'studio.channelflow.apex');
+          assert.equal(config.productName,'VYRON APEX');
+          assert.match(config.version,/^7\.0\.0-dev\./);
+          assert.equal(config.bundle.createUpdaterArtifacts,false);
+          assert.deepEqual(config.plugins.updater.endpoints,[]);
+          JS
+      - run: npm ci --no-audit --no-fund
+      - name: Frontend build
+        run: npm run build
+      - name: Native Rust library tests (hosted, no user credentials)
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+      - name: APEX ARM64 bundle (guarded DEV, no installation)
+        run: npm run tauri -- build --target aarch64-apple-darwin --config src-tauri/tauri.apex.conf.json --bundles app
+      - name: Verify bundle metadata, architecture and fail-closed startup
+        run: |
+          set -euo pipefail
+          app="$CARGO_TARGET_DIR/aarch64-apple-darwin/release/bundle/macos/VYRON APEX.app"
+          plist="$app/Contents/Info.plist"
+          test -f "$plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = studio.channelflow.apex
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")
+          case "$version" in 7.0.0*) ;; *) exit 1;; esac
+          executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")
+          binary="$app/Contents/MacOS/$executable"
+          test "$(lipo -archs "$binary")" = arm64
+          python3 - "$binary" <<'PY'
+          import subprocess,sys
+          result=subprocess.run([sys.argv[1]],capture_output=True,text=True,timeout=10)
+          assert result.returncode==78, f'Unexpected startup exit: {result.returncode}'
+          assert 'VYRON APEX' in result.stderr
+          print('Guarded startup: PASS (exit 78, application intentionally NOT usable)')
+          PY
+          mkdir -p "$RUNNER_TEMP/apex-build-evidence"
+          printf '%s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/apex-build-evidence/commit.txt"
+          shasum -a 256 "$binary" | awk '{print $1}' > "$RUNNER_TEMP/apex-build-evidence/binary.sha256"
+          printf '%s\n' 'ARM64_BUILD=PASS' 'GUARDED_STARTUP=PASS' 'PHYSICAL_M1=NOT_TESTED' 'ISOLATION=NOT_CERTIFIED' 'RELEASE=BLOCKED' > "$RUNNER_TEMP/apex-build-evidence/status.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apex-arm64-build-evidence-not-a-release
+          path: ${{ runner.temp }}/apex-build-evidence/
+          if-no-files-found: error
+          retention-days: 14
