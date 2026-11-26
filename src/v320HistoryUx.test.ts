@@ -1,5 +1,6 @@
 import {describe,expect,it} from 'vitest';
 import {readFileSync} from 'node:fs';
+import {apexNavigation,apexActivePage} from './apexNavigation';
 import {VYRON_RELEASE_HISTORY,VYRON_FIRST_RELEASE,VYRON_CURRENT_RELEASE,groupReleaseHistoryByDay} from './releaseHistory';
 
 const read=(p:string)=>readFileSync(p,'utf8');
@@ -47,11 +48,11 @@ describe('VYRON 3.2 history and navigation UX',()=>{
  });
  it('normalizes aliases to exactly one sidebar active page and one icon slot',()=>{
    const app=read('src/App.tsx'),css=read('src/ui-layout-contract.css');
-   expect(app).toContain("page==='autopilot'?'dashboard'");
-   expect(app).toContain("page==='accounts'?'settings'");
-   expect(app).toContain("page==='metadata'||page==='existing'||page==='publisher'?'youtube'");
-   expect(app).toContain("page==='content'?'production'");
-   expect(app).toContain("aria-current={active?'page':undefined}");
+   const pages=apexNavigation.flatMap(g=>g.items.map(i=>i.page));
+   for(const page of [...pages,'youtube','content'] as const)expect(pages.filter(p=>p===apexActivePage(page))).toHaveLength(1);
+   expect(apexActivePage('youtube')).toBe('publisher');
+   expect(apexActivePage('content')).toBe('production');
+   expect(app).toContain("aria-current={activePage===n.page?'page':undefined}");
    expect(app).toContain('sidebarIconSlot');
    expect(css).toContain('grid-template-columns:24px minmax(0,1fr)');
    expect(css).toContain('.sidebar nav .sidebarNavItem.active');

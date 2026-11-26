@@ -30,7 +30,11 @@ function job(overrides:Record<string,unknown>={}){
 describe('VYRON 3.2.1 physical regression patch',()=>{
  it('forces full readable sidebar labels and defeats legacy 17px span width',()=>{
   const app=read('src/App.tsx'),css=read('src/ui-layout-contract.css');
-  for(const label of ['Главная','Каналы','Производство','YouTube','Аналитика','Конкуренты','Настройки'])expect(app).toContain(label);
+  const nav=read('src/apexNavigation.ts'),referenceCss=read('src/apex-reference-shell.css');
+  for(const label of ['Главная','Каналы','Производство','Публикатор','Аналитика 360°','Конкуренты','Настройки'])expect(nav).toContain(label);
+  expect(app).toContain('sidebarLabel');
+  expect(referenceCss).toContain('min-width:214px');
+  expect(referenceCss).toContain('min-width:62px');
   expect(css).toContain('.sidebar{width:228px;min-width:228px;max-width:228px;flex-basis:228px}');
   expect(css).toContain('.sidebarLabel{');
   expect(css).toContain('width:auto;min-width:0;max-width:none');

@@ -12,7 +12,8 @@ const tauri=read('src-tauri/tauri.conf.json');
 
 describe('VYRON 6.0.2 manual Production restore',()=>{
   it('routes Materials and Builder through the VYRON 4-compatible ProductionManager',()=>{
-    expect(productionOS).toContain('<ProductionManager view="materials"/>');
+    expect(productionOS).toContain('<ProductionManager view={materialView}/>');
+    expect(productionOS).toContain("useState<'materials'|'images'|'music'>");
     expect(productionOS).toContain('<ProductionManager view="builder"/>');
     expect(productionOS).not.toContain("import {MaterialsManager");
     expect(productionOS).not.toContain("<MaterialsManager");

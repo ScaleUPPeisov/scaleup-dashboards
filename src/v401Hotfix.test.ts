@@ -43,8 +43,9 @@ describe('VYRON 4.0.1 hotfix contract',()=>{
     const app=read('src/App.tsx');
     const center=read('src/YouTubeCenter.tsx');
     const history=read('src/ActivityHistory.tsx');
-    expect(app).toContain("label:'История'");
-    expect(app).toContain("detail:{global:true}");
+    expect(read('src/apexNavigation.ts')).toContain('"page": "history"');
+    expect(app).toContain("canonical==='history'?<HistoryPage/>");
+    expect(read('src/HistoryPage.tsx')).toContain('useApp(s=>s.activityJournal)');
     expect(center).toContain('<ActivityHistory globalView={historyGlobal}/>');
     expect(history).toContain('СЕГОДНЯ • ВСЕ КАНАЛЫ');
     expect(history).toContain('dailySummary(journalRows,channel.id)');

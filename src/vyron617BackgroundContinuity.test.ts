@@ -40,9 +40,9 @@ describe('VYRON 6.1.17 background continuity contracts',()=>{
  });
  it('opens History locally without a YouTube route and never auto-resumes crash recovery',()=>{
   const app=read('src/App.tsx'),gate=read('src/RecoveryGate.tsx');
-  expect(app).toContain("id:'history',page:'history'");
+  expect(read('src/apexNavigation.ts')).toContain('"page": "history"');
   expect(app).toContain("canonical==='history'?<HistoryPage/>");
-  expect(app).not.toContain("id:'history',page:'youtube'");
+  expect(read('src/apexNavigation.ts')).not.toContain("page==='history'?'publish'");
   expect(gate).not.toContain('Date.now()+30_000');
   expect(gate).toContain('if(!candidate||decided.current||!candidate.safeToResume)return');
  });

@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import {apexNavigation} from './apexNavigation';
 import {describe,expect,it} from 'vitest';
 import {classifyChannelRenderFiles,summarizeRenderScan} from './renderScanClassifier';
 import type {RenderFolderVideoFile} from './api';
@@ -31,14 +32,11 @@ describe('VYRON 3.3.4 live inventory safety contracts',()=>{
   expect(fs.readFileSync('src/ProductionOS.tsx','utf8')).toContain("useLiveInventory")
  });
  it('sidebar keeps Запас видео before YouTube, exposes History, and shows the inventory badge',()=>{
-  const production=app.indexOf("id:'production',page:'production'");
-  const inventory=app.indexOf("id:'inventory',page:'inventory'");
-  const history=app.indexOf("id:'history',page:'history'");
-  const youtube=app.indexOf("id:'youtube',page:'youtube'");
-  expect(production).toBeGreaterThanOrEqual(0);
-  expect(inventory).toBeGreaterThan(production);
-  expect(history).toBeGreaterThan(inventory);
-  expect(youtube).toBeGreaterThan(history);
+  const pages=apexNavigation.flatMap(g=>g.items.map(i=>i.page));
+  expect(pages.indexOf('production')).toBeGreaterThanOrEqual(0);
+  expect(pages.indexOf('inventory')).toBeGreaterThan(pages.indexOf('production'));
+  expect(pages.indexOf('publisher')).toBeGreaterThan(pages.indexOf('inventory'));
+  expect(pages.filter(p=>p==='history')).toHaveLength(1);
   expect(app).toContain("n.page==='inventory'");
   expect(app).toContain('<LiveInventoryBridge/>')
  });

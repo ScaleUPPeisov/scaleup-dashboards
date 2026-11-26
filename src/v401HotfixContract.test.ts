@@ -16,8 +16,11 @@ const releases=fs.readFileSync('src/releaseHistory.ts','utf8');
 
 describe('VYRON 4.0.1 hotfix contract',()=>{
   it('keeps the new History shortcut global and separate from OAuth state',()=>{
-    expect(app).toContain("label:'История'");
-    expect(app).toContain("detail:{global:true}");
+    expect(fs.readFileSync('src/apexNavigation.ts','utf8')).toContain('"page": "history"');
+    expect(app).toContain("canonical==='history'?<HistoryPage/>");
+    const localHistory=fs.readFileSync('src/HistoryPage.tsx','utf8');
+    expect(localHistory).toContain('useApp(s=>s.activityJournal)');
+    expect(localHistory).not.toContain('youtubeProfiles(');
     expect(youtube).toContain('globalView={historyGlobal}');
     expect(history).toContain('<option value="">Все каналы</option>');
     expect(history).toContain("globalView?'today':'30d'");

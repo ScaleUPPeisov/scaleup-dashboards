@@ -39,11 +39,12 @@ describe('VYRON 5.0.0 product contract',()=>{
   expect(tauri.identifier).toBe('studio.channelflow.desktop');
   expect(cargo).toMatch(/\[package\][\s\S]*version\s*=\s*"6\.1\.15"/);
  });
- it('removes only the top-level History shortcut while preserving YouTube navigation',()=>{
-  expect(app).toContain("id:'history',page:'history'");
-  expect(app).not.toContain("youtubeTab:'history'");
-  expect(app).toContain("id:'youtube',page:'youtube'");
-  expect(app).toContain("label:'Запас видео'");
+ it('keeps the local History shortcut and independent YouTube routes',()=>{
+  const navigation=fs.readFileSync('src/apexNavigation.ts','utf8');
+  expect(navigation).toContain('"page": "history"');
+  expect(app).toContain("canonical==='history'?<HistoryPage/>");
+  expect(navigation).toContain('"page": "publisher"');
+  expect(navigation).toContain('"label": "Запас видео"');
  });
  it('protects the first two minutes from heavy owner inventory refresh',()=>{
   expect(OWNER_INVENTORY_COLD_START_DELAY_MS).toBe(0);
@@ -58,7 +59,8 @@ describe('VYRON 5.0.0 product contract',()=>{
  });
  it('exposes finder-free daily operations in inventory',()=>{
   expect(inventory).toContain('DailyOperationsCenter');
-  expect(inventory).toContain('ЛОКАЛЬНЫЙ ЗАПАС');
+  expect(inventory).toContain('Оперативная работа за сегодня');
+  expect(inventory).toContain('Подтверждённые локальные файлы');
  });
  it('has a canonical 5.0 major candidate plus the real production chain',()=>{
   expect(VYRON_CURRENT_RELEASE.version).toBe('6.1.10');
