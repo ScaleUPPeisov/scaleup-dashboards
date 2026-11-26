@@ -9,7 +9,8 @@
 
 ## Фактические проверки
 - GitHub commit, compare и продвижение рабочей ветки: PASS.
-- Тесты нового патча и сборка: NOT_TESTED. На момент проверки Actions для последнего инженерного HEAD вернул 0 runs. Не интерпретировать как PASS.
+- Локальный журнал владельца для `291f8b248ee787683abfebadaefa7ea4994599d3`: npm ci завершился; Vitest 1345 PASS, 1 FAIL, 1 SKIP (240 файлов, 10.85 s). Все новые batch/recovery/UI тесты прошли. Frontend build не выполнялся из-за `&&` после FAIL. Единственный FAIL — исторический `v400DashboardTruth.test.ts`, ожидающий буквальный вызов `isFuture`, заменённый ранее однопроходной проверкой даты. В данном коммите заменён хрупкий assertion на проверку поведения (private+future, граница now, прошлые/невалидные/отсутствующие даты, public/unlisted/unknown, min/max, partial), алгоритм не изменён. Новый прогон ещё NOT_TESTED.
+- npm ci сообщил 5 vulnerabilities: 1 moderate, 2 high, 2 critical. Нужны результаты `npm audit --json` и `npm audit --omit=dev --json` для точного определения цепочек и безопасных исправлений. Не применять `npm audit fix --force` вслепую.
 - Секреты: полный privacy gate не прогонялся в этой сессии.
 - Физические замеры FPS, CPU, GPU, RAM, температура: NOT_MEASURED.
 - Функциональный и визуальный паритет: PARTIAL/NOT_TESTED; текущая матрица не является приёмкой.
