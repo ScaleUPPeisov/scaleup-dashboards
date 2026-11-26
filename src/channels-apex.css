@@ -294,3 +294,37 @@
   .channelsFleetPage .pageHeader { flex-wrap: wrap; }
   .channelsFleetPage .fleetMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* Full reference channels: 4 KPI strip, list/cards toggle and inspector. */
+.apexFleetReference{--fleet-surface:#181a1f;--fleet-raised:#202228;--fleet-line:#2c2e35;--fleet-accent:#a78bfa;--fleet-text:#f2f2f6;--fleet-muted:#9c9faa}
+.apexFleetReference .pageHeader{margin-bottom:17px}
+.apexFleetReference .pageHeader h1{font-size:30px;letter-spacing:-.9px}
+.apexFleetReference .pageHeader p{font-size:12px;color:var(--fleet-muted);margin:6px 0 0}
+.apexFleetReference .headerActions button,.apexFleetReference .filterChips button{min-height:34px;padding:6px 9px;font-size:12px}
+.apexFleetKpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-bottom:1px solid #2c2e35;padding:0 0 15px;margin-bottom:16px}
+.apexFleetKpis>div{padding:0 20px;border-right:1px solid #2c2e35;min-width:0}
+.apexFleetKpis>div:first-child{padding-left:0}.apexFleetKpis>div:last-child{border:0}
+.apexFleetKpis small,.apexFleetKpis em{display:block;color:#9c9faa;font-size:11px;font-style:normal}
+.apexFleetKpis strong{display:block;font-size:30px;line-height:1.2;letter-spacing:-.7px;margin:5px 0;font-variant-numeric:tabular-nums}
+.apexFleetReference .fleetToolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 13px}
+.apexFleetReference .fleetToolbar>input{width:210px;min-height:34px;padding:7px 10px;font-size:12px}
+.apexFleetViewToggle{display:flex;gap:3px;margin-left:auto}
+.apexFleetViewToggle button{min-height:34px;border-radius:8px;padding:6px 10px}
+.apexFleetViewToggle button.active{background:#332545;color:#e9ddff;border-color:#493366}
+.apexFleetSplit{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:15px;align-items:start}
+.apexFleetTable{min-width:0;overflow:auto;max-height:calc(100vh - 245px);min-height:180px;border:1px solid #2c2e35;background:#15171b;border-radius:9px}
+.apexFleetTable table{width:100%;border-collapse:collapse;text-align:left;font-variant-numeric:tabular-nums;white-space:nowrap}
+.apexFleetTable th{position:sticky;top:0;z-index:1;background:#1b1d22;color:#9c9faa;font-size:11px;font-weight:500}
+.apexFleetTable th,.apexFleetTable td{padding:8px 10px;border-bottom:1px solid #2c2e35;font-size:12px}
+.apexFleetTable tr:last-child td{border-bottom:0}.apexFleetTable tr.selected td{background:#292236}
+.apexFleetTable .apexFleetRowName{display:flex;align-items:center;justify-content:flex-start;gap:9px;background:none;border:0;box-shadow:none;text-align:left;min-height:34px;padding:0;color:#f2f2f6;white-space:nowrap}
+.apexFleetTable .apexFleetRowName:hover{color:#cbb5f8}
+.apexFleetTruth{display:inline-block;padding:3px 7px;border-radius:5px;font-size:11px}
+.apexFleetTruth.good{color:#46d598;background:#1d322a}.apexFleetTruth.warn{color:#efb85a;background:#382d20}
+.apexFleetInspector{min-width:0}.apexFleetInspector .channelFleetCard{gap:9px;padding:15px;border-radius:10px}
+.apexFleetInspector .fleetMetrics{grid-template-columns:1fr 1fr;gap:9px;padding:9px 0}
+.apexFleetInspector .fleetMetrics small{font-size:11px}.apexFleetInspector .fleetActions button,.apexFleetInspector .fleetMore summary{min-height:34px;font-size:12px;padding:6px}
+.apexFleetInspector .fleetMetricDetails summary{min-height:30px;padding:6px 0}
+.apexFleetInspector .channelEdit{grid-template-columns:1fr}
+@media(max-width:1050px){.apexFleetSplit{grid-template-columns:1fr}.apexFleetTable{max-height:420px}}
+@media(max-width:700px){.apexFleetKpis{grid-template-columns:1fr 1fr;gap:12px}.apexFleetKpis>div:nth-child(3){padding-left:0}.apexFleetKpis>div:nth-child(2){border:0}}

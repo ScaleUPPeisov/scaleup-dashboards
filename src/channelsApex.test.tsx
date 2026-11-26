@@ -7,6 +7,7 @@ const fixture=vi.hoisted(()=>({state:{} as Record<string,unknown>,owner:{availab
 vi.mock('./store',()=>({useApp:(select:(state:Record<string,unknown>)=>unknown)=>select(fixture.state)}));
 vi.mock('./BatchControl',()=>({BatchControl:()=>null}));
 vi.mock('./ChannelPassport',()=>({ChannelPassport:()=>null}));
+vi.mock('./renderInventoryRuntime',()=>({useLiveInventory:(select:(state:unknown)=>unknown)=>select({snapshots:{}})}));
 vi.mock('./youtubeOwnerInventory',()=>({OWNER_INVENTORY_EVENT:'fixture-owner',ownerInventoryForChannel:()=>fixture.owner}));
 vi.mock('./youtubePublishSafety',()=>({safeDailyStatus:()=>({configured:false,unlimited:false})}));
 import {ChannelsOS} from './ChannelsOS';
@@ -24,6 +25,15 @@ describe('APEX channels workspace',()=>{
   expect(card).toContain('<details class="fleetMore">');
   for(const label of ['Паспорт','Публикация','Настроить','Аналитика','Расписание','Папки'])expect(card).toContain(label);
   expect(card).toContain('aria-expanded="false"');
+ });
+ it('defaults to the reference table and renders only one channel inspector',()=>{
+  fixture.state.channels=[channel,{...channel,id:'second-channel',name:'Второй канал'}];
+  const html=renderToStaticMarkup(<ChannelsOS/>);
+  expect(html).toContain('class="apexFleetSplit"');
+  expect(html).toContain('aria-label="Выбрать канал: Второй канал"');
+  expect(html).toContain('aria-labelledby="channel-title-test-channel"');
+  expect(html).not.toContain('aria-labelledby="channel-title-second-channel"');
+  expect(html).toContain('Нет данных');
  });
  it('distinguishes unknown YouTube totals from a confirmed zero',()=>{
   const html=renderToStaticMarkup(<ChannelsOS/>);
