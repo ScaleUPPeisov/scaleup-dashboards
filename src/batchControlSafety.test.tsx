@@ -1,7 +1,7 @@
 import React from 'react';
 import {beforeEach,afterEach,describe,expect,it,vi} from 'vitest';
 
-const h=vi.hoisted(()=>({state:{} as any,profiles:[{id:'p1',channelId:'yt1'}],enqueue:vi.fn(),fingerprint:vi.fn(),status:vi.fn(),sessions:vi.fn(),warn:vi.fn()}));
+const h=vi.hoisted(()=>({state:{} as any,profiles:[{id:'p1',channelId:'yt1'}],enqueue:vi.fn(),fingerprint:vi.fn(),status:vi.fn(),sessions:vi.fn(),evidence:vi.fn(),occupied:vi.fn(),warn:vi.fn()}));
 vi.mock('./store',()=>({useApp:Object.assign((select:any)=>select(h.state),{getState:()=>h.state})}));
 vi.mock('./ModalPortal',()=>({ModalPortal:({children}:any)=>children}));
 vi.mock('./api',()=>({api:{youtubeProfiles:async()=>h.profiles,youtubeGoogleConfig:async()=>null,localSourceStatus:h.status,youtubeFileFingerprint:h.fingerprint,youtubeUploadSessions:h.sessions}}));
@@ -12,6 +12,7 @@ vi.mock('./uploadQueueRuntime',()=>({configureUploadQueue:vi.fn(),enqueueUpload:
 vi.mock('./youtubePublishSafety',()=>({globalDailyUploadStatus:()=>({remaining:10}),safeDailyStatus:()=>({remaining:10})}));
 vi.mock('./youtubeQuota',()=>({youtubeQuotaProjectIdentity:()=>({projectKey:'test'})}));
 vi.mock('./notificationCenter',()=>({notifyError:vi.fn(),notifyInfo:vi.fn(),notifySuccess:vi.fn(),notifyWarning:h.warn}));
+vi.mock('./apexBatchScheduleRuntime',()=>({batchScheduleEvidence:h.evidence,batchLocalOccupied:h.occupied}));
 import {BatchControl} from './BatchControl';
 
 const job={id:'j1',channelId:'c1',number:1,status:'READY_UPLOAD',finalPath:'/test/video.mp4',title:'Synthetic title',description:'Synthetic description',tags:['test'],publishAt:'2099-01-01T00:00:00Z'};
@@ -31,7 +32,7 @@ async function confirm(){
  await act(async()=>{button('Подтвердить загрузку').props.onClick();await Promise.resolve();await Promise.resolve()});
 }
 describe('mass upload confirmation',()=>{
- beforeEach(()=>{vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);vi.clearAllMocks();h.profiles=[{id:'p1',channelId:'yt1'}];h.state={channels:[{id:'c1',name:'Test',enabled:true,youtubeProfileId:'p1',youtubeChannelId:'yt1'}],jobs:[{...job,tags:[...job.tags]}],settings:{},fingerprintCache:{},patchJob:vi.fn()};h.sessions.mockResolvedValue([]);h.status.mockResolvedValue({exists:true,isFile:true});h.fingerprint.mockResolvedValue({fingerprint:'a'.repeat(64),size:100,modifiedAt:1})});
+ beforeEach(()=>{vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);vi.clearAllMocks();h.profiles=[{id:'p1',channelId:'yt1'}];h.state={channels:[{id:'c1',name:'Test',enabled:true,youtubeProfileId:'p1',youtubeChannelId:'yt1'}],jobs:[{...job,tags:[...job.tags]}],settings:{},fingerprintCache:{},patchJob:vi.fn()};h.evidence.mockReturnValue(undefined);h.occupied.mockReturnValue([]);h.sessions.mockResolvedValue([]);h.status.mockResolvedValue({exists:true,isFile:true});h.fingerprint.mockResolvedValue({fingerprint:'a'.repeat(64),size:100,modifiedAt:1})});
  afterEach(async()=>{if(view)await act(async()=>view.unmount());view=undefined;vi.unstubAllGlobals()});
  it('only reads local file facts and never enqueues after cancellation or unchecked confirmation',async()=>{
   await setup();const submit=button('Подтвердить загрузку');expect(submit.props.disabled).toBe(true);
@@ -60,6 +61,23 @@ describe('mass upload confirmation',()=>{
   await confirm();
   expect(h.enqueue).toHaveBeenCalledTimes(1);
   expect(h.enqueue.mock.calls[0][0].jobId).toBe('j1');
+ });
+ it('continues the confirmed channel cadence even for a project without a date',async()=>{
+  h.state.channels[0]={...h.state.channels[0],publishHour:12,publishMinute:0,publishIntervalDays:3};
+  h.state.jobs[0]={...job,publishAt:undefined};
+  h.evidence.mockReturnValue({updatedAt:new Date().toISOString(),complete:true,youtubeChannelId:'yt1',occupied:['2099-01-01T05:00:00Z']});
+  await setup(false);
+  const select=view.root.findAllByType('select').find((x:any)=>x.props['aria-label']==='Режим расписания');
+  await act(async()=>select.props.onChange({target:{value:'continue'}}));
+  await act(async()=>button('Добавить в очередь ·').props.onClick());
+  await confirm();expect(h.enqueue).toHaveBeenCalledTimes(1);expect(h.enqueue.mock.calls[0][0].publishAt).toBe('2099-01-04T05:00:00.000Z');
+ });
+ it('blocks continuation when the latest owner evidence is incomplete or absent',async()=>{
+  await setup(false);
+  const select=view.root.findAllByType('select').find((x:any)=>x.props['aria-label']==='Режим расписания');
+  await act(async()=>select.props.onChange({target:{value:'continue'}}));
+  await act(async()=>button('Добавить в очередь ·').props.onClick());
+  expect(button('Подтвердить загрузку').props.disabled).toBe(true);expect(h.enqueue).not.toHaveBeenCalled();
  });
  it('enqueues the confirmed synthetic job exactly once',async()=>{
   await setup();await confirm();expect(h.enqueue).toHaveBeenCalledTimes(1);expect(h.enqueue.mock.calls[0][0]).toMatchObject({jobId:'j1',channelId:'c1',profileId:'p1',filePath:'/test/video.mp4'});

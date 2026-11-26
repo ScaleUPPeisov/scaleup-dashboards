@@ -11,12 +11,15 @@ import {youtubeQuotaProjectIdentity} from './youtubeQuota';
 import {notifyError,notifyInfo,notifySuccess,notifyWarning} from './notificationCenter';
 import type {Channel,VideoJob,YoutubeProfile} from './types';
 import {batchJobStillMatches,isFuturePublishAt,pendingSessionCheck} from './batchUploadSafety';
+import {continuationPlan,scheduleConfigKey,scheduleEvidenceValid} from './apexBatchSchedule';
+import {batchScheduleEvidence,batchLocalOccupied} from './apexBatchScheduleRuntime';
 import './apex-batch.css';
 
 type Action='scan'|'oauth'|'youtube'|'stats'|'queue'|'metadata';
 type ChannelBinding={channelId:string;profileId:string;youtubeChannelId:string};
 type FileFacts=Awaited<ReturnType<typeof api.youtubeFileFingerprint>>;
-type BatchPreview={action:Action;channelIds:string[];jobs?:VideoJob[];bindings?:ChannelBinding[];checking?:boolean;files?:Map<string,FileFacts>;blocked?:{job:VideoJob;reason:string}[]};
+type PlannedDate={publishAt:string;configKey:string;evidenceKey:string};
+type BatchPreview={action:Action;channelIds:string[];jobs?:VideoJob[];bindings?:ChannelBinding[];checking?:boolean;planned?:Map<string,PlannedDate>;files?:Map<string,FileFacts>;blocked?:{job:VideoJob;reason:string}[]};
 let batchExecutionPromise:Promise<void>|null=null;
 
 function ownerSyncEstimate(channelId:string){
@@ -31,16 +34,17 @@ export function BatchControl(){
  const previewGeneration=useRef(0);
  useEffect(()=>()=>{previewGeneration.current++},[]);
  const closePreview=()=>{previewGeneration.current++;setPending(null);setQueueConfirmed(false)};
+ const [scheduleMode,setScheduleMode]=useState<'existing'|'continue'>('existing');
  const [quantities,setQuantities]=useState<Record<string,number>>({}),[excluded,setExcluded]=useState<string[]>([]),[query,setQuery]=useState('');
  const selectedChannels=useMemo(()=>channels.filter(c=>selected.includes(c.id)),[channels,selected]);
  const profileById=useMemo(()=>new Map(profiles.map(p=>[p.id,p])),[profiles]);
  const connected=selectedChannels.filter(c=>{const p=c.youtubeProfileId?profileById.get(c.youtubeProfileId):undefined;return Boolean(p?.channelId&&c.youtubeChannelId===p.channelId)});
  const readyJobs=useMemo(()=>jobs.filter(j=>{
    if(j.status!=='READY_UPLOAD'||!j.finalPath||j.youtubeVideoId||uploadQueueHasActiveJob(j.id))return false;
-   if(!j.title?.trim()||!j.description?.trim()||!j.tags?.length||!isFuturePublishAt(j.publishAt))return false;
+   if(!j.title?.trim()||!j.description?.trim()||!j.tags?.length||(scheduleMode==='existing'&&!isFuturePublishAt(j.publishAt)))return false;
    const c=channels.find(x=>x.id===j.channelId),p=c?.youtubeProfileId?profileById.get(c.youtubeProfileId):undefined;
    return Boolean(c?.youtubeChannelId&&p?.channelId===c.youtubeChannelId)
- }),[jobs,channels,profiles]);
+ }),[jobs,channels,profiles,scheduleMode]);
  const readyByChannel=useMemo(()=>{const result=new Map<string,VideoJob[]>();for(const j of readyJobs){const list=result.get(j.channelId)||[];list.push(j);result.set(j.channelId,list)}return result},[readyJobs]);
  const chosenJobs=selectedChannels.flatMap(c=>{const candidates=(readyByChannel.get(c.id)||[]).filter(j=>!excluded.includes(j.id));return candidates.slice(0,Math.min(candidates.length,quantities[c.id]??candidates.length))});
  const visibleChannels=channels.filter(c=>c.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
@@ -52,7 +56,7 @@ export function BatchControl(){
  const globalRemaining=globalDailyUploadStatus().remaining;
  const toggle=(id:string)=>setSelected(x=>x.includes(id)?x.filter(v=>v!==id):[...x,id]);
  const selectAll=()=>setSelected(x=>x.length===channels.length?[]:channels.map(c=>c.id));
- function run(action:Action,lockedIds:string[]=selected,lockedJobs:VideoJob[]=[],allowRealQueue=false,lockedBindings:ChannelBinding[]=[],lockedFiles:Map<string,FileFacts>=new Map()):Promise<void>{
+ function run(action:Action,lockedIds:string[]=selected,lockedJobs:VideoJob[]=[],allowRealQueue=false,lockedBindings:ChannelBinding[]=[],lockedFiles:Map<string,FileFacts>=new Map(),planned:Map<string,PlannedDate>=new Map()):Promise<void>{
   if(action==='queue'&&!allowRealQueue)return Promise.resolve();
   if(batchExecutionPromise)return batchExecutionPromise;
   const task=(async()=>{  const locked=new Set(lockedIds),batchChannels=channels.filter(c=>locked.has(c.id));
@@ -89,10 +93,10 @@ export function BatchControl(){
     const batchId='batch-control:'+Date.now(),perChannelUsed=new Map<string,number>();let queued=0,blocked=Math.max(0,batchReadyJobs.length-Math.max(0,globalRemaining));
     for(const j of batchReadyJobs.slice(0,Math.max(0,globalRemaining))){
       const c=channels.find(x=>x.id===j.channelId),p=c?.youtubeProfileId?profileById.get(c.youtubeProfileId):undefined;
-      const binding=bindings.get(j.channelId);
-      if(!c||!p||!binding||binding.profileId!==p.id||binding.youtubeChannelId!==c.youtubeChannelId||!j.finalPath||!j.publishAt){blocked++;continue}
+      const binding=bindings.get(j.channelId),plan=planned.get(j.id),publishAt=plan?.publishAt||j.publishAt;
+      if(!c||!p||!binding||binding.profileId!==p.id||binding.youtubeChannelId!==c.youtubeChannelId||!j.finalPath||!publishAt){blocked++;continue}
       const before=useApp.getState();
-      if(!batchJobStillMatches(j,before.jobs.find(x=>x.id===j.id),before.channels.find(x=>x.id===j.channelId),p,uploadQueueHasActiveJob(j.id))){blocked++;continue}
+      if(!batchJobStillMatches(j,before.jobs.find(x=>x.id===j.id),before.channels.find(x=>x.id===j.channelId),p,uploadQueueHasActiveJob(j.id),Date.now(),publishAt)){blocked++;continue}
       const localLimit=safeDailyStatus(c.id,c.safeDailyUploadLimit),used=perChannelUsed.get(c.id)||0;
       if(localLimit.remaining!=null&&used>=localLimit.remaining){blocked++;continue}
       try{
@@ -102,12 +106,19 @@ export function BatchControl(){
        const fp=await api.youtubeFileFingerprint(j.finalPath);
        if(fp.fingerprint!==confirmedFile.fingerprint||fp.size!==confirmedFile.size||fp.modifiedAt!==confirmedFile.modifiedAt)throw new Error('BATCH_FILE_CHANGED_AFTER_CONFIRMATION');
        const latest=useApp.getState(),current=latest.jobs.find(x=>x.id===j.id),currentChannel=latest.channels.find(x=>x.id===j.channelId);
-       if(!batchJobStillMatches(j,current,currentChannel,p,uploadQueueHasActiveJob(j.id)))throw new Error('BATCH_CONFIRMATION_STALE');
+       if(!batchJobStillMatches(j,current,currentChannel,p,uploadQueueHasActiveJob(j.id),Date.now(),publishAt))throw new Error('BATCH_CONFIRMATION_STALE');
+       if(plan){
+        const evidence=currentChannel&&batchScheduleEvidence(currentChannel);
+        if(!currentChannel||!scheduleEvidenceValid(currentChannel,evidence,Date.now())||scheduleConfigKey(currentChannel)!==plan.configKey||JSON.stringify(evidence)!==plan.evidenceKey)throw new Error('BATCH_SCHEDULE_CHANGED');
+        const excludedIds=new Set(batchReadyJobs.map(row=>row.id));
+        const occupied=batchLocalOccupied(currentChannel.id,latest.jobs,excludedIds);
+        if(occupied.some(at=>Math.floor(Date.parse(at)/60000)===Math.floor(Date.parse(publishAt)/60000)))throw new Error('BATCH_SCHEDULE_CONFLICT');
+       }
        const project=youtubeQuotaProjectIdentity(p,googleConfig);
        enqueueUpload({
         jobId:j.id,batchId,localVideoIdentity:c.id+':'+j.id+':'+fp.fingerprint,videoNumber:j.number,
         channelId:c.id,channelName:c.name,profileId:p.id,youtubeChannelId:c.youtubeChannelId,filePath:j.finalPath,
-        fingerprint:fp.fingerprint,fileSize:fp.size,modifiedAt:fp.modifiedAt,publishAt:j.publishAt,title:j.title,
+        fingerprint:fp.fingerprint,fileSize:fp.size,modifiedAt:fp.modifiedAt,publishAt,title:j.title,
         description:j.description,tags:[...j.tags],categoryId:settings.youtubeCategoryId||'10',metadataSource:j.metadataSource||'existing',
         quotaProjectKey:project.projectKey||undefined,
         quotaOperations:[{method:'videos.insert',count:1,label:'Загрузка видео'},{method:'videos.list',count:2,label:'Проверка обработки видео'}],
@@ -145,9 +156,20 @@ export function BatchControl(){
   setPending({action,channelIds,jobs:snapshot,bindings,checking:true});
   void (async()=>{
    const files=new Map<string,FileFacts>(),blocked:{job:VideoJob;reason:string}[]=[];
+   const planned=new Map<string,PlannedDate>();
+   if(scheduleMode==='continue'){
+    const excludedIds=new Set(snapshot.map(j=>j.id));
+    for(const c of selectedChannels){
+     const selectedJobs=snapshot.filter(j=>j.channelId===c.id);if(!selectedJobs.length)continue;
+     const evidence=batchScheduleEvidence(c),result=continuationPlan(c,selectedJobs,evidence,batchLocalOccupied(c.id,jobs,excludedIds));
+     if(result.reason){for(const job of selectedJobs)blocked.push({job,reason:result.reason});continue}
+     for(const [id,publishAt] of result.dates)planned.set(id,{publishAt,configKey:scheduleConfigKey(c),evidenceKey:JSON.stringify(evidence)});
+    }
+   }
    const sessions=await api.youtubeUploadSessions().catch(()=>undefined);
    for(const j of snapshot){
     if(generation!==previewGeneration.current)return;
+    if(scheduleMode==='continue'&&!planned.has(j.id))continue;
     const sessionStatus=pendingSessionCheck(sessions,j.id);
     if(sessionStatus!=='CLEAR'){blocked.push({job:j,reason:sessionStatus==='RECOVERY_REQUIRED'?'Требуется восстановление сохранённой загрузки':'Не удалось проверить сохранённые загрузки'});continue}
     try{
@@ -162,7 +184,7 @@ export function BatchControl(){
     }catch{blocked.push({job:j,reason:'Файл недоступен или не удалось проверить его отпечаток'})}
    }
    if(generation!==previewGeneration.current)return;
-   setPending({action,channelIds,jobs:snapshot.filter(j=>files.has(j.id)),bindings,files,blocked,checking:false});
+   setPending({action,channelIds,jobs:snapshot.filter(j=>files.has(j.id)),bindings,files,blocked,checking:false,planned});
   })();
  };
  if(!channels.length)return null;
@@ -178,9 +200,11 @@ export function BatchControl(){
     <span><small>Проверка очереди</small><b>≈ {queueGeneralUnits} ед. + {chosenJobs.length} загрузок</b></span>
    </div>
    <div className="apexBatchToolbar"><button className="batchAll" disabled={Boolean(busy)} onClick={selectAll}>{selected.length===channels.length?'Снять все':'Выбрать все'}</button><input type="search" aria-label="Найти канал" placeholder="Найти канал…" value={query} onChange={e=>setQuery(e.target.value)}/><span>{selectedChannels.length} / {channels.length} каналов · {chosenJobs.length} видео</span></div>
+   <label>Расписание <select aria-label="Режим расписания" value={scheduleMode} disabled={Boolean(busy)||Boolean(pending)} onChange={e=>setScheduleMode(e.target.value==='continue'?'continue':'existing')}><option value="existing">Даты проектов</option><option value="continue">Продолжить расписание канала</option></select></label>
+   {scheduleMode==='continue'&&<p>Автоматические даты рассчитываются по полному актуальному расписанию YouTube, периодичности канала и занятым локальным слотам. Время — Красноярск.</p>}
    <div className="apexBatchTable"><table><thead><tr><th>Выбор</th><th>Канал</th><th>Готово</th><th>В пакет</th><th>Привязка</th><th>Видео</th></tr></thead><tbody>{visibleChannels.map(c=>{
     const candidates=readyByChannel.get(c.id)||[],available=candidates.filter(j=>!excluded.includes(j.id)),isSelected=selected.includes(c.id),p=c.youtubeProfileId?profileById.get(c.youtubeProfileId):undefined,linked=Boolean(p?.channelId&&p.channelId===c.youtubeChannelId);
-    return <tr key={c.id}><td><input type="checkbox" aria-label={'Выбрать '+c.name} checked={isSelected} disabled={Boolean(busy)} onChange={()=>toggle(c.id)}/></td><td><b>{c.name}</b></td><td>{candidates.length}</td><td><input type="number" aria-label={'Количество видео '+c.name} min={0} max={available.length} step={1} disabled={!isSelected||Boolean(busy)} value={Math.min(available.length,quantities[c.id]??available.length)} onChange={e=>setQuantity(c.id,e.target.value)}/></td><td><span className={linked?'apexBatchLinked':'apexBatchBlocked'}>{linked?'Привязан':'Проверить OAuth'}</span></td><td><details><summary>Выбрать видео ({available.length})</summary><div className="apexBatchVideos">{candidates.length?candidates.map(j=><label key={j.id}><input type="checkbox" aria-label={'Включить VIDEO_'+String(j.number).padStart(3,'0')+' '+c.name} disabled={!isSelected||Boolean(busy)} checked={!excluded.includes(j.id)} onChange={()=>setExcluded(prev=>prev.includes(j.id)?prev.filter(id=>id!==j.id):[...prev,j.id])}/><span>VIDEO_{String(j.number).padStart(3,'0')} · {j.title}<small>{j.publishAt}</small></span></label>):<small>Нет видео, готовых по метаданным и дате.</small>}</div></details></td></tr>
+    return <tr key={c.id}><td><input type="checkbox" aria-label={'Выбрать '+c.name} checked={isSelected} disabled={Boolean(busy)} onChange={()=>toggle(c.id)}/></td><td><b>{c.name}</b></td><td>{candidates.length}</td><td><input type="number" aria-label={'Количество видео '+c.name} min={0} max={available.length} step={1} disabled={!isSelected||Boolean(busy)} value={Math.min(available.length,quantities[c.id]??available.length)} onChange={e=>setQuantity(c.id,e.target.value)}/></td><td><span className={linked?'apexBatchLinked':'apexBatchBlocked'}>{linked?'Привязан':'Проверить OAuth'}</span></td><td><details><summary>Выбрать видео ({available.length})</summary><div className="apexBatchVideos">{candidates.length?candidates.map(j=><label key={j.id}><input type="checkbox" aria-label={'Включить VIDEO_'+String(j.number).padStart(3,'0')+' '+c.name} disabled={!isSelected||Boolean(busy)} checked={!excluded.includes(j.id)} onChange={()=>setExcluded(prev=>prev.includes(j.id)?prev.filter(id=>id!==j.id):[...prev,j.id])}/><span>VIDEO_{String(j.number).padStart(3,'0')} · {j.title}<small>{j.publishAt}</small></span></label>):<small>Нет готовых видео с метаданными для выбранного режима.</small>}</div></details></td></tr>
    })}</tbody></table>{!visibleChannels.length&&<p className="apexBatchEmpty">Каналы не найдены.</p>}</div>
    <div className="batchActions">
     <button disabled={!selected.length||Boolean(busy)} onClick={()=>request('scan')}>{busy==='scan'?'Сканирую…':'Проверить рендер · 0 API'}</button>
@@ -203,9 +227,9 @@ export function BatchControl(){
       <span><small>Локальных папок</small><b>{pendingRenderFolders}</b></span>
     </div>
     <details><summary>Каналы ({pendingChannels.length})</summary><div className="logs">{pendingChannels.map(c=><div key={c.id}><b>{c.name}</b><small>{c.id}</small></div>)}</div></details>
-    {pending.action==='queue'&&<details><summary>Видео ({pendingReadyJobs.length})</summary><div className="logs">{pendingReadyJobs.map(j=><div key={j.id}><b>{j.title}</b><small>{pendingChannels.find(c=>c.id===j.channelId)?.name||j.channelId} · VIDEO_{String(j.number).padStart(3,'0')} · {j.publishAt}{pending.files?.get(j.id)?' · '+pending.files.get(j.id)!.size.toLocaleString('ru-RU')+' байт':''}</small></div>)}</div></details>}
+    {pending.action==='queue'&&<details><summary>Видео ({pendingReadyJobs.length})</summary><div className="logs">{pendingReadyJobs.map(j=><div key={j.id}><b>{j.title}</b><small>{pendingChannels.find(c=>c.id===j.channelId)?.name||j.channelId} · VIDEO_{String(j.number).padStart(3,'0')} · {pending.planned?.get(j.id)?.publishAt||j.publishAt}{pending.files?.get(j.id)?' · '+pending.files.get(j.id)!.size.toLocaleString('ru-RU')+' байт':''}</small></div>)}</div></details>}
     {pending.action==='queue'&&<label><input type="checkbox" checked={queueConfirmed} disabled={pending.checking||!pendingReadyJobs.length} onChange={e=>setQueueConfirmed(e.target.checked)}/> Я подтверждаю реальную загрузку выбранных видео на YouTube. Она начнётся после постановки в очередь.</label>}
-    <footer><button onClick={closePreview}>Отмена</button><button className="primary" disabled={pending.action==='queue'&&(!queueConfirmed||pending.checking||!pendingReadyJobs.length)} onClick={()=>{const x=pending;if(x.action==='queue'&&(!queueConfirmed||x.checking||!x.jobs?.length))return;const confirmed=x.action==='queue'&&queueConfirmed;closePreview();void run(x.action,x.channelIds,x.jobs||[],confirmed,x.bindings||[],x.files)}}>{pending.action==='queue'?'Подтвердить загрузку':'Запустить'}</button></footer>
+    <footer><button onClick={closePreview}>Отмена</button><button className="primary" disabled={pending.action==='queue'&&(!queueConfirmed||pending.checking||!pendingReadyJobs.length)} onClick={()=>{const x=pending;if(x.action==='queue'&&(!queueConfirmed||x.checking||!x.jobs?.length))return;const confirmed=x.action==='queue'&&queueConfirmed;closePreview();void run(x.action,x.channelIds,x.jobs||[],confirmed,x.bindings||[],x.files,x.planned)}}>{pending.action==='queue'?'Подтвердить загрузку':'Запустить'}</button></footer>
   </section></ModalPortal>}
  </section>
 }

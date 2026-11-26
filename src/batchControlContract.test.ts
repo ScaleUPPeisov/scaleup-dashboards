@@ -8,7 +8,7 @@ describe('VYRON 5 Batch Control safety contract',()=>{
   expect(source).toContain("const channelIds=[...selected]");
   expect(source).toContain("const snapshot=chosenJobs.map(j=>({...j,tags:[...j.tags]}))");
   expect(source).toContain("setPending({action,channelIds,jobs:snapshot,bindings,checking:true})");
-  expect(source).toContain("setPending({action,channelIds,jobs:snapshot.filter(j=>files.has(j.id)),bindings,files,blocked,checking:false})");
+  expect(source).toContain("setPending({action,channelIds,jobs:snapshot.filter(j=>files.has(j.id)),bindings,files,blocked,checking:false,planned})");
   expect(source).toContain("const locked=new Set(lockedIds)");
   expect(source).toContain("channels.filter(c=>locked.has(c.id))");
  });
@@ -17,7 +17,7 @@ describe('VYRON 5 Batch Control safety contract',()=>{
   expect(source).toContain("onClick={closePreview}>Отмена");
   expect(source).toContain("const closePreview=()=>{previewGeneration.current++;setPending(null);setQueueConfirmed(false)}");
   expect(source).toContain("if(generation!==previewGeneration.current)return");
-  expect(source).toContain("void run(x.action,x.channelIds,x.jobs||[],confirmed,x.bindings||[],x.files)");
+  expect(source).toContain("void run(x.action,x.channelIds,x.jobs||[],confirmed,x.bindings||[],x.files,x.planned)");
   expect(source).toContain("if(x.action==='queue'&&(!queueConfirmed||x.checking||!x.jobs?.length))return");
   expect(source).not.toContain("onClick={()=>void run('scan')}");
   expect(source).not.toContain("onClick={()=>void run('stats')}");
