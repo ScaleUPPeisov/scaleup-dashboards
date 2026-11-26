@@ -22,6 +22,14 @@ _PROFILE = r'''(version 1)
 (allow file-read* (subpath "/System") (subpath "/usr") (subpath "/Library/Apple") (subpath "/dev") (subpath "/private/etc") (subpath "/private/var/db/timezone"))
 (deny network*)
 (deny mach-lookup (global-name "com.apple.securityd"))'''
+# Diagnostic only: deny one disposable sibling without blocking OS runtime
+# reads. This distinguishes broad profile startup failure from a WebKit/XPC
+# read that ignores a targeted denial. Never use this as an APEX launch policy.
+_TARGETED_PROFILE = r'''(version 1)
+(allow default)
+(deny file-read* (subpath (param "FOREIGN_ROOT")))
+(deny network*)'''
+
 def _png():
     def chunk(kind, data):
         return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data) & 0xffffffff)
@@ -41,13 +49,17 @@ def classify(control, isolated):
         'fixture_read_blocked' if isolated.get('webkit_foreign') == 'error' else 'inconclusive_sandbox')
 
 
-def _trial(executable, base, isolated):
+def _trial(executable, base, isolated, targeted=False):
     private = base / 'private'; media = base / 'media'; foreign = base / 'foreign'
     command = [str(executable), str(base)]
     if isolated:
         private_params = prepare(private, [media, foreign])
-        command = ['/usr/bin/sandbox-exec', '-p', _PROFILE, *private_params,
-                   '-D', f'MEDIA_ROOT={media}', '-D', f'BUNDLE_ROOT={executable.parents[2]}', *command]
+        if targeted:
+            command = ['/usr/bin/sandbox-exec', '-p', _TARGETED_PROFILE,
+                       '-D', f'FOREIGN_ROOT={foreign}', *command]
+        else:
+            command = ['/usr/bin/sandbox-exec', '-p', _PROFILE, *private_params,
+                       '-D', f'MEDIA_ROOT={media}', '-D', f'BUNDLE_ROOT={executable.parents[2]}', *command]
     env = {'HOME': str(private), 'TMPDIR': str(private), 'PATH': '/usr/bin:/bin', 'LANG': 'C'}
     result, timed_out = _run_fixture(command, private, env, 18)
     lines = set(result.stdout.splitlines())
@@ -68,7 +80,7 @@ def _trial(executable, base, isolated):
     }
 
 
-def run_file_read_probe():
+def run_file_read_probe(targeted=False):
     if sys.platform != 'darwin': return 'inconclusive_platform', {}
     evidence = {}
     try:
@@ -89,13 +101,25 @@ def run_file_read_probe():
             executable = _compile_fixture(base, 'file_read_fixture.swift')
             control = _trial(executable, base, False); evidence['control'] = control
             if classify(control, {}) == 'inconclusive_control': return 'inconclusive_control', evidence
-            isolated = _trial(executable, base, True); evidence['isolated'] = isolated
+            isolated = _trial(executable, base, True, targeted=targeted); evidence['isolated'] = isolated
             return classify(control, isolated), evidence
     except (OSError, PolicyError, RuntimeError):
         return 'inconclusive_environment', evidence
 
 
 if __name__ == '__main__':
-    result, evidence = run_file_read_probe()
-    print(json.dumps({'result': result, 'observed': evidence}, ensure_ascii=True))
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--diagnose-targeted', action='store_true',
+                        help='Test one synthetic sibling denial; NOT a release isolation gate')
+    args = parser.parse_args()
+    result, evidence = run_file_read_probe(targeted=args.diagnose_targeted)
+    # Never emit the strict gate's success token in diagnostic mode.
+    if args.diagnose_targeted:
+        print(json.dumps({'result': 'diagnostic_' + result,
+                          'scope': 'single_fixture_sibling_only',
+                          'release_isolation': 'NOT_CERTIFIED',
+                          'observed': evidence}, ensure_ascii=True))
+    else:
+        print(json.dumps({'result': result, 'observed': evidence}, ensure_ascii=True))
     if result != 'fixture_read_blocked': sys.exit(1)

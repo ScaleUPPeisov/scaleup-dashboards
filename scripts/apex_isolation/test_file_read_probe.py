@@ -26,6 +26,11 @@ class FileReadProbeTests(unittest.TestCase):
         self.assertEqual(probe.classify(row(), row(parent_foreign='denied', webkit_foreign='error')), 'fixture_read_blocked')
         self.assertEqual(probe.classify(row(), row(parent_foreign='denied', webkit_foreign='missing')), 'inconclusive_sandbox')
 
+    def test_targeted_profile_is_only_a_single_fixture_denial(self):
+        self.assertIn('(deny file-read* (subpath (param "FOREIGN_ROOT")))', probe._TARGETED_PROFILE)
+        self.assertIn('(deny network*)', probe._TARGETED_PROFILE)
+        self.assertNotEqual(probe._TARGETED_PROFILE, probe._PROFILE)
+
     def test_unsupported_platform_is_not_success(self):
         with mock.patch.object(probe.sys, 'platform', 'linux'):
             self.assertEqual(probe.run_file_read_probe(), ('inconclusive_platform', {}))
