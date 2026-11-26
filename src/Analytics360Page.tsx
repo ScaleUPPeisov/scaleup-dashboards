@@ -214,11 +214,11 @@ const FleetSubscriber=React.memo(function FleetSubscriber(
  const uploads=useApp(s=>s.uploadHistory);
  return <Analytics360Fleet {...props} jobs={jobs} uploads={uploads}/>;
 });
-export function Analytics360Page(){
+export function Analytics360Page({initialTab='overview'}:{initialTab?:Tab}={}){
  const isMac=typeof navigator!=='undefined'&&/mac/i.test(navigator.platform||navigator.userAgent);
  const channels=useApp(s=>s.channels);
  const [activeId,setActiveId]=useState(()=>loadActivePublishChannel()||channels[0]?.id||'');
- const [tab,setTab]=useState<Tab>('overview'),[period,setPeriod]=useState<Period>('28');
+ const [tab,setTab]=useState<Tab>(initialTab),[period,setPeriod]=useState<Period>('28');
  const [startDate,setStartDate]=useState(''),[endDate,setEndDate]=useState('');
  const [profiles,setProfiles]=useState<YoutubeProfile[]>([]);
  const [loadedSnapshot,setLoadedSnapshot]=useState<{key:string;value:Snapshot}|null>(null),[loading,setLoading]=useState(false);

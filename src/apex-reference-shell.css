@@ -25,3 +25,24 @@
 .apexReferenceShell>.main>.apexFixtureBanner{display:flex;align-items:center;color:#cbb5f8;padding:0 23px;font-size:11px}
 .apexReferenceShell .apexFixtureMain{padding:20px 26px 30px}
 @media(max-width:1150px){.apexReferenceShell>.sidebar{width:180px;flex-basis:180px}.apexReferenceShell .apexFixtureMain{padding:20px}}
+
+.apexReferenceShell>.sidebar.apexSidebarCollapsed{width:62px;flex-basis:62px;padding:12px 6px}
+.apexSidebarCollapsed .sidebarLabel,.apexSidebarCollapsed .sidebarCount,.apexSidebarCollapsed .apexNavGroup,.apexSidebarCollapsed .apexReferenceBrand>div,.apexSidebarCollapsed .sidebarFooter{display:none}
+.apexReferenceShell>.sidebar.apexSidebarCollapsed nav button{justify-content:center;padding:6px}
+.apexReferenceShell>.sidebar.apexSidebarCollapsed .apexReferenceBrand{padding:4px 5px 14px}
+.apexSidebarToggle{background:none;border:1px solid #2c2e35;border-radius:8px;padding:5px 7px;font-size:11px;color:#9c9faa}
+.apexUploadPage{width:100%;min-width:0}
+.apexUploadPage .apexUploadEmbedded{position:static;width:100%;max-width:none;max-height:none;overflow:visible;box-shadow:none;background:transparent;border:0;padding:0}
+.apexDesignPage h1{font-size:30px;margin:0 0 7px}
+.apexDesignGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin:20px 0}
+.apexDesignSwatch{padding:12px;border:1px solid #2c2e35;border-radius:9px;background:#181a1f}
+.apexDesignSwatch i{display:block;height:48px;border-radius:6px;margin-bottom:8px;border:1px solid #2c2e35}
+.apexDesignSwatch small{display:block;color:#9c9faa}
+
+.apexWeekControls{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:12px 0}
+.apexWeekGrid{display:grid;grid-template-columns:repeat(7,minmax(125px,1fr));gap:6px;overflow:auto;padding-bottom:8px}
+.apexWeekGrid>section{min-width:0;min-height:150px;background:#15171b;border:1px solid #2c2e35;border-radius:8px;padding:7px}
+.apexWeekGrid h4{margin:0 0 8px;font-size:12px;color:#9c9faa}
+.apexWeekGrid button{display:grid;width:100%;gap:3px;text-align:left;margin-bottom:5px;background:#292236;border:1px solid #493366;padding:6px;border-radius:5px;white-space:normal;overflow-wrap:anywhere}
+.apexWeekGrid button b{color:#cbb5f8}.apexWeekGrid button small,.apexWeekGrid button span{font-size:11px}
+.apexScheduleAll>summary{cursor:pointer;padding:8px 0;color:#cbb5f8}

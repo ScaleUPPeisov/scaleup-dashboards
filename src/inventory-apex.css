@@ -41,3 +41,21 @@
 @media(max-width:1100px){.inventoryApexOverview{grid-template-columns:repeat(2,minmax(0,1fr))}.inventoryApexRow{grid-template-columns:minmax(160px,1fr) minmax(200px,1fr) minmax(160px,1fr)}.inventoryApexDetails{grid-column:1/3}.inventoryApexActions{grid-column:3;grid-row:2;flex-direction:row;flex-wrap:wrap}.inventoryApexActions button{min-width:0}}
 @media(max-width:760px){.inventoryApexHeader{align-items:start;flex-direction:column}.inventoryApexRow{grid-template-columns:1fr}.inventoryApexDetails,.inventoryApexActions{grid-column:1;grid-row:auto}.inventoryApexBottom{grid-template-columns:1fr}.inventoryApexAuditList>div{grid-template-columns:70px 1fr}.inventoryApexAuditList>div span{grid-column:2}}
 @media(max-width:420px){.inventoryApexOverview{grid-template-columns:1fr}}
+
+/* Compact reference stock view; keep all row actions and truthful status. */
+.inventoryApex{color:#f2f2f6;gap:12px}
+.inventoryApexHeader h1{margin:0;letter-spacing:-.9px}
+.inventoryApexHeader p{font-size:12px;color:#9c9faa;margin-top:6px}
+.inventoryApex .inventoryHeaderActions button,.inventoryApexActions button{min-height:34px;padding:6px 10px;border-radius:8px}
+.inventoryApexOverview{grid-template-columns:repeat(4,minmax(0,1fr));gap:0;border-bottom:1px solid #2c2e35;padding:0 0 15px}
+.inventoryApexMetric,.inventoryApexMetricPrimary{border:0;border-right:1px solid #2c2e35;border-radius:0;background:none;padding:0 20px;gap:5px}
+.inventoryApexMetric:first-child{padding-left:0}.inventoryApexMetric:last-child{border:0}
+.inventoryApexMetric strong,.inventoryApexMetricPrimary strong{font-size:30px;color:#f2f2f6}
+.inventoryApexMetric span,.inventoryApexMetric small{color:#9c9faa;font-size:11px}
+.inventoryApexList,.inventoryApexAudit,.inventoryApexRules{border-color:#2c2e35;border-radius:9px;background:#15171b}
+.inventoryApexSectionHead{padding:11px 13px}.inventoryApexRow{padding:9px 12px;gap:8px 12px;border-color:#2c2e35}
+.inventoryApexFigures dd{font-size:14px;margin-top:3px}.inventoryApexChannel{font-size:13px}
+.inventoryApexActions{gap:5px}.inventoryApexDetails summary{min-height:22px}
+.apexInventoryFilter{display:flex;flex-wrap:wrap;gap:8px;padding:0 12px 10px;align-items:center}
+.apexInventoryFilter input{max-width:260px}.apexInventoryFilter small{margin-left:auto;color:#9c9faa}
+@media(max-width:800px){.inventoryApexOverview{grid-template-columns:1fr 1fr;gap:12px}.inventoryApexMetric:nth-child(3){padding-left:0}.inventoryApexMetric:nth-child(2){border:0}}

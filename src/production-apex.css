@@ -4,3 +4,16 @@
 .productionApex .pmStorageUnified{border-radius:14px!important;border:1px solid var(--apex-border)!important;background:var(--apex-surface)!important;padding:18px!important}.productionApex .pmStorageUnified h3{overflow-wrap:anywhere}.productionApex .pmStorageUnified p{color:var(--apex-text-muted)}
 .productionApex .productionNavThree{display:flex;gap:6px;flex-wrap:wrap;padding:5px;background:var(--apex-surface);border:1px solid var(--apex-border);border-radius:12px}.productionApex .productionNavThree button{min-height:42px;padding:0 18px;border-radius:8px}.productionApex .productionNavThree button.active{background:#483963!important;color:#f5f2ff!important}
 .productionApexShowMore{width:100%;margin-top:12px;min-height:44px}.productionApex :is(button,summary,select,input):focus-visible{outline:2px solid var(--apex-focus);outline-offset:2px}
+
+.productionApexHeader p{font-size:12px!important;color:#9c9faa!important}
+.productionApex .productionNavThree,.productionMaterialTabs{display:flex;gap:4px;flex-wrap:wrap;padding:3px;background:none;border:0;border-bottom:1px solid #2c2e35;border-radius:0}
+.productionApex .productionNavThree button,.productionMaterialTabs button{min-height:34px;padding:6px 12px;background:none;border:1px solid transparent;border-radius:7px}
+.productionApex .productionNavThree button.active,.productionMaterialTabs button.active{background:#332545!important;color:#e9ddff!important;border-color:#493366}
+.productionApex .pmStorageUnified{border-radius:10px!important;padding:13px!important}
+.apexProductionStages{display:flex;gap:12px;flex-wrap:wrap;padding:12px 0}
+.apexProductionStages>div{display:flex;align-items:center;gap:8px;flex:1;min-width:106px}
+.apexProductionStages b,.apexProductionStages small{display:block}
+.apexProductionStages small{color:#9c9faa;font-size:12px}
+.apexProductionStageNumber{width:30px;height:30px;display:grid;place-items:center;border:1px solid #594379;border-radius:50%;color:#a78bfa;background:#292136;flex:none}
+.apexProductionStageDetails summary{cursor:pointer;font-size:12px;color:#cbb5f8;padding:8px 0}
+.productionApex .productionJob{border-radius:8px;gap:9px;padding:10px}

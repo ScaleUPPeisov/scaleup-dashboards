@@ -26,7 +26,8 @@ export function UploadCenterGlobal(){
  const[open,setOpen]=useState(()=>uploadCenterOpen());useEffect(()=>subscribeUploadCenterUi(setOpen),[]);if(!open)return null;return <UploadCenterModal/>;
 }
 
-function UploadCenterModal(){
+export function UploadCenterPage(){return <UploadCenterModal embedded/>}
+function UploadCenterModal({embedded=false}:{embedded?:boolean}={}){
  const{queue,telemetry}=useUploadRuntime(),channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),history=useApp(s=>s.uploadHistory),settings=useApp(s=>s.settings),fingerprints=useApp(s=>s.fingerprintCache),replaceUploadHistory=useApp(s=>s.replaceUploadHistory);
  const[clock,setClock]=useState(Date.now()),[cleanupOpen,setCleanupOpen]=useState(false),[cleanupBusy,setCleanupBusy]=useState(false),[sourceScanBusy,setSourceScanBusy]=useState(false);
  const queueIds=new Set([...queue.running,...queue.queued,...queue.paused].map(x=>x.spec.jobId));
@@ -64,7 +65,8 @@ function UploadCenterModal(){
    replaceUploadHistory(next);
   }finally{setSourceScanBusy(false)}
  }
- useEffect(()=>{void scanLocalSources()},[]);
+ // Embedded navigation remains cache-first; explicit verification retains the existing action.
+ useEffect(()=>{if(!embedded)void scanLocalSources()},[embedded]);
  async function trashVerified(){
   if(cleanupBusy)return;setCleanupBusy(true);
   const trashOperationId=`cleanup-batch:${Date.now()}`;let moved=0,alreadyMissing=0,notReady=0,changed=0,verifyFailed=0;
@@ -108,8 +110,8 @@ function UploadCenterModal(){
    setCleanupOpen(false)
   }finally{setCleanupBusy(false)}
  }
- return <><div className="modalBackdrop uploadCenterBackdrop" onMouseDown={closeUploadCenter}><section className="uploadCenterModal" onMouseDown={e=>e.stopPropagation()}>
-  <div className="panelHead uploadCenterHead"><div><small>ЦЕНТР ЗАГРУЗОК</small><h2>Загрузки YouTube</h2><p>Очередь, текущая передача и история загрузок.</p></div><div className="uploadCenterHeadStats"><span><small>Пауза</small><b>{queue.paused.length}</b></span><span><small>В очереди</small><b>{queue.queued.length}</b></span><span><small>Загружаются</small><b>{activeCount}</b></span><span><small>Успешно</small><b>{succeeded.length}</b></span><span><small>Ошибки</small><b>{failed.length}</b></span><button onClick={closeUploadCenter}>×</button></div></div>
+ return <><div className={embedded?"apexUploadPage":"modalBackdrop uploadCenterBackdrop"} onMouseDown={embedded?undefined:closeUploadCenter}><section className={embedded?"uploadCenterModal apexUploadEmbedded":"uploadCenterModal"} onMouseDown={e=>e.stopPropagation()}>
+  <div className="panelHead uploadCenterHead"><div><small>ЦЕНТР ЗАГРУЗОК</small><h2>Загрузки YouTube</h2><p>Очередь, текущая передача и история загрузок.</p></div><div className="uploadCenterHeadStats"><span><small>Пауза</small><b>{queue.paused.length}</b></span><span><small>В очереди</small><b>{queue.queued.length}</b></span><span><small>Загружаются</small><b>{activeCount}</b></span><span><small>Успешно</small><b>{succeeded.length}</b></span><span><small>Ошибки</small><b>{failed.length}</b></span>{!embedded&&<button onClick={closeUploadCenter}>×</button>}</div></div>
   {batchTotal>0&&<div className="syncAudit"><span>Batch <b>{batchDone}/{batchTotal}</b></span><span>Осталось <b>{queue.paused.length+queue.queued.length+queue.running.length}</b></span><span>Processing source kept <b>{processingKept}</b></span><span>Failed source kept <b>{failedSources}</b></span></div>}
   {!activeCount&&!queue.queued.length&&!queue.paused.length&&queue.recent.length>0&&<div className={failed.length?'publisherNotice':'successBox'}><b>Загрузка партии завершена</b><p>Успешно: {succeeded.length} • Ошибки: {failed.length}. Processing/failed файлы автоматически не удаляются.</p></div>}
   <div className="uploadCenterRows">

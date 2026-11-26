@@ -25,7 +25,7 @@ const CachedYouTubeChannelBar=React.memo(YouTubeChannelBar);
 const CachedGlobalCleanup=React.memo(GlobalYouTubeCleanup);
 function normalizeTab(tab:Tab):Exclude<Tab,'calendar'|'data'|'queue'>{if(tab==='calendar')return'schedule';if(tab==='data')return'statistics';if(tab==='queue')return'publish';return tab}
 function consumeRequestedTab(initial:Tab){try{const raw=localStorage.getItem(OPEN_TAB_KEY) as Tab|null;if(raw){localStorage.removeItem(OPEN_TAB_KEY);requestedGlobalHistory=raw==='history';return normalizeTab(raw)}}catch{}requestedGlobalHistory=false;return normalizeTab(initial)}
-export function YouTubeCenter({initialTab='publish',routeTab,active=true}:{initialTab?:Tab;routeTab?:'publish'|'metadata'|'uploaded';active?:boolean}){
+export function YouTubeCenter({initialTab='publish',routeTab,active=true}:{initialTab?:Tab;routeTab?:'publish'|'metadata'|'uploaded'|'schedule'|'runway';active?:boolean}){
  const setPage=useApp(s=>s.setPage),routeActiveRef=useRef(active),routeTabRef=useRef<typeof routeTab>(undefined),diagnosticStartedRef=useRef(false);routeActiveRef.current=active;if(active&&!diagnosticStartedRef.current){diagnosticStartedRef.current=true;beginYoutubeRouteDiagnostics()}
  const [tab,setTab]=useState(()=>normalizeTab(routeTab||consumeRequestedTab(initialTab))),[activeChannel,setActiveChannel]=useState(()=>resolveYoutubeActiveChannel(useApp.getState().channels||[],loadActivePublishChannel())),[historyGlobal,setHistoryGlobal]=useState(()=>requestedGlobalHistory),[quotaOpen,setQuotaOpen]=useState(false);
  const activeChannelRef=useRef(activeChannel);activeChannelRef.current=activeChannel;

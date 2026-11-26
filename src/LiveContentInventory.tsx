@@ -27,6 +27,7 @@ export function LiveContentInventory(){
   const channels=useApp(s=>s.channels),settings=useApp(s=>s.settings),setPage=useApp(s=>s.setPage),updateChannel=useApp(s=>s.updateChannel),patchSettings=useApp(s=>s.patchSettings);
   const snapshots=useLiveInventory(s=>s.snapshots),audit=useLiveInventory(s=>s.audit),globalScanning=useLiveInventory(s=>s.globalScanning);
   const [now,setNow]=useState(Date.now());
+  const [query,setQuery]=useState(''),[stockFilter,setStockFilter]=useState<'all'|'low'|'unknown'>('all');
   const [folderPicking,setFolderPicking]=useState<string>();
   const [rootPicking,setRootPicking]=useState(false);
   useEffect(()=>{const id=window.setInterval(()=>setNow(Date.now()),30000);return()=>window.clearInterval(id)},[]);
@@ -37,6 +38,7 @@ export function LiveContentInventory(){
   const channelName=new Map(enabled.map(c=>[c.id,c.name]));
   const unknownCount=rows.filter(row=>!hasConfirmedStock(row)).length;
   const staleCount=rows.filter(row=>row.stale&&hasConfirmedStock(row)).length;
+  const visibleRows=rows.filter(row=>row.channelName.toLocaleLowerCase('ru-RU').includes(query.trim().toLocaleLowerCase('ru-RU'))&&(stockFilter==='all'||(stockFilter==='unknown'? !hasConfirmedStock(row):row.level==='LOW'||row.level==='EMPTY')));
   const openPublisher=(channelId:string)=>{saveActivePublishChannel(channelId);setPage('publisher')};
   const chooseAllRenderFolders=async()=>{
     if(rootPicking||globalScanning)return;
@@ -112,14 +114,14 @@ export function LiveContentInventory(){
 
   return <div className="liveInventoryPage inventoryApex">
     <header className="inventoryApexHeader">
-      <div><small>ЛОКАЛЬНЫЙ ЗАПАС</small><h1>Запас видео</h1><p>Готовые видео в папках каналов</p></div>
-      <div className="inventoryHeaderActions">
+      <div><h1>Запас видео</h1><p>Подтверждённые локальные файлы отдельно от публикаций YouTube</p></div>
+      <div className="inventoryHeaderActions"><button onClick={()=>setPage('batch')}>Массовая публикация</button>
         <button className="secondary" disabled={rootPicking||globalScanning} onClick={()=>void chooseAllRenderFolders()}>{rootPicking?'Выбираем…':'Общая папка Render'}</button>
         <button className="primary" disabled={globalScanning||rootPicking} onClick={()=>void scanAllInventories('manual-all')}>{globalScanning?'Проверяем…':'Проверить все папки'}</button>
       </div>
     </header>
 
-    <DailyOperationsCenter snapshots={snapshots} onChooseRender={channelId=>void chooseRenderFolder(channelId)}/>
+    <details className="inventoryApexBreakdown"><summary>Оперативная работа за сегодня</summary><DailyOperationsCenter snapshots={snapshots} onChooseRender={channelId=>void chooseRenderFolder(channelId)}/></details>
 
     <section className="inventoryApexOverview" aria-label="Сводка запаса">
       <div className="inventoryApexMetric inventoryApexMetricPrimary"><span>Готово к публикации</span><strong>{unknownCount===rows.length&&rows.length>0?'—':totals.ready}</strong><small>{unknownCount||staleCount?'По доступным и последним сохранённым данным':'Во всех проверенных папках'}</small></div>
@@ -137,8 +139,9 @@ export function LiveContentInventory(){
 
     <section className="inventoryApexList" aria-labelledby="inventory-channel-heading">
       <div className="inventoryApexSectionHead"><div><h2 id="inventory-channel-heading">По каналам</h2><p>Выберите канал, чтобы открыть публикацию</p></div><span>{rows.length} каналов</span></div>
-      {rows.length===0?<p className="inventoryApexEmpty">Нет активных каналов</p>:<div className="inventoryApexRows">
-        {rows.map(row=>{
+      <div className="apexInventoryFilter"><input type="search" aria-label="Найти канал в запасе" placeholder="Найти канал…" value={query} onChange={e=>setQuery(e.target.value)}/><select aria-label="Фильтр запаса" value={stockFilter} onChange={e=>setStockFilter(e.target.value as typeof stockFilter)}><option value="all">Все каналы</option><option value="low">Мало или пусто</option><option value="unknown">Нет данных</option></select><small>{visibleRows.length} / {rows.length}</small></div>
+      {visibleRows.length===0?<p className="inventoryApexEmpty">Нет каналов по выбранному фильтру</p>:<div className="inventoryApexRows">
+        {visibleRows.map(row=>{
           const known=hasConfirmedStock(row);
           return <article className={'inventoryApexRow inventoryApexRow-'+row.level.toLowerCase()} key={row.channelId} aria-label={row.channelName} onClick={event=>{
             // Buttons and disclosure controls keep their own actions. Other

@@ -38,7 +38,9 @@ import {currentUpdaterBlockers,updaterBlockerText} from './updaterGuard';
 import {applyUploadProgressFact,seedActiveUploadFacts,uploadTelemetrySnapshot} from './uploadTelemetry';
 import {journalUploadProgressMilestone} from './activityJournalRuntime';
 import {applyStaleOperationPatches,buildStaleOperationPatches} from './staleOperationReconciliation';
-import {DashboardUploadSummary,GlobalUploadIndicator,UploadCenterGlobal} from './UploadCenter';
+import {DashboardUploadSummary,GlobalUploadIndicator,UploadCenterGlobal,UploadCenterPage} from './UploadCenter';
+import {apexNavigation,apexActivePage,apexYoutubeRoute} from './apexNavigation';
+import {ApexDesignSystem} from './ApexDesignSystem';
 import {ChannelStatisticsScheduler} from './ChannelStatisticsScheduler';
 import {OwnerInventoryScheduler} from './OwnerInventoryScheduler';
 import {ModalPortal} from './ModalPortal';
@@ -105,18 +107,6 @@ async function recoverChannelsFromLocalOauthProfiles(){
 }
 
 type SidebarIconName='home'|'channels'|'production'|'inventory'|'youtube'|'analytics'|'competitors'|'settings';
-const nav:{id:string;page:Page;icon:SidebarIconName;label:string;youtubeTab?:'history'}[]=[
-  {id:'dashboard',page:'dashboard',icon:'home',label:'Главная'},
-  {id:'channels',page:'channels',icon:'channels',label:'Каналы'},
-  {id:'production',page:'production',icon:'production',label:'Производство'},
-  {id:'inventory',page:'inventory',icon:'inventory',label:'Запас видео'},
-  {id:'history',page:'history',icon:'youtube',label:'История'},
-  {id:'youtube',page:'youtube',icon:'youtube',label:'Публикатор'},
-  {id:'batch',page:'batch',icon:'youtube',label:'Массовая публикация'},
-  {id:'analytics',page:'analytics',icon:'analytics',label:'Аналитика'},
-  {id:'competitors',page:'competitors',icon:'competitors',label:'Конкуренты'},
-  {id:'settings',page:'settings',icon:'settings',label:'Настройки'}
-];
 
 function SidebarIcon({name}:{name:SidebarIconName}){
   const common={viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.8,strokeLinecap:'round' as const,strokeLinejoin:'round' as const,'aria-hidden':true};
@@ -286,22 +276,27 @@ export function App(){
 const CachedDashboardRoute=React.memo(({mode}:{mode:'dashboard'|'autopilot'})=><><DashboardUploadSummary/><DashboardOS pageOverride={mode}/></>);
 const CachedChannelsRoute=React.memo(ChannelsOS);
 const CachedProductionRoute=React.memo(ProductionOS);
-const CachedYouTubeRoute=React.memo(({routeTab,active}:{routeTab?:'publish'|'metadata'|'uploaded';active:boolean})=><YouTubeCenter routeTab={routeTab} active={active}/>);
+const CachedYouTubeRoute=React.memo(({routeTab,active}:{routeTab?:'publish'|'metadata'|'uploaded'|'schedule'|'runway';active:boolean})=><YouTubeCenter routeTab={routeTab} active={active}/>);
 function PageRouter({license}:{license:LicenseStatus}){
   const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage);
-  const youtubeRouteTab=page==='metadata'?'metadata':page==='existing'?'uploaded':page==='publisher'?'publish':undefined;
-  const canonical=page==='autopilot'?'dashboard':page==='metadata'||page==='existing'||page==='publisher'?'youtube':page;
+  const youtubeRouteTab=apexYoutubeRoute(page);
+  const canonical=page==='autopilot'?'dashboard':youtubeRouteTab?'youtube':page;
   const youtubeSelected=canonical==='youtube';
 
   const transient=canonical==='dashboard'?<><DashboardUploadSummary/><DashboardOS/></>
     :canonical==='channels'?<ChannelsOS/>
     :canonical==='batch'?<BatchControl standalone/>
-    :canonical==='production'||canonical==='content'?<ProductionOS/>
+    :canonical==='production'||canonical==='content'?<ProductionOS key="production"/>
+    :canonical==='images'||canonical==='music'?<ProductionOS key={canonical} materialFocus={canonical}/>
+    :canonical==='uploads'?<UploadCenterPage/>
+    :canonical==='design'?<ApexDesignSystem/>
     :canonical==='history'?<HistoryPage/>
     :canonical==='inventory'?<LiveContentInventory/>
     :canonical==='competitors'?<CompetitorsPage/>
+    :canonical==='winners'?<Analytics360Page key="winners" initialTab="winners"/>
     :canonical==='analytics'?((typeof navigator!=='undefined'&&/mac/i.test(navigator.platform||navigator.userAgent))?<React.Suspense fallback={<div className="panel">Загрузка аналитики…</div>}><Analytics360Page/></React.Suspense>:<AnalyticsPage/>)
-    :canonical==='accounts'||canonical==='settings'?<SettingsOS license={license}/>
+    :canonical==='accounts'?<AccountsPage/>
+    :canonical==='settings'?<SettingsOS license={license}/>
     :null;
 
   return <div className="pageWrap">
@@ -312,7 +307,7 @@ function PageRouter({license}:{license:LicenseStatus}){
 function useRuntimeVersion(){const [version,setVersion]=useState('');useEffect(()=>{void api.appVersion().then(setVersion).catch(()=>{})},[]);return version}
 function Boot(){return <div className="boot"><div className="logoMark"><span>▶</span></div><b>VYRON YT PEISOV</b><small>AUTONOMOUS CONTENT OS</small><i/></div>}
 function Activation({onActivated}:{onActivated:(x:LicenseStatus)=>void}){const version=useRuntimeVersion();const [key,setKey]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');return <div className="activation"><div className="activationCard"><div className="brand big"><div className="brandMark">▶</div><div><b>VYRON YT PEISOV</b><small>CONTENT OS</small></div></div><h1>Активация VYRON YT PEISOV</h1><p>Используется совместимая лицензия владельца ENDLUME Studio.</p><input autoFocus value={key} placeholder="Ключ ENDLUME / VYRON YT PEISOV" onChange={e=>setKey(e.target.value)} onKeyDown={e=>e.key==='Enter'&&document.getElementById('activate')?.click()}/>{error&&<div className="errorBox">{error}</div>}<button id="activate" className="primary full" disabled={busy||!key.trim()} onClick={async()=>{setBusy(true);setError('');try{onActivated(await api.activate(key))}catch(e){setError(String(e))}finally{setBusy(false)}}}>{busy?'ПРОВЕРЯЮ…':'АКТИВИРОВАТЬ →'}</button><small>VYRON YT PEISOV {version||'…'} • macOS Apple Silicon / Windows x64</small></div></div>}
-function Sidebar(){const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage),auto=useApp(s=>s.settings.autopilotEnabled),channels=useApp(s=>s.channels),inventorySnapshots=useLiveInventory(s=>s.snapshots),inventoryReady=useMemo(()=>inventoryTotals(inventorySnapshots,channels).ready,[inventorySnapshots,channels]);const activePage:Page=page==='autopilot'?'dashboard':page==='accounts'?'settings':page==='metadata'||page==='existing'||page==='publisher'?'youtube':page==='content'?'production':page;return <aside className="sidebar"><div className="brand apexReferenceBrand"><svg viewBox="0 0 40 40" aria-hidden="true"><path fill="#a78bfa" d="M2 5h10l8 14L28 5h10L20 36 14 25 20 14 12 5Z"/><path fill="#7541d6" d="M14 25 20 36 38 5H28L20 19Z"/></svg><div><b>VYRON</b><small>7.0 APEX</small></div></div><nav className="sidebarNav">{nav.map(n=>{const active=activePage===n.page&&!n.youtubeTab;const open=()=>{if(n.youtubeTab){try{localStorage.setItem('vyron:youtube-open-tab:v1',n.youtubeTab)}catch{}setPage('youtube');window.setTimeout(()=>window.dispatchEvent(new CustomEvent('vyron:youtube-history',{detail:{global:true}})),0);return}setPage(n.page)};return <React.Fragment key={n.id}>{n.id==='dashboard'&&<div className="apexNavGroup">РАБОЧАЯ СРЕДА</div>}{n.id==='youtube'&&<div className="apexNavGroup">YOUTUBE</div>}{n.id==='analytics'&&<div className="apexNavGroup">АНАЛИЗ И МАТЕРИАЛЫ</div>}{n.id==='settings'&&<div className="apexNavGroup">СИСТЕМА</div>}<button className={'sidebarNavItem'+(active?' active':'')} aria-current={active?'page':undefined} onClick={open}><span className="sidebarIconSlot"><SidebarIcon name={n.icon}/></span><span className="sidebarLabel">{n.label}</span>{n.page==='inventory'&&<span className="sidebarCount">{inventoryReady}</span>}</button></React.Fragment>})}</nav><div className="sidebarFooter"><OwnerProfile/><div className="sideFoot"><i className={auto?'autoOn':''}/><div><b>{auto?'AUTOPILOT ON':'LOCAL CORE'}</b><small>{auto?'очередь работает':'состояние сохраняется'}</small></div></div></div></aside>}
+function Sidebar(){const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage),auto=useApp(s=>s.settings.autopilotEnabled),channels=useApp(s=>s.channels),inventorySnapshots=useLiveInventory(s=>s.snapshots),inventoryReady=useMemo(()=>inventoryTotals(inventorySnapshots,channels).ready,[inventorySnapshots,channels]);const activePage=apexActivePage(page);const [collapsed,setCollapsed]=useState(false);return <aside className={"sidebar"+(collapsed?" apexSidebarCollapsed":"")}><div className="brand apexReferenceBrand"><svg viewBox="0 0 40 40" aria-hidden="true"><path fill="#a78bfa" d="M2 5h10l8 14L28 5h10L20 36 14 25 20 14 12 5Z"/><path fill="#7541d6" d="M14 25 20 36 38 5H28L20 19Z"/></svg><div><b>VYRON</b><small>7.0 APEX</small></div></div><nav className="sidebarNav" aria-label="Разделы VYRON">{apexNavigation.map(group=><React.Fragment key={group.label}><div className="apexNavGroup">{group.label}</div>{group.items.map(n=><button key={n.page} className={'sidebarNavItem'+(activePage===n.page?' active':'')} aria-label={n.label} title={collapsed?n.label:undefined} aria-current={activePage===n.page?'page':undefined} onClick={()=>setPage(n.page)}><span className="sidebarIconSlot"><SidebarIcon name={n.icon}/></span><span className="sidebarLabel">{n.label}</span>{n.page==='inventory'&&<span className="sidebarCount">{inventoryReady}</span>}</button>)}</React.Fragment>)}</nav><button className="apexSidebarToggle" aria-label={collapsed?"Развернуть меню":"Свернуть меню"} aria-expanded={!collapsed} onClick={()=>setCollapsed(v=>!v)}>{collapsed?"»":"« Свернуть"}</button><div className="sidebarFooter"><OwnerProfile/><div className="sideFoot"><i className={auto?'autoOn':''}/><div><b>{auto?'AUTOPILOT ON':'LOCAL CORE'}</b><small>{auto?'очередь работает':'состояние сохраняется'}</small></div></div></div></aside>}
 function Topbar(){
  const version=useRuntimeVersion();const channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),patchJob=useApp(s=>s.patchJob),auto=useApp(s=>s.settings.autopilotEnabled);
  const [quota,setQuota]=useState(()=>youtubeQuotaUsage()),[clock,setClock]=useState(()=>youtubeQuotaClockSnapshot()),[globalUploads,setGlobalUploads]=useState(()=>globalDailyUploadStatus()),[history,setHistory]=useState<ErrorHistoryItem[]>(()=>readErrorHistory()),[errorsOpen,setErrorsOpen]=useState(false),[historyExpanded,setHistoryExpanded]=useState(false),[connectedCount,setConnectedCount]=useState(0);
