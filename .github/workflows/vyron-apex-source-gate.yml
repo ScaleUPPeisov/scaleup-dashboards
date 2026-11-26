@@ -25,7 +25,15 @@ jobs:
       - name: Exact source revision
         run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - run: npm ci --no-audit --no-fund
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=moderate
+      - name: Full dependency audit (known tooling debt, informational)
+        if: success() || failure()
+        run: |
+          npm audit --json > npm-audit-report.json || true
+          cat npm-audit-report.json
       - name: P0 batch and recovery tests
+        if: success() || failure()
         run: npx --no-install vitest run src/batchUploadSafety.test.ts src/batchControlSafety.test.tsx src/uploadQueueRuntimeSafety.test.ts src/inventoryApex.test.tsx src/apex-ui.test.tsx
       - name: Full Vitest suite
         if: success() || failure()

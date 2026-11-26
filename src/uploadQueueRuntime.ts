@@ -17,6 +17,13 @@ import {isFuturePublishAt,pendingSessionCheck} from './batchUploadSafety';
 
 function assertQueuePayloadIntegrity(spec:ImmutableUploadJob){const result=validateImmutableUploadSpec(spec,true);if(!result.valid)throw publisherIntegrityError(spec.videoNumber,result.issues)}
 
+function assertCurrentQueueChannel(spec:ImmutableUploadJob){
+ const channel=useApp.getState().channels.find(x=>x.id===spec.channelId);
+ if(!channel||channel.enabled===false||channel.youtubeProfileId!==spec.profileId||
+   !channel.youtubeChannelId||(spec.youtubeChannelId&&channel.youtubeChannelId!==spec.youtubeChannelId))
+  throw new Error('UPLOAD_QUEUE_CHANNEL_BINDING_CHANGED: channel disabled, removed or rebound after confirmation');
+}
+
 async function executeUpload(spec:ImmutableUploadJob){
  assertQueuePayloadIntegrity(spec);
  const taskId=`upload:${spec.jobId}`;startTask(taskId,'Проверка перед загрузкой');
@@ -30,6 +37,7 @@ async function executeUpload(spec:ImmutableUploadJob){
   if(sessionStatus==='UNAVAILABLE')throw new Error('UPLOAD_QUEUE_RECOVERY_CHECK_FAILED: existing upload sessions could not be checked');
   if(sessionStatus==='RECOVERY_REQUIRED')throw new Error('UPLOAD_QUEUE_RECOVERY_REQUIRED: existing upload session must be resumed or resolved');
   const state=useApp.getState(),job=state.jobs.find(x=>x.id===spec.jobId),channel=state.channels.find(x=>x.id===spec.channelId);
+  assertCurrentQueueChannel(spec);
   if(!job||!channel)throw new Error('UPLOAD_QUEUE_SOURCE_MISSING: project/channel no longer exists');
   if(job.channelId!==spec.channelId||job.finalPath!==spec.filePath)throw new Error('UPLOAD_QUEUE_IDENTITY_CHANGED: local video identity changed after submission');
   if(job.youtubeVideoId&&!spec.allowDuplicate)throw new Error(`UPLOAD_ALREADY_HAS_VIDEO_ID: ${job.youtubeVideoId}; verify existing YouTube state before explicit duplicate re-upload`);
@@ -47,6 +55,8 @@ async function executeUpload(spec:ImmutableUploadJob){
   journal({eventType:'UPLOAD_STARTED',status:'STARTED',source:'LIVE_OPERATION',timestamp:startedAt,operationId,batchId,channelId:spec.channelId,channelName:spec.channelName,profileId:spec.profileId,jobId:spec.jobId,localSourcePath:spec.filePath,details:{filename:baseName(spec.filePath),fileSize:spec.fileSize,title:spec.title,publishAt:spec.publishAt}});
   if(spec.metadataSource==='queue'){metadataApplying=true;await api.metadataQueueMarkApplying(spec.channelId,spec.jobId)}
   if(job.folder)await api.writeJobMetadata(job.folder,spec.title,spec.description,[...spec.tags],spec.publishAt,spec.metadataSource||job.metadataSource||'template');
+  // Recheck the binding after asynchronous preparation, immediately before native transfer.
+  assertCurrentQueueChannel(spec);
   // A date that was valid at enqueue can expire while waiting for the disk.
   if(!isFuturePublishAt(spec.publishAt))throw new Error('UPLOAD_QUEUE_PUBLISH_AT_EXPIRED: publishAt is invalid or no longer in the future');
   phase='TRANSFER_STARTED';
@@ -96,6 +106,20 @@ async function executeUpload(spec:ImmutableUploadJob){
  }catch(error){
   // A preflight safety stop must not touch the resumable record or reinterpret
   // an unavailable session store as an empty one.
+  if((phase==='PRECHECK'||phase==='QUOTA_RESERVED')&&String(error).includes('UPLOAD_QUEUE_CHANNEL_BINDING_CHANGED')){
+   const message='Привязка канала изменилась или канал отключён. Повторно проверьте канал перед загрузкой.';
+   if(metadataApplying){
+    try{await api.metadataQueueMarkError(spec.channelId,spec.jobId,message)}
+    catch{notifyWarning('Не удалось обновить состояние метаданных','Загрузка остаётся на паузе. Проверьте запись метаданных перед повтором.')}
+   }
+   if(attempt){
+    failPublishAttempt(attempt.id,error);
+    const current=useApp.getState().jobs.find(x=>x.id===spec.jobId);
+    if(current&&current.channelId===spec.channelId&&current.finalPath===spec.filePath&&!current.youtubeVideoId)
+     useApp.getState().patchJob(spec.jobId,{status:'ERROR',storageLifecycle:'QUEUED',uploadProgress:0,error:message});
+   }
+   attentionTask(taskId,message);throw error
+  }
   const safetyStop=(phase==='PRECHECK'||phase==='QUOTA_RESERVED')&&['UPLOAD_QUEUE_RECOVERY_REQUIRED','UPLOAD_QUEUE_RECOVERY_CHECK_FAILED','UPLOAD_QUEUE_PUBLISH_AT_EXPIRED'].some(code=>String(error).includes(code));
   if(safetyStop){
    if(metadataApplying){
@@ -162,7 +186,7 @@ const durableQueuePersistence:UploadQueuePersistence={
   localStorage.removeItem(DURABLE_QUEUE_STAGING_KEY);
  }
 };
-function shouldPauseQueueEntry(error:unknown){const value=String(error||'');return value.includes('UPLOAD_QUEUE_RECOVERY_REQUIRED')||value.includes('UPLOAD_QUEUE_RECOVERY_CHECK_FAILED')||value.includes('UPLOAD_QUEUE_PUBLISH_AT_EXPIRED')||value.includes('UPLOAD_QUEUE_QUOTA_RECHECK_FAILED')||value.includes('UPLOAD_QUEUE_CHANNEL_DAILY_LIMIT')||isYoutubeQuotaError(error)||isYoutubeDailyUploadLimitError(error)}
+function shouldPauseQueueEntry(error:unknown){const value=String(error||'');return value.includes('UPLOAD_QUEUE_CHANNEL_BINDING_CHANGED')||value.includes('UPLOAD_QUEUE_RECOVERY_REQUIRED')||value.includes('UPLOAD_QUEUE_RECOVERY_CHECK_FAILED')||value.includes('UPLOAD_QUEUE_PUBLISH_AT_EXPIRED')||value.includes('UPLOAD_QUEUE_QUOTA_RECHECK_FAILED')||value.includes('UPLOAD_QUEUE_CHANNEL_DAILY_LIMIT')||isYoutubeQuotaError(error)||isYoutubeDailyUploadLimitError(error)}
 const queue=new MultiChannelUploadQueue(executeUpload,2,1,{persistence:durableQueuePersistence,pauseOnError:shouldPauseQueueEntry});
 export function configureUploadQueue(concurrency:number,perChannelConcurrency=1){queue.setConcurrency(concurrency);queue.setPerChannelConcurrency(perChannelConcurrency)}
 export function uploadQueueSnapshot(){return queue.snapshot()}
@@ -175,6 +199,7 @@ export function resumePausedUpload(jobId:string){
  const entry=queue.snapshot().paused.find(x=>x.spec.jobId===jobId);if(!entry)return false;
  if(!isFuturePublishAt(entry.spec.publishAt)){notifyWarning('Не удалось продолжить загрузку','Дата публикации недействительна или прошла. Задача остаётся на паузе, сохранённая сессия не удаляется.');return false;}
  const state=useApp.getState(),job=state.jobs.find(x=>x.id===jobId),channel=state.channels.find(x=>x.id===entry.spec.channelId);
+ try{assertCurrentQueueChannel(entry.spec)}catch{notifyWarning('Не удалось продолжить загрузку','Привязка канала изменилась или канал отключён. Задача остаётся на паузе.');return false;}
  if(!job||!channel||job.channelId!==entry.spec.channelId||job.finalPath!==entry.spec.filePath)return false;
  if(job.youtubeVideoId&&!entry.spec.allowDuplicate)return false;
  ensureTask({taskId:`upload:${entry.spec.jobId}`,type:'UPLOAD',state:'QUEUED',channelId:entry.spec.channelId,channelName:entry.spec.channelName,profileId:entry.spec.profileId,jobId:entry.spec.jobId,label:`VIDEO_${String(entry.spec.videoNumber).padStart(3,'0')}`,detail:baseName(entry.spec.filePath),progress:0,bytesCompleted:0,bytesTotal:entry.spec.fileSize,resourceKey:`upload:${entry.spec.channelId}:${entry.spec.jobId}`});
