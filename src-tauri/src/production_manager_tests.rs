@@ -385,7 +385,10 @@ fn acceptance_separate_output_workspace_preserves_source_state() {
         .unwrap()
         .is_file());
     let (m, _) = load_manifest(&summary.manifest_path).unwrap();
-    assert!(Path::new(&m.output_dir).starts_with(&external));
+    // macOS may expose the same temp directory through /var and /private/var.
+    // Compare the canonical destination to the canonical requested root.
+    assert_eq!(Path::new(&m.output_dir).canonicalize().unwrap(),
+        external.canonicalize().unwrap().join("Render").join(safe_component(&name)));
     assert_eq!(m.projects.len(), 4);
     cleanup(&ws);
 }

@@ -6517,7 +6517,9 @@ mod keychain_prompt_architecture_tests{
   assert!(require.contains("resolve_refresh_credential_with"));
   assert!(require.contains("canonical_get_secret_cached"));
   assert!(require.contains("legacy_get_secret_once"));
-  let inventory=production.split("pub async fn youtube_list_existing_videos").nth(1).unwrap();
+  // Test-only helper declarations appear before this production command.
+  // Locate the actual command in the full source rather than truncating at the first cfg(test).
+  let inventory=source.split("pub async fn youtube_list_existing_videos(").nth(1).unwrap();
   let active_prefix=inventory.split("let (token, profile) = valid_access_token").next().unwrap();
   assert!(active_prefix.contains("profile_id: String"));
   assert!(!active_prefix.contains("migrate_profile_refresh_to_canonical"));
