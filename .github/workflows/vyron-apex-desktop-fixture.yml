@@ -28,6 +28,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --no-audit --no-fund
+      - name: Check checksum parser regression cases
+        run: python3 scripts/apex_desktop_fixture/verify_runtime.py --self-test
       - name: Download exact official Electron distribution and verify checksum
         run: |
           set -euo pipefail
@@ -38,7 +40,7 @@ jobs:
           base="https://github.com/electron/electron/releases/download/v$ELECTRON_VERSION"
           curl --fail --location --retry 3 --output SHASUMS256.txt "$base/SHASUMS256.txt"
           curl --fail --location --retry 3 --output "$filename" "$base/$filename"
-          grep "  $filename$" SHASUMS256.txt > verified.sha256
+          python3 "$GITHUB_WORKSPACE/scripts/apex_desktop_fixture/verify_runtime.py" SHASUMS256.txt "$filename"
           shasum -a 256 -c verified.sha256
           ditto -x -k "$filename" "$RUNNER_TEMP/apex-runtime"
       - name: Build isolated desktop test package
