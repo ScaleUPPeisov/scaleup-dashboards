@@ -17,4 +17,5 @@ import './live-inventory.css';
 import './v400-celebration.css';
 import './youtube-apex.css';
 import './apex-tokens.css';
+import './apex-reference-shell.css';
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);

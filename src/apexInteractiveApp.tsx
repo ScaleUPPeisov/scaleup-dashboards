@@ -32,8 +32,14 @@ import './v400-celebration.css';
 import './youtube-apex.css';
 import './apex-tokens.css';
 import './apex-interactive.css';
+import './apex-reference-shell.css';
 
-const pages:ReadonlyArray<[Page,string]>=[['dashboard','Главная'],['autopilot','Командный центр'],['channels','Каналы'],['production','Производство'],['inventory','Запас видео'],['history','История'],['youtube','YouTube'],['analytics','Аналитика'],['competitors','Конкуренты'],['accounts','Аккаунты'],['settings','Настройки']];
+const groups:ReadonlyArray<[string,ReadonlyArray<[Page,string]>]>=[
+ ['РАБОЧАЯ СРЕДА',[['dashboard','Главная'],['channels','Каналы'],['production','Производство'],['inventory','Запас видео']]],
+ ['YOUTUBE',[['publisher','Публикатор'],['metadata','Метаданные'],['existing','Загруженные']]],
+ ['АНАЛИЗ И МАТЕРИАЛЫ',[['analytics','Аналитика 360°'],['competitors','Конкуренты']]],
+ ['СИСТЕМА',[['autopilot','Командный центр'],['history','История'],['accounts','Аккаунты'],['settings','Настройки']]]
+];
 function Screen({page}:{page:Page}){
  switch(page){
  case 'channels':return <ChannelsOS/>;
@@ -51,7 +57,7 @@ function Screen({page}:{page:Page}){
 }
 function FixtureShell(){
  const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage);
- return <div className="appShell apexFixtureShell"><aside className="sidebar"><div className="brand"><div className="brandMark">V</div><div><b>VYRON APEX</b><small>UI FIXTURE</small></div></div><nav>{pages.map(([id,label])=><button key={id} className={page===id?'active':''} onClick={()=>setPage(id)} aria-current={page===id?'page':undefined}>{label}</button>)}</nav></aside><div className="main"><header className="apexFixtureBanner">ТЕСТОВЫЙ РЕЖИМ · 33 фиктивных канала · реальные файлы, OAuth и публикация недоступны</header><main className="apexFixtureMain"><UiErrorBoundary key={page} scope={page} onHome={()=>setPage('dashboard')}><Screen page={page}/></UiErrorBoundary></main></div><NotificationCenter/></div>;
+ return <div className="appShell apexFixtureShell apexReferenceShell"><aside className="sidebar"><div className="brand apexReferenceBrand"><svg viewBox="0 0 40 40" aria-hidden="true"><path fill="#a78bfa" d="M2 5h10l8 14L28 5h10L20 36 14 25 20 14 12 5Z"/><path fill="#7541d6" d="M14 25 20 36 38 5H28L20 19Z"/></svg><div><b>VYRON</b><small>7.0 APEX</small></div></div><nav>{groups.map(([group,items])=><React.Fragment key={group}><div className="apexNavGroup">{group}</div>{items.map(([id,label])=><button key={id} className={page===id?'active':''} onClick={()=>setPage(id)} aria-current={page===id?'page':undefined}>{label}</button>)}</React.Fragment>)}</nav></aside><div className="main"><header className="apexFixtureBanner">ТЕСТОВЫЙ РЕЖИМ · 33 фиктивных канала · реальные файлы, OAuth и публикация недоступны</header><main className="apexFixtureMain"><UiErrorBoundary key={page} scope={page} onHome={()=>setPage('dashboard')}><Screen page={page}/></UiErrorBoundary></main></div><NotificationCenter/></div>;
 }
 export async function mountFixture(fixture:ReturnType<typeof createApexFixture>){
  await enterPerformanceProbeMode();

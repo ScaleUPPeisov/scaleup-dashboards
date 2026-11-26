@@ -1,0 +1,27 @@
+/* VYRON_APEX_FULL_FUNCTIONAL_PREVIEW.html — shared shell only.
+ * No demonstration data or event handlers are imported from the prototype. */
+.apexReferenceShell{
+ --bg:#101114;--panel:#181a1f;--panel2:#202228;--line:#2c2e35;
+ --muted:#9c9faa;--text:#f2f2f6;--cyan:#a78bfa;--purple:#a78bfa;
+ --green:#46d598;--orange:#efb85a;--red:#f07685;
+ background:#101114;color:#f2f2f6;
+ font:13px/1.45 -apple-system,BlinkMacSystemFont,Inter,"Segoe UI",sans-serif;
+}
+.apexReferenceShell>.bgGlow{display:none}
+.apexReferenceShell>.sidebar{width:214px;flex:0 0 214px;background:#131418;border-right:1px solid #2c2e35;padding:15px 10px;min-height:0;box-shadow:none}
+.apexReferenceShell>.sidebar .apexReferenceBrand{display:flex;align-items:center;gap:10px;padding:0 8px 12px}
+.apexReferenceShell .apexReferenceBrand svg{width:37px;height:37px;flex:none}
+.apexReferenceShell .apexReferenceBrand b{font-size:20px;line-height:1.1;letter-spacing:1.1px;color:#f2f2f6}
+.apexReferenceShell .apexReferenceBrand small{color:#a78bfa;display:block;font-size:10px;font-weight:600;letter-spacing:1.4px;margin-top:3px}
+.apexReferenceShell>.sidebar nav{flex:1;overflow:auto;min-height:0;gap:0;scrollbar-width:thin}
+.apexReferenceShell .apexNavGroup{font-size:9px;letter-spacing:1px;color:#858893;margin:9px 9px 4px}
+.apexReferenceShell>.sidebar nav button{width:100%;justify-content:flex-start;background:none;border:1px solid transparent;color:#b9bbc4;box-shadow:none;min-height:28px;padding:4px 9px;font-size:12px;font-weight:500;gap:9px;border-radius:8px;margin:0;transform:none}
+.apexReferenceShell>.sidebar nav button:hover{background:#23242b;color:white;transform:none}
+.apexReferenceShell>.sidebar nav button.active{background:#332545;color:#e9ddff;border-color:#493366;box-shadow:none}
+.apexReferenceShell>.sidebar nav button:focus-visible{outline:2px solid #a78bfa;outline-offset:-2px}
+.apexReferenceShell>.main{background:#101114}
+.apexReferenceShell>.main>.topbar,.apexReferenceShell>.main>.apexFixtureBanner{background:#141519;border-bottom:1px solid #2c2e35;box-shadow:none;min-height:56px}
+.apexReferenceShell>.main>.topbar{height:auto;flex-basis:auto;padding:6px 16px}
+.apexReferenceShell>.main>.apexFixtureBanner{display:flex;align-items:center;color:#cbb5f8;padding:0 23px;font-size:11px}
+.apexReferenceShell .apexFixtureMain{padding:20px 26px 30px}
+@media(max-width:1150px){.apexReferenceShell>.sidebar{width:180px;flex-basis:180px}.apexReferenceShell .apexFixtureMain{padding:20px}}

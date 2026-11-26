@@ -4,14 +4,14 @@
  --apex-surface:#181a1f;
  --apex-surface-raised:#202228;
  --apex-border:#2c2e35;
- --apex-text:#f2f0fa;
+ --apex-text:#f2f2f6;
  --apex-text-muted:#c1becd;
  --apex-accent:#a78bfa;
  --apex-success:#46d598;
  --apex-warning:#efb85a;
  --apex-danger:#f07685;
  --apex-focus:#c7b8ff;
- --apex-radius-panel:14px;
+ --apex-radius-panel:10px;
  --apex-radius-control:8px;
  --apex-space:16px;
 }
